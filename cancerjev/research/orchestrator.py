@@ -21,9 +21,11 @@ from cancerjev.research.fixtures import (
     judgment_vector,
     statistical_states,
 )
-from cancerjev.research.policy import PROMOTED_STATE_INDEXES, PROMOTION_POLICY_VERSION
 from cancerjev.storage.artifacts import ArtifactStore, PublishedArtifact
 from cancerjev.storage.repositories import Repository, _json
+
+PROMOTION_POLICY_VERSION = "fixture-promotion-v1"
+PROMOTED_STATE_INDEXES = (0, 3)
 
 
 @dataclass

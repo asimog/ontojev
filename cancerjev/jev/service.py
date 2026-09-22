@@ -45,9 +45,6 @@ class JevService:
     def _publish_json(self, run_id: str, relative_path: str, payload: Any, purpose: str) -> Any:
         return self.artifacts.publish(relative_path, canonical_json(payload), "application/json", purpose)
 
-    def _emit(self, emit: Callable[..., Any], run_id: str, event_type: str, key: str, message: str, **kwargs: Any) -> None:
-        emit(run_id, event_type, key, message, **kwargs)
-
     def _ensure_question_artifact(self, run_id: str) -> Any:
         if run_id in self._question_artifact:
             return self._question_artifact[run_id]
@@ -96,8 +93,8 @@ class JevService:
             projection_hash=p_hash, artifact_id=artifact.artifact_id,
             fields_json=canonical_json(list(INCLUDED_FIELDS)).decode(), created_at=utc_now(),
         )
-        self._emit(
-            emit, run_id, "JEV_PROJECTION_CREATED", f"projection:{projection_id}",
+        emit(
+            run_id, "JEV_PROJECTION_CREATED", f"projection:{projection_id}",
             f"Jev projection created for {state['entity']['gene_symbol']}.",
             stage="JEV_WIDE",
             data={"projection_id": projection_id, "state_id": state["state_id"],
@@ -114,6 +111,7 @@ class JevService:
         projection = build_projection(state)
         projection_id, p_hash, _ = self._register_projection(run_id=run_id, state=state, projection=projection,
                                                              emit=emit)
+        applicability = applicability_map(projection)
         question_artifact = self._ensure_question_artifact(run_id)
         requested_model = self.settings.jev_model
         cache_key = hashlib.sha256(canonical_json({
@@ -127,7 +125,7 @@ class JevService:
             source = self.repository.get_evaluation(cached_id)
             if source is not None:
                 evaluation = self._cached_evaluation(state, source, projection_id, p_hash, question_artifact,
-                                                     applicability_map(projection))
+                                                     applicability)
                 return self._persist_evaluation(run_id, state, evaluation, emit, cache_key=cache_key,
                                                 provider_attempted=False)
         adapter = (
@@ -138,8 +136,8 @@ class JevService:
             answer_set = adapter.evaluate(projection, WIDE_QUESTIONS)
             validated = validate_answers(WIDE_QUESTIONS, answer_set.answers)
         except (JevProviderError, JevContractError) as exc:
-            return self._record_failure(run_id, state, projection_id, p_hash, question_artifact, exc, emit,
-                                        provider_attempted=True)
+            return self._record_failure(run_id, state, projection_id, p_hash, question_artifact, applicability,
+                                        exc, emit, provider_attempted=True)
         evaluation = {
             "evaluation_id": str(uuid4()),
             "mode": "LIVE",
@@ -157,7 +155,7 @@ class JevService:
             "resolved_model": answer_set.resolved_model,
             "adapter_version": ADAPTER_VERSION,
             "answers": validated,
-            "applicability": applicability_map(projection),
+            "applicability": applicability,
             "raw_answers_hash": hashlib.sha256(canonical_json(answer_set.answers)).hexdigest(),
             "request_id": answer_set.request_id,
             "usage": answer_set.usage,
@@ -217,8 +215,8 @@ class JevService:
                 "INSERT INTO jev_cache(cache_key,evaluation_id,created_at) VALUES(?,?,?) ON CONFLICT(cache_key) DO NOTHING",
                 (cache_key, evaluation_id, utc_now()),
             ))
-        self._emit(
-            emit, run_id, "JEV_WIDE_STATE_EVALUATED", f"jev-wide:{evaluation_id}",
+        emit(
+            run_id, "JEV_WIDE_STATE_EVALUATED", f"jev-wide:{evaluation_id}",
             f"Jev wide judgment recorded for {state['entity']['gene_symbol']}.",
             stage="JEV_WIDE",
             data={
@@ -238,8 +236,8 @@ class JevService:
         return evaluation
 
     def _record_failure(self, run_id: str, state: dict[str, Any], projection_id: str, p_hash: str,
-                        question_artifact: Any, exc: Exception, emit: Callable[..., Any],
-                        *, provider_attempted: bool) -> dict[str, Any]:
+                        question_artifact: Any, applicability: dict[str, dict[str, Any]], exc: Exception,
+                        emit: Callable[..., Any], *, provider_attempted: bool) -> dict[str, Any]:
         code = getattr(exc, "code", type(exc).__name__)
         evaluation = {
             "evaluation_id": str(uuid4()),
@@ -258,7 +256,7 @@ class JevService:
             "resolved_model": None,
             "adapter_version": ADAPTER_VERSION,
             "answers": {},
-            "applicability": applicability_map(build_projection(state)),
+            "applicability": applicability,
             "raw_answers_hash": None,
             "request_id": None,
             "usage": {"input_tokens": None, "output_tokens": None},
@@ -276,8 +274,8 @@ class JevService:
              artifact.artifact_id, canonical_json(evaluation).decode(),
              evaluation["requested_model"], utc_now()),
         )
-        self._emit(
-            emit, run_id, "JEV_EVALUATION_FAILED", f"jev-wide:{evaluation_id}:failed",
+        emit(
+            run_id, "JEV_EVALUATION_FAILED", f"jev-wide:{evaluation_id}:failed",
             f"Jev wide evaluation failed closed for {state['entity']['gene_symbol']}: {code}.",
             stage="JEV_WIDE", level="error",
             data={"evaluation_id": evaluation_id, "state_id": state["state_id"], "error_code": str(code),

@@ -2,11 +2,21 @@ from __future__ import annotations
 
 import dataclasses
 
+import cancerjev.jev.service as service_module
 from cancerjev.domain.events import canonical_json, utc_now
 from cancerjev.jev.projection import build_projection, projection_hash
+from cancerjev.jev.questions import applicability_map
 from cancerjev.jev.service import JevService
 from tests.jev.stub_adapter import StubAdapter
 from tests.science.test_methods import _build, _frame
+
+EVALUATION_FIELDS = (
+    "evaluation_id", "mode", "purpose", "input_ref_kind", "input_ref_id", "source_state_hash",
+    "projection_id", "projection_version", "projection_hash", "question_set_version", "question_hash",
+    "question_definitions_ref", "requested_model", "resolved_model", "adapter_version", "answers",
+    "applicability", "raw_answers_hash", "request_id", "usage", "latency_ms",
+    "cache_source_evaluation_id", "error", "routing_policy_version", "artifact_id",
+)
 
 
 def _state() -> dict:
@@ -142,3 +152,50 @@ def test_projection_is_registered_once_per_state_and_version(runtime):
     projections = context["repository"].page_projections(context["run_id"], 10, None)
     assert len(projections["items"]) == 1
     assert projections["items"][0]["projection_version"] == "jev-state-projection-v1"
+
+
+def test_evaluation_record_and_event_contract_is_unchanged(runtime):
+    adapter = StubAdapter()
+    service, context = _service(runtime, adapter)
+    state = _state()
+    evaluation = service.evaluate(run_id=context["run_id"], state=state, emit=context["emit"])
+    assert set(evaluation) == set(EVALUATION_FIELDS)
+    assert evaluation["applicability"] == applicability_map(build_projection(state))
+    repository = context["repository"]
+    assert repository.get_evaluation(evaluation["evaluation_id"])["vector"] == {
+        key: value for key, value in evaluation.items() if key != "artifact_id"
+    }
+    events = repository.events(context["run_id"], 0, 100)["items"]
+    jev_events = [event for event in events if event["type"].startswith("JEV_")]
+    assert [event["type"] for event in jev_events] == ["JEV_PROJECTION_CREATED", "JEV_WIDE_STATE_EVALUATED"]
+    assert jev_events[0]["idempotency_key"] == f"projection:{evaluation['projection_id']}"
+    assert jev_events[1]["idempotency_key"] == f"jev-wide:{evaluation['evaluation_id']}"
+    assert jev_events[1]["data"]["applicability"] == evaluation["applicability"]
+    assert jev_events[1]["data"]["judgment_vector"] == evaluation["answers"]
+
+
+def test_failure_recording_reuses_the_projection_without_rebuilding_it(runtime, monkeypatch):
+    adapter = StubAdapter(fail=True)
+    service, context = _service(runtime, adapter)
+    state = _state()
+    calls: list[str] = []
+    original = service_module.build_projection
+
+    def counting_build_projection(state_argument):
+        calls.append(state_argument["state_id"])
+        return original(state_argument)
+
+    monkeypatch.setattr(service_module, "build_projection", counting_build_projection)
+    evaluation = service.evaluate(run_id=context["run_id"], state=state, emit=context["emit"])
+    assert calls == [state["state_id"]], "failure recording must not rebuild the projection"
+    assert evaluation["error"]["code"] == "PROVIDER_ERROR"
+    assert set(evaluation) == set(EVALUATION_FIELDS)
+    assert evaluation["applicability"] == applicability_map(original(state))
+    repository = context["repository"]
+    assert repository.get_evaluation(evaluation["evaluation_id"])["vector"] == {
+        key: value for key, value in evaluation.items() if key != "artifact_id"
+    }
+    events = repository.events(context["run_id"], 0, 100)["items"]
+    jev_events = [event for event in events if event["type"].startswith("JEV_")]
+    assert [event["type"] for event in jev_events] == ["JEV_PROJECTION_CREATED", "JEV_EVALUATION_FAILED"]
+    assert jev_events[1]["idempotency_key"] == f"jev-wide:{evaluation['evaluation_id']}:failed"
