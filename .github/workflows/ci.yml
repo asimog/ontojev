@@ -1,0 +1,71 @@
+name: Phase 1 offline verification
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m ruff check cancerjev apps tests
+      - run: python -m pytest
+        env:
+          CANCERJEV_FIXTURE_STAGE_DELAY_MS: "0"
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  browser:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: python -m pip install -e ../..
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run browser acceptance
+        shell: bash
+        env:
+          CANCERJEV_DATA_DIR: ${{ runner.temp }}/cancerjev-data
+          CANCERJEV_WEB_ORIGIN: http://127.0.0.1:3000
+          NEXT_PUBLIC_CANCERJEV_API_URL: http://127.0.0.1:8000
+        run: |
+          cd ../..
+          python -m uvicorn apps.api.main:app --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/api.log" 2>&1 &
+          cd apps/web
+          npm run dev > "$RUNNER_TEMP/web.log" 2>&1 &
+          for attempt in {1..30}; do
+            curl -fsS http://127.0.0.1:8000/health >/dev/null && curl -fsS http://127.0.0.1:3000/runs >/dev/null && break
+            sleep 1
+          done
+          CANCERJEV_WEB_URL=http://127.0.0.1:3000 npm run test:e2e
+

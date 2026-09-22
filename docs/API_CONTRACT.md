@@ -15,7 +15,7 @@ List envelope: `{items:[...], next_cursor:string|null, has_more:boolean}`. Opaqu
 | GET `/api/runs/{run_id}/states` | cursor?, limit?, disposition? | StatisticalState summaries with immutable artifact refs |
 | GET `/api/runs/{run_id}/evaluations` | cursor?, limit?, candidate_id?, purpose? | JevEvaluation summary/full compact vector, applicability, mode, model/question versions |
 | GET `/api/runs/{run_id}/hypotheses` | cursor?, limit?, candidate_id? | Hypotheses with evidence/evaluation references and clearly marked generated content |
-| GET `/api/runs/{run_id}/dossier` | cursor?, limit? | Dossier summary **list**, because a run can have multiple candidate dossiers; retained singular path from requested API |
+| GET `/api/runs/{run_id}/dossiers` | cursor?, limit? | Dossier summary list, because a run can have multiple candidate dossiers |
 | GET `/api/dossiers` | cursor?, limit? | Archive summaries with run/candidate/mode |
 | GET `/api/dossiers/{dossier_id}` | format=json(default) or markdown | Authoritative structured dossier or derived text/markdown, with artifact hash |
 | GET `/api/artifacts/{artifact_id}` | UUID | Bounded approved JSON/Markdown/table artifact; no arbitrary path traversal, raw secrets or huge provider payload UI |

@@ -1,29 +1,25 @@
-# Phase 1 implementation plan — approval required
+# Phase 1 implementation record
 
-Goal: one fully observable fake autonomous loop with durable event history and a fake dossier. No live GDC, Jev or LLM. No production implementation has begun.
+**Status: implemented and locally verified on 2026-09-22. Phase 2 requires explicit approval.**
 
-1. **Scaffold only the Phase 1 tree.** Pin Python/frontend dependencies; configure data directory, fake-only modes and hard work limits. Add `.gitignore`, `.env.example`, packaging entry point and minimal offline CI. Validate installation and module entry point from outside the repository.
-2. **Implement domain contracts and one event writer.** Run/candidate transitions, payload union, immutable state contracts, lifetime budgets, strict serialization, SQLite bootstrap/WAL and projection reducer. Prove event transaction rollback, sequence allocation, idempotency and state hash invariants.
-3. **Add local artifacts and process ownership.** Atomic publish ordering, checksums, narrow repositories, lock, heartbeat and interrupted-run reconciliation. Test with actual separate processes and induced failure boundaries.
-4. **Connect the fake research loop and CLI.** One fixture-driven run traverses all stages, preserves fake Jev vectors, generates competing fixture hypotheses, performs one registered deterministic fixture action, appends new evidence, publishes JSON/Markdown dossier. Render console output from committed events. Add bounded repeated fake worker mode and graceful Ctrl+C.
-5. **Expose the read API.** Implement the exact API contract with bounded pagination, consistent high-water marks, summary counters, artifact access, system status and redaction. A started API never starts a research run.
-6. **Build App Router UI.** Overview, run feed/detail, dossiers and system; shared polling hook; cards, stage occurrences, typed events, candidate views, Jev probabilities and provenance. Fake mode remains visibly labeled. No deployment SDKs or extra state framework.
-7. **Prove the complete local story.** Run focused tests then Ruff/offline pytest/typecheck/build; start local API and web; trigger CLI demo; verify card, live events/stages, dossier, refresh, API restart, researcher crash/restart and canonical-event consistency in a browser. Report exclusions honestly.
-8. **Update phase report and stop.** Record files, decisions, scientific scope, tests/results, external calls and actual GDC/Jev/LLM usage (all zero), limitations and next phase. Phase 2 is a separate approval boundary.
+Phase 1 proves one coherent offline path: a process-held fake research runner commits canonical events and projections to SQLite, publishes immutable local artifacts, and is observed by FastAPI and a Next.js App Router UI. It creates 12 varied synthetic StatisticalStates, 16 Jev-shaped evaluations, two promoted candidates, two competing generated fixture hypotheses, one registered deterministic follow-up, two immutable evidence revisions, one deferred candidate, and one JSON/Markdown dossier.
 
-Acceptance matrix:
+Implementation order followed the approved plan:
 
-| Master criterion | Planned evidence |
-|---|---|
-| Local FastAPI and Next.js start | Process health plus browser load |
-| `python -m cancerjev run --fixture demo` works | Installed entry point integration test |
-| Run card appears automatically | Browser waits for newly created run ID |
-| Live stages and log progress | Multiple nonterminal event batches observed |
-| CLI and UI share RunEvents | Compare stored event IDs/sequences through both interfaces |
-| Fake dossier under /dossiers | JSON and readable view, synthetic label |
-| Refresh preserves state | Reload during run and after completion |
-| API restart preserves state | Restart server and reread identical durable history |
-| Worker restart cannot corrupt history | Kill owner, restart, preserve old run + create new run |
-| No forbidden infrastructure | Clean local dependency/process inventory |
+1. Python package, configuration, SQLite bootstrap, typed events and run reducer.
+2. Atomic artifact publication, OS lock and interrupted-run recovery.
+3. Deterministic fixture orchestrator, CLI renderer, run/worker/show commands.
+4. Read-only FastAPI routes with incremental event paging and keyset run/dossier cursors.
+5. App Router UI with persistent polling, live incremental events, judgment vectors and dossier views.
+6. Offline unit/integration tests, production frontend build, Playwright acceptance and manual API-restart/stale-data verification.
+7. GitHub Actions gates for Ruff/pytest, typecheck/build and browser acceptance.
 
-Do not build real endpoint adapters, production scientific methods, provider SDK integrations, generated-prose dossiers, advanced composite ranking or the Jev value benchmark during Phase 1. Their contracts exist so fixtures test the right boundaries; their real behavior comes in later approved phases.
+Implemented clarifications:
+
+- The run dossier route is plural: `GET /api/runs/{run_id}/dossiers`.
+- `CANCERJEV_FIXTURE_STAGE_DELAY_MS` is executor-only and defaults to 500 ms.
+- Recovery is lock + canonical interruption events + a new run; there are no leases, queues or replay.
+- Provider usage remains exactly zero. Simulated Jev-shaped evaluations are a separate counter.
+- JSON is the authoritative dossier; Markdown derives deterministically from it.
+
+No Phase 2 modules or empty future provider/science directories were created.

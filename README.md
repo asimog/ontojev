@@ -1,65 +1,75 @@
-# CancerJEV — Phase 0 design
+# CancerJEV — Phase 1 offline execution architecture
 
-CancerJEV is a proposed autonomous research engine for bounded exploration of public NCI GDC data. Deterministic software creates scientific evidence; TypeSafe Jev prioritizes and judges supplied evidence; a generative model proposes competing hypotheses. Only registered deterministic follow-ups can acquire additional evidence.
+CancerJEV Phase 1 is an implemented, deliberately synthetic demonstration of a durable autonomous-research execution loop. It proves local process ownership, one canonical `RunEvent` stream, SQLite projections, immutable artifacts, a read-only FastAPI API, and a live Next.js App Router interface.
 
-**Status: design only. Phase 1 has not been implemented or approved.** Nothing in this repository currently runs a research pipeline. Commands below are the proposed Phase 1 interface, not working commands.
+It does **not** analyze cancer data. Every fixture surface is marked `FAKE` / `SYNTHETIC`.
 
-```mermaid
-flowchart LR
-    G[Bounded public GDC API] --> S[Deterministic StatisticalState]
-    S --> J[Jev wide ranking]
-    J --> D[Deterministic deep analysis]
-    D --> E[Immutable EvidenceState]
-    E --> F[Jev independent questions]
-    F --> H[LLM hypotheses]
-    H --> V[Jev hypothesis review]
-    V --> T[Registered deterministic follow-up]
-    T --> E
-    E --> R[Research dossier]
-    O[One Python research process] --> EV[SQLite RunEvent stream]
-    EV --> C[CLI renderer]
-    EV --> A[FastAPI]
-    A --> W[Next.js HTTP polling]
+```text
+deterministic demo fixture
+        ↓
+canonical RunEvent commits
+        ↓
+SQLite + immutable local artifacts
+        ↓
+FastAPI read API
+        ↓
+Next.js polling UI
+        ↓
+synthetic JSON + Markdown dossier
 ```
 
-One ResearchRun is a bounded sweep, shown as one UI card. It may promote up to 20 investigations, each producing zero or one dossier. Continuous mode repeats bounded runs using a fair discovery cursor. It does not scan every project in one run.
+## Run locally
 
-Jev adds a visible judgment vector and changes prioritization and routing. Whether this improves discovery remains an empirical question. Jev scores are not p-values, biological measurements, or clinical confidence. Dossiers are research proposals, not treatment recommendations.
-
-Start reading [the architecture](docs/ARCHITECTURE.md), [domain schemas](docs/DOMAIN_MODELS.md), [GDC strategy](docs/GDC_STRATEGY.md), [budget enforcement](docs/GDC_BUDGETS.md), and [Jev design](docs/JEV_DESIGN.md). [The Phase 0 report](docs/IMPLEMENTATION_STATUS.md) includes the architecture test, confidence, remaining risks, and approval boundary. [The source review](docs/SOURCE_REVIEW.md) records exactly what was inspected.
-
-The reason for bounded GDC traffic is scientific and operational: preserve explicit examined populations, avoid untraceable partial datasets, limit resource use, and use server-side analysis before acquiring data. Large-file-dependent questions are `UNSUPPORTED_IN_V1`.
-
-Proposed local setup after Phase 1 approval:
+Requires Python 3.12+ and Node.js 20.9+.
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-uvicorn apps.api.main:app --host 127.0.0.1 --port 8000
-# A second terminal:
+python -m pip install -e ".[dev]"
+
+# Terminal 1
+$env:CANCERJEV_DATA_DIR="$PWD\data"
+python -m uvicorn apps.api.main:app --host 127.0.0.1 --port 8000
+
+# Terminal 2
 cd apps/web
 npm ci
 npm run dev
-# A third terminal, from the repository root with the venv active:
+
+# Terminal 3, repository root
+$env:CANCERJEV_DATA_DIR="$PWD\data"
 python -m cancerjev run --fixture demo
 ```
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
-uvicorn apps.api.main:app --host 127.0.0.1 --port 8000
-# Second terminal:
+Open `http://localhost:3000/runs`. The UI automatically observes the process through the shared database; the research process never writes through FastAPI.
+
+Configuration:
+
+- `CANCERJEV_DATA_DIR` — local persistence directory; defaults to `./data`.
+- `CANCERJEV_FIXTURE_STAGE_DELAY_MS` — demo-only delay; defaults to `500`, tests use `0`.
+- `CANCERJEV_RUN_INTERVAL_MINUTES` — fake worker interval; defaults to `60`.
+- `CANCERJEV_WEB_ORIGIN` — local CORS origin; defaults to `http://localhost:3000`.
+- `NEXT_PUBLIC_CANCERJEV_API_URL` — browser API URL; defaults to `http://127.0.0.1:8000`.
+
+`python -m cancerjev run` without `--fixture demo` fails clearly. It never substitutes fixture results for a requested live run. Continuous synthetic mode is `python -m cancerjev worker --fixture demo`; only one research process may own a data directory.
+
+## Verification
+
+```powershell
+python -m ruff check cancerjev apps tests
+python -m pytest
+
 cd apps/web
 npm ci
-npm run dev
-# Third terminal, repository root and venv active:
-python -m cancerjev run --fixture demo
+npm run typecheck
+npm run build
+npm run test:e2e  # requires the API and web dev servers described above
 ```
 
-Open `http://localhost:3000/runs`. Proposed continuous fake mode: `python -m cancerjev worker --fixture demo`, immediately executing a run and waiting 60 minutes after completion by default. Only one research process may own the data directory. FastAPI and Next.js are separate serving processes, not additional research workers.
+The default Python suite blocks outbound network connections. No test needs Docker, PostgreSQL, Redis, GDC, TypeSafe/Jev, OpenRouter, or secrets.
 
-Future commands `python -m cancerjev run` and `python -m cancerjev worker` will require an explicit live profile. In Phase 1 they must fail with an explanation instead of silently calling a provider. Proposed later flags are `CANCERJEV_LIVE_GDC`, `CANCERJEV_LIVE_JEV`, and `CANCERJEV_LIVE_LLM`; each defaults false. Provider keys stay in the Python environment. No GDC token is accepted. These switches are planned configuration, not existing functionality.
+## Scope boundary
 
-All scientific integrations, provider integrations, UI, runtime, tests, and CI remain unimplemented. The detailed Phase 1 plan and acceptance gates are in [PHASE_1_PLAN.md](docs/PHASE_1_PLAN.md).
+Phase 2 is not approved. There is no real GDC client/cache/attempt ledger, TypeSafe/Jev adapter, LLM adapter, production statistical method, provider credential path, or deployment coupling. The future scientific contracts remain in `docs/`; fixture shortcuts do not redefine them.
+
+See [implementation status](docs/IMPLEMENTATION_STATUS.md), [architecture](docs/ARCHITECTURE.md), [API contract](docs/API_CONTRACT.md), and [testing contract](docs/TESTING.md).

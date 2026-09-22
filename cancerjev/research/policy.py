@@ -1,0 +1,3 @@
+PROMOTION_POLICY_VERSION = "fixture-promotion-v1"
+PROMOTED_STATE_INDEXES = (0, 3)
+
