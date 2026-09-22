@@ -21,5 +21,7 @@ Implemented clarifications:
 - Recovery is lock + canonical interruption events + a new run; there are no leases, queues or replay.
 - Provider usage remains exactly zero. Simulated Jev-shaped evaluations are a separate counter.
 - JSON is the authoritative dossier; Markdown derives deterministically from it.
+- A second conformance pass closed the remaining UI_SPEC/API_CONTRACT gaps: budget/usage summaries, typed bounded event details with unknown markers, `/system` configuration and freshness fields, dossier archive pagination, grouped dossier views with provenance and JSON/Markdown downloads, bounded polling backoff with hidden-tab pause, candidate/iteration event filters, and child-list cursors with typed filters.
+- Run cards show start time, elapsed time and expandable secondary counters; nullable provider token/cost usage renders as “unknown”, never zero.
 
 No Phase 2 modules or empty future provider/science directories were created.

@@ -18,7 +18,28 @@ EMPTY_COUNTERS = {
     "dossiers_created": 0, "candidates_failed": 0, "candidates_deferred": 0,
     "jev_evaluations": 0,
 }
-ZERO_USAGE = {"gdc_requests": 0, "gdc_bytes": 0, "jev_calls": 0, "llm_calls": 0}
+ZERO_USAGE = {
+    "gdc_requests": 0, "gdc_bytes": 0, "jev_calls": 0, "llm_calls": 0,
+    "jev_input_tokens": None, "jev_output_tokens": None, "jev_cost": None,
+    "llm_input_tokens": None, "llm_output_tokens": None, "llm_cost": None,
+}
+
+CHILD_TABLES = {
+    "candidates": "candidate_id",
+    "statistical_states": "state_id",
+    "jev_evaluations": "evaluation_id",
+    "hypotheses": "hypothesis_id",
+    "followup_executions": "execution_id",
+    "dossiers": "dossier_id",
+}
+CHILD_FILTERS = {
+    "candidates": frozenset(),
+    "statistical_states": frozenset({"disposition"}),
+    "jev_evaluations": frozenset({"candidate_id", "purpose"}),
+    "hypotheses": frozenset({"candidate_id"}),
+    "followup_executions": frozenset({"status"}),
+    "dossiers": frozenset(),
+}
 
 
 class Repository:
@@ -102,7 +123,7 @@ class Repository:
             run["current_stage"] = event["stage"]
         stages = json.loads(run["stages_json"])
         if event["type"] in {"STAGE_STARTED", "STAGE_COMPLETED"}:
-            stages.append({"stage": event["stage"], "type": event["type"], "sequence": event["sequence"], "candidate_id": event["candidate_id"]})
+            stages.append({"stage": event["stage"], "type": event["type"], "sequence": event["sequence"], "candidate_id": event["candidate_id"], "iteration": event["iteration"]})
         run["stages_json"] = _json(stages)
         counters = json.loads(run["counters_json"])
         increments = {
@@ -226,6 +247,38 @@ class Repository:
             rows = connection.execute(f"SELECT * FROM {table}{clause} ORDER BY created_at ASC LIMIT ?", params).fetchall()
             return [_decode_row(row) for row in rows]
 
+    def page_child(self, table: str, run_id: str, limit: int, cursor: str | None, filters: dict[str, str | None]) -> dict[str, Any]:
+        id_column = CHILD_TABLES.get(table)
+        if id_column is None:
+            raise ValueError("invalid table")
+        applied = {name: value for name, value in filters.items() if value is not None}
+        if not set(applied) <= CHILD_FILTERS[table]:
+            raise ValueError("invalid filter")
+        clauses = ["run_id=?"]
+        values: list[Any] = [run_id]
+        for column, value in applied.items():
+            clauses.append(f"{column}=?")
+            values.append(value)
+        if cursor:
+            decoded = _decode_child_cursor(cursor)
+            if decoded["table"] != table or decoded["run_id"] != run_id or decoded["filters"] != applied:
+                raise ValueError("cursor does not match filters")
+            clauses.append(f"(created_at > ? OR (created_at = ? AND {id_column} > ?))")
+            values += [decoded["created_at"], decoded["created_at"], decoded["id"]]
+        values.append(limit + 1)
+        with self.database.read() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM {table} WHERE {' AND '.join(clauses)} ORDER BY created_at ASC,{id_column} ASC LIMIT ?",
+                tuple(values),
+            ).fetchall()
+        has_more = len(rows) > limit
+        items = [_decode_row(row) for row in rows[:limit]]
+        next_cursor = None
+        if has_more and items:
+            last = items[-1]
+            next_cursor = _encode_cursor({"table": table, "run_id": run_id, "filters": applied, "created_at": last["created_at"], "id": last[id_column]})
+        return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
+
     def events(self, run_id: str, after: int, limit: int) -> dict[str, Any]:
         with self.database.read() as connection:
             run = connection.execute("SELECT last_sequence FROM research_runs WHERE run_id=?", (run_id,)).fetchone()
@@ -288,3 +341,10 @@ def _decode_cursor(value: str) -> dict[str, Any]:
         return decoded
     except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("invalid cursor") from exc
+
+
+def _decode_child_cursor(value: str) -> dict[str, Any]:
+    decoded = _decode_cursor(value)
+    if not isinstance(decoded.get("filters"), dict) or "table" not in decoded or "run_id" not in decoded:
+        raise ValueError("invalid cursor")
+    return decoded

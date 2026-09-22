@@ -10,25 +10,23 @@
 - Immutable artifacts published through temporary file, flush/fsync, SHA-256 and atomic rename before database registration.
 - A deterministic `demo` fixture with 12 synthetic StatisticalStates, varied patterns, full Noul/Choice/Score shapes, two candidate branches, deep evidence, two competing hypotheses, independent reviews, one registered follow-up and a 25-section dossier.
 - CLI `run --fixture demo`, `worker --fixture demo`, and `show <run_id> --events` commands.
-- Read-only FastAPI routes with incremental bounded event pages and opaque keyset run/dossier cursors.
-- Next.js 16 App Router routes `/`, `/runs`, `/runs/[runId]`, `/dossiers`, `/dossiers/[dossierId]`, and `/system`, with single-flight polling, stale-data retention, explicit outage state, judgment vectors and durable history.
-- Offline Python tests, Playwright browser acceptance, and GitHub Actions gates.
+- Read-only FastAPI routes with incremental bounded event pages, opaque keyset cursors for runs, dossiers and child lists (with `disposition`, `candidate_id`, `purpose` filters), strict error envelopes, and artifact SHA-256 headers on dossier responses.
+- Next.js 16 App Router routes `/`, `/runs`, `/runs/[runId]`, `/dossiers`, `/dossiers/[dossierId]`, and `/system`, with single-flight polling, bounded backoff, hidden-tab pause, stale-data retention, explicit outage state, budget/usage summaries, typed bounded event details with unknown markers, candidate/iteration event filters, grouped dossier views with provenance and JSON/Markdown downloads, and durable history.
+- Offline Python tests including a CLI/API/store event-identity test, Playwright browser acceptance, and GitHub Actions gates.
 
 ## Verification record — 2026-09-22
 
-Verified locally before final full-gate rerun:
+Final full-gate rerun on the committed revision:
 
 - Ruff passed.
-- Pytest: 9 passed in 4.25 seconds; one Python 3.14/pytest temporary-symlink cleanup warning occurred after success.
+- Pytest: 13 passed; one Python 3.14/pytest temporary-symlink cleanup warning occurred after success.
 - `npm ci`: 0 vulnerabilities.
 - TypeScript passed.
 - Next.js 16.3.5 production build passed; all application routes built.
-- Playwright acceptance: 1 passed in 20.4 seconds after correcting a Strict Mode abort-state bug and a persistent-history test race.
+- Playwright acceptance: 1 passed in 17.5 seconds. The browser test observes two nonterminal stages, incremental event growth, budget summary, typed event details, Jev vectors, hypotheses, follow-up, completion, dossier provenance and downloads, refresh persistence, and asserts that CLI `show --events` event IDs equal the API-served event IDs for the same run.
 - Browser visual check: meaningful content/navigation/synthetic framing rendered with no Next.js error overlay.
 - Manual CLI demo: sequences 1–71 committed from `RUN_CREATED` through `RUN_COMPLETED`; the UI observed multiple nonterminal stages.
-- API restart/stale-data probe: three cards stayed visible during outage, the last-updated warning appeared, and restart restored polling from the same SQLite data.
-
-The final full gate is rerun immediately before commit and reported in the handoff.
+- API restart/stale-data probe: cards stayed visible during outage, the last-updated warning appeared, and restart restored polling from the same SQLite data.
 
 ## Provider-use record
 
@@ -56,6 +54,10 @@ No real GDC client, cache, request-attempt ledger, file download, Jev adapter, L
 - The singular `/api/runs/{run_id}/dossier` design typo was corrected to plural `/dossiers`, as approved.
 - Only the required Phase 1 subset of broader domain models/tables is implemented. Future GDC/scientific fields remain contracts, not fake runtime complexity.
 - Simulated Jev evaluations are counted independently from provider usage so the UI shows fixture judgment activity while truthfully reporting zero Jev calls.
+- Child-list cursor/filter parameters and `/api/system` configuration fields from API_CONTRACT are implemented. Phase 2-only values (live budget caps, discovery cursor, GDC cache) are reported as explicit null/absent with reasons rather than invented data.
+- Provider usage carries nullable token/cost fields; fixture mode leaves them null so cost renders as “unknown”, never a fabricated zero.
+- Dossier JSON and Markdown responses expose the artifact ID and SHA-256 in headers; the web dossier view renders them as provenance alongside evidence and hypothesis references.
+- The exact Phase 1 detail-event vocabulary (`JEV_WIDE_STATE_EVALUATED`, `EVIDENCE_BUILD_COMPLETED`, `JEV_DEEP_COMPLETED`, and the rest) is now recorded in RUN_EVENTS.md.
 - Next.js 16.3 generated a nested `apps/web/AGENTS.md` pointer to bundled version-matched documentation during the verified dev run; it does not alter runtime architecture.
 
 ## Phase 2 boundary and recommendation

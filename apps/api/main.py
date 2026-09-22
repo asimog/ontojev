@@ -18,6 +18,7 @@ def create_app() -> FastAPI:
     database = Database(settings.database_path)
     database.bootstrap()
     app = FastAPI(title="CancerJEV Phase 1 Read API", version="1.0.0")
+    app.state.settings = settings
     app.state.repository = Repository(database)
     app.state.artifacts = ArtifactStore(settings.data_dir)
     app.add_middleware(CORSMiddleware, allow_origins=[settings.web_origin], allow_methods=["GET"], allow_headers=["*"])

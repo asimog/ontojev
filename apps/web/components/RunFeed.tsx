@@ -7,7 +7,7 @@ import { RunCard } from "@/components/RunCard";
 import { StatusBanner } from "@/components/StatusBanner";
 
 export function RunFeed({ compact = false }: { compact?: boolean }) {
-  const { data, error, updatedAt } = usePolling((signal) => api<Envelope<ResearchRun>>("/api/runs?limit=20", signal), 2000);
+  const { data, error, updatedAt } = usePolling((signal) => api<Envelope<ResearchRun>>("/api/runs?limit=20", signal), 8000);
   const items = compact ? data?.items.slice(0, 2) : data?.items;
   return (
     <>

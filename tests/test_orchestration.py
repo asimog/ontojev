@@ -15,7 +15,12 @@ def test_complete_fake_orchestration(runtime):
     assert run["counts"]["states_evaluated"] == 12
     assert run["counts"]["candidates_promoted"] == 2
     assert run["counts"]["hypotheses_created"] == 2
-    assert run["provider_usage"] == {"gdc_requests": 0, "gdc_bytes": 0, "jev_calls": 0, "llm_calls": 0}
+    assert run["provider_usage"]["gdc_requests"] == 0
+    assert run["provider_usage"]["gdc_bytes"] == 0
+    assert run["provider_usage"]["jev_calls"] == 0
+    assert run["provider_usage"]["llm_calls"] == 0
+    assert run["provider_usage"]["jev_cost"] is None
+    assert run["provider_usage"]["llm_cost"] is None
     assert [event["sequence"] for event in emitted] == list(range(1, len(emitted) + 1))
     stages = {event["stage"] for event in emitted if event["type"] == "STAGE_COMPLETED"}
     assert {"INVENTORY", "GDC_FAST_SEARCH", "STATE_GENERATION", "JEV_WIDE", "DEEP_ANALYSIS", "EVIDENCE_BUILD", "JEV_DEEP", "HYPOTHESIS_GENERATION", "HYPOTHESIS_VERIFICATION", "FOLLOWUP", "DOSSIER"} <= stages
