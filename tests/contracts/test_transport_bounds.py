@@ -246,6 +246,11 @@ def test_identity_and_size_caps_are_enforced():
         expression_availability_request(["case"], [])
     with pytest.raises(EndpointError):
         genes_request(["x" * 129])
+    with pytest.raises(EndpointError):
+        cases_request("TCGA-BRCA", offset=-1)
+    request = cases_request("TCGA-BRCA", size=100, offset=200)
+    assert dict(request.params)["from"] == "200"
+    assert request.page == 3
 
 
 def test_host_allowlist_rejects_non_gdc_host(runtime):

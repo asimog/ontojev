@@ -10,15 +10,15 @@ Before any file acquisition, evaluate in order: (1) analysis endpoint, (2) metad
 |---|---|---|---|
 | Release identity | `GET /status` | 1 request | Provenance: release, commit, tag |
 | Scope inventory | `GET /projects` | 1 request, size ≤100 | Deterministic project selection and composition context |
-| Population frame | `GET /cases` | 1 request per project, size 250, `sort=case_id` | Complete examined-case frame for projects with ≤250 cases |
+| Population frame | `GET /cases` | deterministic `from`/`size` pages, size ≤250, ≤10 pages/query, `sort=case_id` | Complete bounded examined-case frame for the configured cohort |
 | Open provenance | `GET /files` | ≤2 requests, **`access=open` mandatory** | Expression workflow/strategy comparability |
 | Entity identity | `GET /genes` | 1 request, ≤100 gene IDs | Symbol, biotype, cancer-census flag |
 | Discovery (selection only) | `GET /analysis/top_mutated_genes_by_project` | 1 request per project, size ≤20 | Candidate gene universe; `_score` is quarantined ranking metadata |
 | Mutation counts | `GET /analysis/top_cases_counts_by_genes` | 1 request, `gene_ids` ≤100 | Gene-specific per-project affected-case counts |
 | Mutation coverage | `GET /analysis/mutated_cases_count_by_project` | 1 request, `size=0`, **no filters** | Per-project `case_with_ssm` availability |
-| Expression coverage | `POST /gene_expression/availability` | 1 request per project, ≤250 cases × ≤10 genes | Per-case presence flags |
-| Expression provider summary | `POST /gene_expression/gene_selection` | 1 request per project, ≤250 cases | Provider median/stddev retained separately |
-| Expression local summary | `POST /gene_expression/values` | 1 request per project, `tsv_units=uqfpkm`, ≤250 cases × ≤10 genes | Exact per-case UQFPKM for the local deterministic method |
+| Expression coverage | `POST /gene_expression/availability` | deterministic batches, each ≤250 cases × ≤10 genes | Per-case presence flags merged without changing missingness |
+| Expression provider summary | `POST /gene_expression/gene_selection` | only when the complete cohort fits one ≤250-case request | Provider median/stddev retained separately; unavailable for batched cohorts rather than falsely aggregated |
+| Expression local summary | `POST /gene_expression/values` | deterministic batches, each ≤250 cases × ≤10 genes, `tsv_units=uqfpkm` | Exact per-case UQFPKM merged before the cohort-wide local deterministic method |
 
 Every admitted request passes the endpoint admission gate: documentation review, open-access review, live contract check, scientific-semantics check. The full matrix, including rejected endpoints, is in `docs/GDC_JEV_FIT_ANALYSIS.md` §G.
 
@@ -37,9 +37,9 @@ Search filters use `{op,content:{field,value}}` and compound `{op:"and",content:
 
 ## Inventory, scope selection and traversal
 
-Phase 2 selects a deterministic scope from the bounded inventory: projects with `50 ≤ summary.case_count ≤ 250`, ordered by `(case_count, project_id)`, up to 8. This keeps every examined case inside one complete page and gives matched populations for both lanes without sampling bias. Gene selection is also deterministic: up to 6 recurrent genes (appearing in ≥2 projects’ provider top-20) ordered by appearance count, affected-case total and gene ID, then round-robin by provider rank across projects to 10 genes total. The selected roster, inventory hash and selection rule are recorded in `PROJECT_SCOPE_SELECTED` and the selection artifact; new projects join a later run. There is no cross-run discovery cursor in Phase 2 because the sweep is a self-contained bounded run; the cursor contract remains documented for later continuous mode.
+Phase 2 takes its scientific scope from one small frozen `ResearchSpec`. The only production specification is `LUAD_RESEARCH_V1` (`domain=lung cancer`, `cohort_id=TCGA-LUAD`, `project_id=TCGA-LUAD`) with explicit acquisition bounds. The live orchestrator selects exactly that project from the open inventory; it does not use a case-count window or pool projects. Gene selection takes the configured number of genes from that cohort's provider top-mutated ranking. The specification identity and all bounded acquisition parameters are recorded in run scope, the inventory and selection artifacts, scope events, and each StatisticalState. A different single-cohort specification is exercised only in tests; there is no production registry or universal cohort framework.
 
-Case collections are deterministic: sorted stable IDs (`sort=case_id`), complete page, persisted frame hash, `eligible_n`, `selected_n` and completeness. If a project exceeded the page, the frame would be labeled a sample rather than the whole project — which is why the 250-case ceiling is part of the selection rule.
+Case collections are deterministic: sorted stable IDs (`sort=case_id`), validated `from` offsets, consistent provider totals, duplicate rejection across pages, exact project membership, a persisted frame hash, `eligible_n`, `examined_n` and completeness. Acquisition stops when the reported total is collected. A total above `max_cohort_cases`, a changed total, an empty premature page, an unexpected project, or a duplicate case fails closed. Expression case IDs are partitioned by the configured batch size (never above the endpoint's 250-ID cap); returned values and missing columns are merged by identifiers before deterministic cohort-wide summaries are computed.
 
 Validity prefilter rejects unusable/malformed/provenance-free states; it does not threshold p/q or demand a large effect. Diversity downselection is not needed for the bounded Phase 2 universe (≤10 gene states); the recorded rule for a larger universe remains strata `(project, lane, modality, anomaly_shape, direction)` with stable hash order and a 1,000-state cap. No model judgment occurs before this cap.
 

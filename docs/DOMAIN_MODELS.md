@@ -64,7 +64,7 @@ Phase 2 implements **schema version 2** (real GDC). The Phase 0 planning shape a
 StatisticalState v2 (mode LIVE)
   state_id, schema_version: 2, state_hash, created_at, run_id
   entity: {gene_id, gene_symbol, biotype, is_cancer_gene_census, genome_build|null}
-  scope: {domain, cohort, programs[], projects[],
+  scope: {spec_id, research_spec: {cohort, acquisition}, domain, cohort, project_id, programs[], projects[],
           modalities: ["mutation_counts", "expression_summary"],
           workflows[], sample_types[], examined_case_frame,
           comparability: {statuses[], within_cohort: {status, reason},
@@ -94,7 +94,7 @@ StatisticalState v2 (mode LIVE)
 
 `MutationSummary = {project_id, population_id, examined_cases: Metric, affected_case_count: Metric(unit "cases"), project_case_with_ssm: Metric, project_case_count: Metric, provider_discovery_rank: {rank, score, lane_id}|null}`. A provider ranking score is explicitly tagged as selection metadata, is excluded from scientific identity, and cannot fill a count, fraction, p-value or effect field. An absent project bucket is `NOT_OBSERVED`, never zero, wildtype or a callable negative. No recurrence fraction is stored because no matched denominator exists (see SCIENTIFIC_INVARIANTS).
 
-`ExpressionSummary = {project_id, population_id, unit: "log2(UQFPKM+1)", transformation: "log2(x+1)", local: {median, sample_sd, minimum, maximum, n_finite, n_missing, n_returned, n_missing_case_columns: Metric, missing_case_ids[], method_id}, provider: {median, stddev: Metric, source: "GENE_SELECTION", estimator_note}, coverage: {examined_cases, assay_available_cases, cases_with_expression, returned_case_columns, valid_measurements, missing_measurements: Metric}}`. The local summary is the primary evidence; `n_missing` includes examined case columns the provider did not return, so a fully valid returned subset never reports zero missingness. The provider summary is retained verbatim as corroborating context with its estimator convention marked unverified.
+`ExpressionSummary = {project_id, population_id, unit: "log2(UQFPKM+1)", transformation: "log2(x+1)", local: {median, sample_sd, minimum, maximum, n_finite, n_missing, n_returned, n_missing_case_columns: Metric, missing_case_ids[], method_id}, provider: {median, stddev: Metric, source: "GENE_SELECTION", estimator_note}|null, provider_unavailable_reason|null, coverage: {examined_cases, assay_available_cases, cases_with_expression, returned_case_columns, valid_measurements, missing_measurements: Metric}}`. The local summary is the primary evidence; `n_missing` includes examined case columns the provider did not return, so a fully valid returned subset never reports zero missingness. The provider summary is retained verbatim as corroborating context with its estimator convention marked unverified only when it covers the whole cohort in one admitted request. Batch medians or standard deviations are never combined; batched cohorts record `BATCHED_PROVIDER_SUMMARY_NOT_COHORT_WIDE`.
 
 Cross-project direction is `NOT_EXAMINED`: mutation counts and expression dispersion carry no signed, comparable up/down effect. CNV summaries and recurrence fractions are Phase 4+ targets requiring their own methods; the Phase 0 planning shape is preserved only in this paragraph as intent.
 

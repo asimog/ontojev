@@ -171,18 +171,22 @@ def cohort_project_request(project_id: str) -> GDCRequest:
     )
 
 
-def cases_request(project_id: str, size: int = MAX_CASES_PAGE) -> GDCRequest:
+def cases_request(project_id: str, size: int = MAX_CASES_PAGE, *, offset: int = 0) -> GDCRequest:
     if not 1 <= size <= MAX_CASES_PAGE:
         raise EndpointError(f"cases size must be 1..{MAX_CASES_PAGE}")
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        raise EndpointError("cases offset must be a non-negative integer")
     return _request(
         resolve_endpoint("GET", "/cases"),
         {
             "size": size,
+            "from": offset,
             "sort": "case_id",
             "filters": _filter_json({"op": "in", "content": {"field": "project.project_id", "value": [project_id]}}),
             "fields": "case_id,submitter_id,project.project_id,samples.sample_type",
         },
         logical_query_id=f"cases:{project_id}",
+        page=(offset // size) + 1,
     )
 
 

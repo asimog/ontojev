@@ -328,6 +328,7 @@ class ProjectFrame:
     workflows: list[str]
     strategies: list[str]
     discovery_hits: dict[str, DiscoveryHit]
+    provider_summary_unavailable_reason: str | None = None
 
 
 def _sample_type_counts(cases: list[CaseRecord]) -> dict[str, int]:
@@ -390,7 +391,7 @@ def build_statistical_state(
             "case_set_artifact": None,
             "case_set_hash": frame.frame_hash,
             "sample_mapping_artifact": None,
-            "selection_method": "ALL_CASES_SINGLE_PAGE",
+            "selection_method": "ALL_CASES_PAGINATED",
             "selection_version": "1",
             "sweep_offset": None,
             "completeness": "COMPLETE",
@@ -524,6 +525,9 @@ def build_statistical_state(
             "availability": expression_availability,
             "local": local_record,
             "provider": provider_record,
+            "provider_unavailable_reason": (
+                frame.provider_summary_unavailable_reason if provider_record is None else None
+            ),
             "coverage": {
                 "examined_cases": metric("examined_cases", examined, "cases"),
                 "assay_available_cases": metric(
@@ -599,8 +603,11 @@ def build_statistical_state(
             "genome_build_note": "not observed in admitted endpoints",
         },
         "scope": {
+            "spec_id": scope_meta.get("spec_id"),
+            "research_spec": scope_meta.get("research_spec"),
             "domain": scope_meta.get("domain"),
             "cohort": scope_meta.get("cohort"),
+            "project_id": scope_meta.get("project_id"),
             "programs": sorted({frame.project_record.program_name for frame in ordered
                                 if frame.project_record.program_name}),
             "projects": [frame.project_id for frame in ordered],
@@ -611,7 +618,7 @@ def build_statistical_state(
             "sample_type_counts_by_project": {
                 frame.project_id: _sample_type_counts(frame.cases) for frame in ordered
             },
-            "examined_case_frame": scope_meta.get("examined_case_frame", "ALL_CASES_SINGLE_PAGE"),
+            "examined_case_frame": scope_meta.get("examined_case_frame", "ALL_CASES_PAGINATED"),
             "comparability": {
                 "statuses": list(COMPARABILITY_STATUSES),
                 "within_cohort": dict(WITHIN_COHORT_COMPARABILITY),

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
+
 from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
 from cancerjev.domain.events import canonical_json
 from cancerjev.jev.service import JevService
 from cancerjev.research.live import LiveOrchestrator
+from cancerjev.research.specs import LUAD_RESEARCH_V1, AcquisitionSpec, CohortSpec, ResearchSpec
 from cancerjev.research.wide import run_wide_evaluation
 from cancerjev.science.methods import METHODS
 from tests.integration.replay import GENES, ReplayTransport
@@ -14,7 +17,7 @@ from tests.jev.test_service import _register_state
 from tests.science.test_methods import _build, _frame
 
 
-def _orchestrator(runtime, monkeypatch, *, jev_adapter=None, **replay_options):
+def _orchestrator(runtime, monkeypatch, *, jev_adapter=None, research_spec=None, **replay_options):
     settings, repository, artifacts = runtime
     monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))
     holder: dict[str, ReplayTransport] = {}
@@ -28,8 +31,112 @@ def _orchestrator(runtime, monkeypatch, *, jev_adapter=None, **replay_options):
     if jev_adapter is not None:
         service = JevService(settings, repository, artifacts, adapter_factory=lambda: jev_adapter)
     orchestrator = LiveOrchestrator(settings, repository, artifacts, lambda event: None,
-                                    jev_service=service, transport_factory=factory)
+                                    jev_service=service, transport_factory=factory,
+                                    research_spec=research_spec or LUAD_RESEARCH_V1)
     return orchestrator, holder, repository
+
+
+def _test_spec(project_id="TCGA-LUAD", *, page_size=200, batch_size=200, max_cases=600):
+    return ResearchSpec(
+        spec_id=f"TEST_{project_id}_V1",
+        cohort=CohortSpec(cohort_id=project_id, domain="test lung cancer", project_id=project_id),
+        acquisition=AcquisitionSpec(
+            case_page_size=page_size, case_batch_size=batch_size, max_cohort_cases=max_cases,
+            discovery_gene_limit=2, count_gene_limit=2, candidate_gene_limit=2,
+            expression_file_sample_size=3,
+        ),
+    )
+
+
+def test_default_live_research_spec_is_luad(runtime):
+    settings, repository, artifacts = runtime
+    orchestrator = LiveOrchestrator(settings, repository, artifacts)
+    assert orchestrator.research_spec is LUAD_RESEARCH_V1
+    assert orchestrator.research_spec.cohort.project_id == "TCGA-LUAD"
+
+
+def test_alternate_research_spec_selects_only_its_project(runtime, monkeypatch):
+    artifacts = runtime[2]
+    spec = _test_spec("TCGA-LUSC", page_size=80, batch_size=80, max_cases=100)
+    orchestrator, holder, repository = _orchestrator(runtime, monkeypatch, research_spec=spec)
+    run_id = orchestrator.run()
+    run = repository.get_run(run_id)
+    assert run["status"] == "COMPLETED"
+    assert run["spec_id"] == spec.spec_id
+    assert run["selected_project_ids"] == ["TCGA-LUSC"]
+    assert run["project_id"] == "TCGA-LUSC"
+    assert run["acquisition"] == spec.as_dict()["acquisition"]
+    states = repository.list_table("statistical_states", run_id)
+    for row in states:
+        state = json.loads(artifacts.read(repository.artifact(row["artifact_id"])["relative_path"]))
+        assert state["scope"]["projects"] == ["TCGA-LUSC"]
+        assert state["scope"]["research_spec"] == spec.as_dict()
+        assert "TCGA-LUAD" not in state["scope"]["projects"]
+    scientific_requests = [
+        request for request in holder["transport"].requests
+        if request.endpoint.name in {"top_mutated_genes_by_project", "cases", "files"}
+    ]
+    assert scientific_requests
+    assert all("TCGA-LUSC" in str(request.params) for request in scientific_requests)
+
+
+def test_large_cohort_is_paged_batched_and_merged_deterministically(runtime, monkeypatch):
+    artifacts = runtime[2]
+    spec = _test_spec()
+    replay_options = {"project_case_counts": {"TCGA-LUAD": 520}, "drop_value_columns": 1}
+    first, first_holder, repository = _orchestrator(
+        runtime, monkeypatch, research_spec=spec, **replay_options,
+    )
+    first_run = first.run()
+    second, _, _ = _orchestrator(runtime, monkeypatch, research_spec=spec, **replay_options)
+    second_run = second.run()
+    assert repository.get_run(first_run)["status"] == "COMPLETED"
+    requests = first_holder["transport"].requests
+    case_requests = [request for request in requests if request.endpoint.name == "cases"]
+    assert [dict(request.params)["from"] for request in case_requests] == ["0", "200", "400"]
+    expression_requests = [
+        request for request in requests
+        if request.endpoint.name in {"gene_expression_availability", "gene_expression_values"}
+    ]
+    assert len(expression_requests) == 6
+    assert all(len(request.body["case_ids"]) <= 200 for request in expression_requests)
+    assert not any(request.endpoint.name == "gene_expression_gene_selection" for request in requests)
+
+    first_states = repository.list_table("statistical_states", first_run)
+    second_states = repository.list_table("statistical_states", second_run)
+    assert sorted(row["state_hash"] for row in first_states) == sorted(row["state_hash"] for row in second_states)
+    state = json.loads(artifacts.read(repository.artifact(first_states[0]["artifact_id"])["relative_path"]))
+    expression = state["expression"]["project_results"][0]
+    assert expression["local"]["n_returned"]["value"] == 517
+    assert expression["local"]["n_missing"]["value"] == 3
+    assert expression["coverage"]["examined_cases"]["value"] == 520
+    assert expression["provider"] is None
+    assert expression["provider_unavailable_reason"] == "BATCHED_PROVIDER_SUMMARY_NOT_COHORT_WIDE"
+
+
+def test_case_limit_duplicate_and_total_drift_fail_closed(runtime, monkeypatch):
+    too_small = _test_spec(max_cases=300)
+    orchestrator, _, repository = _orchestrator(
+        runtime, monkeypatch, research_spec=too_small,
+        project_case_counts={"TCGA-LUAD": 520},
+    )
+    run_id = orchestrator.run()
+    assert repository.get_run(run_id)["outcome_reason"] == "COHORT_CASE_LIMIT_EXCEEDED"
+
+    bounded = _test_spec()
+    duplicate, _, _ = _orchestrator(
+        runtime, monkeypatch, research_spec=bounded,
+        project_case_counts={"TCGA-LUAD": 520}, duplicate_case_across_pages=True,
+    )
+    duplicate_run = duplicate.run()
+    assert repository.get_run(duplicate_run)["outcome_reason"] == "DUPLICATE_CASE_ID"
+
+    drifting, _, _ = _orchestrator(
+        runtime, monkeypatch, research_spec=bounded,
+        project_case_counts={"TCGA-LUAD": 520}, inconsistent_case_total_after_first=True,
+    )
+    drifting_run = drifting.run()
+    assert repository.get_run(drifting_run)["outcome_reason"] == "CASE_TOTAL_INCONSISTENT"
 
 
 def test_live_replay_with_jev_wide_evaluation(runtime, monkeypatch):

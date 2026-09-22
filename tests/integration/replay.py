@@ -36,9 +36,11 @@ def status_body() -> bytes:
                   "status": "OK", "tag": "9.0.0"})
 
 
-def projects_body() -> bytes:
+def projects_body(projects: dict[str, int], selected_project_id: str) -> bytes:
     hits = []
-    for project_id, case_count in PROJECTS.items():
+    for project_id, case_count in projects.items():
+        if project_id != selected_project_id:
+            continue
         hits.append({
             "project_id": project_id, "name": f"Project {project_id}",
             "program": {"name": "TESTPROG"}, "primary_site": ["Breast"],
@@ -87,17 +89,20 @@ def genes_body() -> bytes:
     ], "pagination": {"count": 2, "total": 2, "size": 10, "from": 0, "pages": 1}}})
 
 
-def case_ids(project_id: str) -> list[str]:
-    return [f"{project_id}-case-{index:03d}" for index in range(PROJECTS[project_id])]
+def case_ids(project_id: str, projects: dict[str, int]) -> list[str]:
+    return [f"{project_id}-case-{index:04d}" for index in range(projects[project_id])]
 
 
-def cases_body(project_id: str, *, incomplete: bool = False) -> bytes:
-    ids = case_ids(project_id)
+def cases_body(project_id: str, projects: dict[str, int], *, size: int, offset: int,
+               incomplete: bool = False) -> bytes:
+    all_ids = case_ids(project_id, projects)
+    ids = all_ids[offset:offset + size]
     hits = [{"case_id": case_id, "submitter_id": case_id.upper(), "project": {"project_id": project_id},
              "samples": [{"sample_type": "Primary Tumor"}]} for case_id in ids]
-    total = len(ids) + (5 if incomplete else 0)
+    total = len(all_ids) + (5 if incomplete else 0)
     return _json({"data": {"hits": hits, "pagination": {"count": len(hits), "total": total,
-                                                       "size": 250, "from": 0, "pages": 2 if incomplete else 1}}})
+                                                       "size": size, "from": offset,
+                                                       "pages": (total + size - 1) // size}}})
 
 
 def files_body(project_id: str, *, controlled: bool = False) -> bytes:
@@ -149,14 +154,19 @@ class ReplayTransport:
     """Network-boundary test double: real artifacts, real shapes, no sockets."""
 
     def __init__(self, artifacts: ArtifactStore, run_id: str, *, controlled_files: bool = False,
-                 incomplete_frame: bool = False, empty_expression_projects: set[str] | None = None,
-                 drop_value_columns: int = 0) -> None:
+                  incomplete_frame: bool = False, empty_expression_projects: set[str] | None = None,
+                  drop_value_columns: int = 0, project_case_counts: dict[str, int] | None = None,
+                  duplicate_case_across_pages: bool = False,
+                  inconsistent_case_total_after_first: bool = False) -> None:
         self.artifacts = artifacts
         self.run_id = run_id
         self.controlled_files = controlled_files
         self.incomplete_frame = incomplete_frame
         self.empty_expression_projects = empty_expression_projects or set()
         self.drop_value_columns = drop_value_columns
+        self.project_case_counts = project_case_counts or PROJECTS
+        self.duplicate_case_across_pages = duplicate_case_across_pages
+        self.inconsistent_case_total_after_first = inconsistent_case_total_after_first
         self.requests: list[GDCRequest] = []
         self._counter = 0
 
@@ -170,7 +180,7 @@ class ReplayTransport:
         if name == "status":
             body = status_body()
         elif name == "projects":
-            body = projects_body()
+            body = projects_body(self.project_case_counts, _filter_project(request))
         elif name == "top_mutated_genes_by_project":
             body = discovery_body(_filter_project(request))
         elif name == "top_cases_counts_by_genes":
@@ -180,7 +190,23 @@ class ReplayTransport:
         elif name == "genes":
             body = genes_body()
         elif name == "cases":
-            body = cases_body(_filter_project(request), incomplete=self.incomplete_frame)
+            params = dict(request.params)
+            offset = int(params["from"])
+            body = cases_body(
+                _filter_project(request), self.project_case_counts,
+                size=int(params["size"]), offset=offset,
+                incomplete=self.incomplete_frame,
+            )
+            if offset and (self.duplicate_case_across_pages or self.inconsistent_case_total_after_first):
+                document = json.loads(body)
+                if self.duplicate_case_across_pages:
+                    project_id = _filter_project(request)
+                    document["data"]["hits"][0]["case_id"] = case_ids(
+                        project_id, self.project_case_counts,
+                    )[offset - 1]
+                if self.inconsistent_case_total_after_first:
+                    document["data"]["pagination"]["total"] += 1
+                body = _json(document)
         elif name == "files":
             body = files_body(_filter_project(request), controlled=self.controlled_files)
         elif name == "gene_expression_availability":
