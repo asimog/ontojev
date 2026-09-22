@@ -39,7 +39,7 @@ export function EventFeed({ events }: { events: RunEvent[] }) {
       <p className="sr-only" aria-live="polite">{events.length} canonical events rendered</p>
       <div ref={container} onScroll={onScroll} className="event-feed" data-testid="event-feed">
         {events.map((event) => (
-          <details key={event.event_id} className="event">
+          <details key={event.event_id} className="event" data-event-id={event.event_id}>
             <summary>
               <span className="sequence">{String(event.sequence).padStart(3, "0")}</span>
               <span className="event-time">{formatTime(event.timestamp)}</span>

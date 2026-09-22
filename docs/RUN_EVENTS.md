@@ -22,7 +22,7 @@ RunEventV1
   idempotency_key: string                   # local step identity
 ```
 
-An additional 96 KiB whole-event cap bounds envelope overhead. Large outputs go to artifacts before commit. Secrets, raw matrices, and full prompts are not event payloads. An unknown type/version is a compatibility error, not silently parsed into status.
+An additional 96 KiB whole-event cap bounds envelope overhead. Large outputs go to artifacts before commit. Secrets, raw matrices, and full prompts are not event payloads. An unknown type/version is a compatibility error, not silently parsed into status: `domain/events.py` owns `REGISTERED_EVENT_TYPES` (the Phase 1 vocabulary below) and validates `type` and `schema_version` before a sequence is allocated, so a rejected append stores no event and mutates no projection.
 
 Payload families:
 
@@ -44,7 +44,7 @@ Payload families:
 
 Use stage start/completion records for every Phase 1 stage. This resolves the master spec's shorthand list (`INVENTORY`, `FOLLOWUP`, etc.) as stage names rather than a competing event vocabulary. Operation-specific records provide detail; counters are updated only by their designated records, never double-counted by stage completion.
 
-Phase 1 registers this exact subset of the families above. Detail records implemented per item rather than per stage: `INVENTORY_COMPLETED`, `WIDE_SCAN_STARTED`, `WIDE_SCAN_COMPLETED`, `STATISTICAL_STATE_CREATED`, `JEV_WIDE_STATE_EVALUATED` (one per evaluated state), `CANDIDATE_PROMOTED`, `CANDIDATE_DEFERRED`, `EVIDENCE_STATE_CREATED`, `EVIDENCE_BUILD_COMPLETED` (per evidence revision), `JEV_DEEP_COMPLETED` (one per evaluation), `HYPOTHESES_GENERATED`, `HYPOTHESIS_EVALUATED` (one per hypothesis), `FOLLOWUP_STARTED`, `FOLLOWUP_COMPLETED`, `DOSSIER_CREATED`. `STAGE_STARTED`/`STAGE_COMPLETED` carry every stage listed in the stage enum, including repeats per candidate and iteration. Later phases add the GDC/provider families; no Phase 1 code path emits them.
+Phase 1 registers this exact subset of the families above. Detail records implemented per item rather than per stage: `INVENTORY_COMPLETED`, `WIDE_SCAN_STARTED`, `WIDE_SCAN_COMPLETED`, `STATISTICAL_STATE_CREATED`, `JEV_WIDE_STATE_EVALUATED` (one per evaluated state), `CANDIDATE_PROMOTED`, `CANDIDATE_DEFERRED`, `EVIDENCE_STATE_CREATED`, `EVIDENCE_BUILD_COMPLETED` (per evidence revision), `JEV_DEEP_COMPLETED` (one per evaluation), `HYPOTHESES_GENERATED`, `HYPOTHESIS_EVALUATED` (one per hypothesis), `FOLLOWUP_STARTED`, `FOLLOWUP_COMPLETED`, `DOSSIER_CREATED`. `STAGE_STARTED`/`STAGE_COMPLETED` carry every stage listed in the stage enum, including repeats per candidate and iteration. Later phases add the GDC/provider families; no Phase 1 code path emits them. The full registered set is exactly the 22 types in `REGISTERED_EVENT_TYPES`; a test asserts the orchestrator's emissions are a subset of it.
 
 `domain/runs.py` owns allowed transitions and `domain/events.py` owns payload validation and the reducer. `append_event` starts a short SQLite transaction, validates current state, allocates `last_sequence+1`, inserts the event, applies the reducer and commits. Uniqueness on `(run_id,sequence)`, `event_id`, and `(run_id,idempotency_key)` prevents duplicates. A failed transaction consumes no sequence. An uncertain caller retries with the same idempotency key and receives the existing event.
 

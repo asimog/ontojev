@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 
 from cancerjev.storage.artifacts import ArtifactStore
+from cancerjev.storage.database import SCHEMA_VERSION
 from cancerjev.storage.repositories import Repository
 
 router = APIRouter()
@@ -23,7 +24,7 @@ def health(request: Request):
     repository, _ = services(request)
     with repository.database.read() as connection:
         connection.execute("SELECT version FROM schema_info").fetchone()
-    return {"status": "ok", "schema_version": 1}
+    return {"status": "ok", "schema_version": SCHEMA_VERSION}
 
 
 @router.get("/api/system")
@@ -39,7 +40,7 @@ def system(request: Request):
     if active and heartbeat_at:
         fresh = (datetime.now(UTC) - datetime.fromisoformat(heartbeat_at.replace("Z", "+00:00"))).total_seconds() <= 60
     return {
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "phase": 1,
         "mode": "FAKE_ONLY",
         "providers": {"gdc": False, "jev": False, "llm": False},
@@ -50,7 +51,7 @@ def system(request: Request):
             "database_bytes": settings.database_path.stat().st_size if settings.database_path.exists() else 0,
             "artifact_files": artifacts["count"],
         },
-        "versions": {"api": "1.0.0", "schema": 1, "worker": worker["version"] if worker else None},
+        "versions": {"api": "1.0.0", "schema": SCHEMA_VERSION, "worker": worker["version"] if worker else None},
         "budget_defaults": {"gdc_requests": None, "gdc_bytes": None, "reason": "No live provider budgets exist in Phase 1 fixture mode."},
         "cursor": {"present": False, "reason": "No discovery cursor exists in Phase 1 fixture mode."},
         "cache": {"entries": 0, "reason": "The GDC cache is Phase 2."},
@@ -138,7 +139,8 @@ def dossier(dossier_id: UUID, request: Request, format: Literal["json", "markdow
         raise HTTPException(404, detail="dossier not found")
     artifact_id = row["json_artifact_id"] if format == "json" else row["markdown_artifact_id"]
     metadata = repository.artifact(artifact_id)
-    assert metadata
+    if not metadata:
+        raise HTTPException(503, detail="dossier artifact metadata missing")
     try:
         content = artifacts.read(metadata["relative_path"], metadata["sha256"])
     except (OSError, ValueError) as exc:

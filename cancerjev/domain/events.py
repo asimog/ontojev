@@ -11,6 +11,20 @@ from cancerjev.domain.states import STAGES
 
 DATA_LIMIT = 65_536
 EVENT_LIMIT = 96 * 1024
+SUPPORTED_SCHEMA_VERSION = 1
+
+# Phase 1 registered vocabulary: every type the fixture orchestrator and the
+# recovery path may commit. An unknown type is a compatibility error.
+REGISTERED_EVENT_TYPES = frozenset({
+    "RUN_CREATED", "RUN_STARTED", "RUN_COMPLETED", "RUN_FAILED", "RUN_STOPPED",
+    "STAGE_STARTED", "STAGE_COMPLETED",
+    "INVENTORY_COMPLETED", "WIDE_SCAN_STARTED", "WIDE_SCAN_COMPLETED",
+    "STATISTICAL_STATE_CREATED", "JEV_WIDE_STATE_EVALUATED",
+    "CANDIDATE_PROMOTED", "CANDIDATE_DEFERRED",
+    "EVIDENCE_STATE_CREATED", "EVIDENCE_BUILD_COMPLETED", "JEV_DEEP_COMPLETED",
+    "HYPOTHESES_GENERATED", "HYPOTHESIS_EVALUATED",
+    "FOLLOWUP_STARTED", "FOLLOWUP_COMPLETED", "DOSSIER_CREATED",
+})
 
 
 def utc_now() -> str:
@@ -19,7 +33,7 @@ def utc_now() -> str:
 
 class RunEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    schema_version: int = 1
+    schema_version: int = SUPPORTED_SCHEMA_VERSION
     event_id: UUID = Field(default_factory=uuid4)
     run_id: UUID
     sequence: int = Field(ge=1)
@@ -33,6 +47,20 @@ class RunEvent(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
     artifact_refs: list[dict[str, Any]] = Field(default_factory=list, max_length=16)
     idempotency_key: str = Field(min_length=1, max_length=255)
+
+    @field_validator("schema_version")
+    @classmethod
+    def supported_version(cls, value: int) -> int:
+        if value != SUPPORTED_SCHEMA_VERSION:
+            raise ValueError(f"unsupported RunEvent schema_version {value}")
+        return value
+
+    @field_validator("type")
+    @classmethod
+    def registered_type(cls, value: str) -> str:
+        if value not in REGISTERED_EVENT_TYPES:
+            raise ValueError(f"unknown RunEvent type {value}")
+        return value
 
     @field_validator("stage")
     @classmethod

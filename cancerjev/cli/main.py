@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import time
 
 from cancerjev.cli.console import render_event, render_json_event
@@ -34,7 +35,7 @@ def main(argv: list[str] | None = None) -> None:
         run = repository.get_run(args.run_id)
         if not run:
             raise SystemExit(f"Unknown run: {args.run_id}")
-        print(run)
+        print(json.dumps(run, indent=2, sort_keys=True), flush=True)
         if args.events:
             page = repository.events(args.run_id, 0, 500)
             for event in page["items"]:

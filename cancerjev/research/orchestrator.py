@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-import hashlib
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4, uuid5
 
 from cancerjev.config import Settings
 from cancerjev.domain.dossier import DOSSIER_SECTIONS
 from cancerjev.domain.events import canonical_json, utc_now
+from cancerjev.domain.identity import (
+    content_hash,
+    evidence_state_identity_payload,
+    statistical_state_identity_payload,
+)
 from cancerjev.dossier.renderer import WARNING, render_markdown
 from cancerjev.research.fixtures import (
     evidence,
@@ -28,9 +32,10 @@ class DemoOrchestrator:
     repository: Repository
     artifacts: ArtifactStore
     emit: Callable[[dict[str, Any]], None]
+    worker_id: str = field(default_factory=lambda: str(uuid4()))
 
     def run(self, *, stop_requested: Callable[[], bool] = lambda: False) -> str:
-        worker_id = str(uuid4())
+        worker_id = self.worker_id
         self.repository.heartbeat(worker_id)
         run_id = self.repository.create_run(worker_id)
         def make_id(name: str) -> str:
@@ -43,7 +48,7 @@ class DemoOrchestrator:
             self._stage(run_id, "GDC_FAST_SEARCH", lambda: self._event(run_id, "WIDE_SCAN_STARTED", "fast-search:synthetic", "FAKE search generated locally; GDC requests remain zero.", stage="GDC_FAST_SEARCH", data={"external_requests": 0, "fixture": True}))
             def generate_states():
                 for index, state in enumerate(statistical_states(run_id, make_id)):
-                    state_hash = hashlib.sha256(canonical_json(state)).hexdigest()
+                    state_hash = content_hash(statistical_state_identity_payload(state))
                     state["state_hash"] = state_hash
                     artifact = self._publish_json(run_id, f"statistical_states/{state['state_id']}.json", state, "statistical-state")
                     disposition = "PROMOTED" if index in PROMOTED_STATE_INDEXES else "NOT_SELECTED"
@@ -58,11 +63,12 @@ class DemoOrchestrator:
             candidates: list[dict[str, Any]] = []
             def wide():
                 for index, state in enumerate(states):
-                    vector = judgment_vector("PROMOTE" if index in PROMOTED_STATE_INDEXES else "DEFER", 0.88 if index == 0 else 0.74 if index == 3 else 0.3, 5 if index == 0 else 4 if index == 3 else 2)
+                    chosen = "PROMOTE" if index in PROMOTED_STATE_INDEXES else "DEFER"
+                    vector = judgment_vector("wide_pattern_route", chosen, 0.88 if index == 0 else 0.74 if index == 3 else 0.3, 4 if index == 0 else 3 if index == 3 else 1)
                     evaluation_id = make_id(f"wide-eval:{index}")
-                    evaluation = {"evaluation_id": evaluation_id, "purpose": "WIDE", "state_id": state["state_id"], "mode": "FAKE", "model": "fixture-jev-wide-v1", "questions": vector}
+                    evaluation = {"evaluation_id": evaluation_id, "purpose": "WIDE", "input_ref_kind": "STATISTICAL_STATE", "input_ref_id": state["state_id"], "mode": "FAKE", "model": "fixture-jev-wide-v1", "questions": vector}
                     artifact = self._publish_json(run_id, f"jev/{evaluation_id}.json", evaluation, "jev-evaluation")
-                    regs = [self.repository.artifact_registration(artifact, run_id), ("INSERT INTO jev_evaluations(evaluation_id,run_id,candidate_id,state_id,purpose,artifact_id,vector_json,model,created_at) VALUES(?,?,?,?,?,?,?,?,?)", (evaluation_id, run_id, None, state["state_id"], "WIDE", artifact.artifact_id, _json(vector), "fixture-jev-wide-v1", utc_now()))]
+                    regs = [self.repository.artifact_registration(artifact, run_id), ("INSERT INTO jev_evaluations(evaluation_id,run_id,candidate_id,input_ref_kind,input_ref_id,purpose,artifact_id,vector_json,model,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (evaluation_id, run_id, None, "STATISTICAL_STATE", state["state_id"], "WIDE", artifact.artifact_id, _json(vector), "fixture-jev-wide-v1", utc_now()))]
                     self._event(run_id, "JEV_WIDE_STATE_EVALUATED", f"wide:{index}", f"Fixture Jev-shaped wide judgment for {state['entity']['gene_symbol']}.", stage="JEV_WIDE", data={"evaluation_id": evaluation_id, "state_id": state["state_id"], "judgment_vector": vector, "external_calls": 0}, artifact_refs=[artifact.ref()], registrations=regs)
                     if index in PROMOTED_STATE_INDEXES:
                         slot = len(candidates) + 1
@@ -86,11 +92,11 @@ class DemoOrchestrator:
                 self._event(run_id, "CANDIDATE_DEFERRED", "candidate:2:deferred", "Deferred second synthetic candidate after fragility branch.", stage="DEEP_ANALYSIS", candidate_id=deferred["candidate_id"], data={"terminal_state": "DEFERRED", "reason": "FRAGILE_SYNTHETIC_PATTERN"}, registrations=regs)
             self._stage(run_id, "DEEP_ANALYSIS", deep, candidate_id=primary["candidate_id"])
             self._stage(run_id, "EVIDENCE_BUILD", lambda: self._event(run_id, "EVIDENCE_BUILD_COMPLETED", "evidence:baseline:built", "Baseline deterministic fixture evidence available.", stage="EVIDENCE_BUILD", candidate_id=primary["candidate_id"], data={"evidence_state_id": baseline["evidence_state_id"], "availability": "OBSERVED"}), candidate_id=primary["candidate_id"])
-            deep_vector = judgment_vector("FOLLOW_UP", 0.82, 4)
+            deep_vector = judgment_vector("deep_route", "FOLLOW_UP", 0.82, 3)
             def deep_jev():
                 evaluation_id = make_id("deep-eval:baseline")
                 answers = {"questions": [{"question": "Is the pattern coherent?", "primitive": "Noul", "answer": deep_vector["noul"], "applicability": "APPLICABLE"}, {"question": "Which route best resolves fragility?", "primitive": "Choice", "answer": deep_vector["choice"], "applicability": "APPLICABLE"}, {"question": "How useful is follow-up?", "primitive": "Score", "answer": deep_vector["score"], "applicability": "APPLICABLE"}]}
-                self._record_evaluation(run_id, primary["candidate_id"], evaluation_id, baseline["evidence_state_id"], "DEEP", answers, "deep:baseline")
+                self._record_evaluation(run_id, primary["candidate_id"], evaluation_id, "EVIDENCE_STATE", baseline["evidence_state_id"], "DEEP", answers, "deep:baseline")
             self._stage(run_id, "JEV_DEEP", deep_jev, candidate_id=primary["candidate_id"])
             fixture_hypotheses = hypotheses(primary["candidate_id"], baseline["evidence_state_id"], make_id)
             def make_hypotheses():
@@ -105,11 +111,11 @@ class DemoOrchestrator:
             self._stage(run_id, "HYPOTHESIS_GENERATION", make_hypotheses, candidate_id=primary["candidate_id"])
             def verify():
                 for index, hypothesis in enumerate(fixture_hypotheses):
-                    vector = {"support": round(0.72 - index * 0.17, 2), "contradiction": round(0.21 + index * 0.18, 2), "exceeds_evidence": 0.61, "discriminability": 0.86, "registered_test_exists": True, "unavailable_dependency": False, **judgment_vector("TESTABLE", 0.78, 4)}
+                    vector = {"support": round(0.72 - index * 0.17, 2), "contradiction": round(0.21 + index * 0.18, 2), "exceeds_evidence": 0.61, "discriminability": 0.86, "registered_test_exists": True, "unavailable_dependency": False, **judgment_vector("hypothesis_testability", "TESTABLE", 0.78, 3)}
                     evaluation_id = make_id(f"hypothesis-eval:{index}")
-                    item = {"evaluation_id": evaluation_id, "candidate_id": primary["candidate_id"], "hypothesis_id": hypothesis["hypothesis_id"], "purpose": "HYPOTHESIS", "mode": "FAKE", "model": "fixture-jev-hypothesis-v1", "answer_vector": vector, "external_calls": 0}
+                    item = {"evaluation_id": evaluation_id, "candidate_id": primary["candidate_id"], "hypothesis_id": hypothesis["hypothesis_id"], "purpose": "HYPOTHESIS", "input_ref_kind": "HYPOTHESIS", "input_ref_id": hypothesis["hypothesis_id"], "mode": "FAKE", "model": "fixture-jev-hypothesis-v1", "answer_vector": vector, "external_calls": 0}
                     artifact = self._publish_json(run_id, f"jev/{evaluation_id}.json", item, "jev-evaluation")
-                    regs = [self.repository.artifact_registration(artifact, run_id), ("INSERT INTO jev_evaluations(evaluation_id,run_id,candidate_id,state_id,purpose,artifact_id,vector_json,model,created_at) VALUES(?,?,?,?,?,?,?,?,?)", (evaluation_id, run_id, primary["candidate_id"], hypothesis["hypothesis_id"], "HYPOTHESIS", artifact.artifact_id, _json(vector), "fixture-jev-hypothesis-v1", utc_now()))]
+                    regs = [self.repository.artifact_registration(artifact, run_id), ("INSERT INTO jev_evaluations(evaluation_id,run_id,candidate_id,input_ref_kind,input_ref_id,purpose,artifact_id,vector_json,model,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (evaluation_id, run_id, primary["candidate_id"], "HYPOTHESIS", hypothesis["hypothesis_id"], "HYPOTHESIS", artifact.artifact_id, _json(vector), "fixture-jev-hypothesis-v1", utc_now()))]
                     self._event(run_id, "HYPOTHESIS_EVALUATED", f"hypothesis:{index}:evaluated", f"Independently evaluated fixture hypothesis {index + 1}.", stage="HYPOTHESIS_VERIFICATION", candidate_id=primary["candidate_id"], data={"evaluation_id": evaluation_id, "hypothesis_id": hypothesis["hypothesis_id"], "judgment_vector": vector, "external_calls": 0}, artifact_refs=[artifact.ref()], registrations=regs)
             self._stage(run_id, "HYPOTHESIS_VERIFICATION", verify, candidate_id=primary["candidate_id"])
             followup_evidence: dict[str, Any] = {}
@@ -124,7 +130,7 @@ class DemoOrchestrator:
                 self._event(run_id, "FOLLOWUP_COMPLETED", "followup:completed", "Fixture follow-up changed the descriptive value from 0.88 to 0.61; baseline remains unchanged.", stage="FOLLOWUP", candidate_id=primary["candidate_id"], iteration=1, data={"action_id": action_id, "execution_id": execution_id, "input_evidence_state_id": baseline["evidence_state_id"], "output_evidence_state_id": followup_evidence["evidence_state_id"], "outcome": "WEAKENED", "before": 0.88, "after": 0.61}, registrations=regs)
             self._stage(run_id, "FOLLOWUP", followup, candidate_id=primary["candidate_id"])
             self._stage(run_id, "EVIDENCE_BUILD", lambda: self._event(run_id, "EVIDENCE_BUILD_COMPLETED", "evidence:followup:built", "New post-follow-up evidence revision available.", stage="EVIDENCE_BUILD", candidate_id=primary["candidate_id"], iteration=1, data={"evidence_state_id": followup_evidence["evidence_state_id"], "previous_evidence_state_id": baseline["evidence_state_id"]}), candidate_id=primary["candidate_id"], iteration=1)
-            self._stage(run_id, "JEV_DEEP", lambda: self._record_evaluation(run_id, primary["candidate_id"], make_id("deep-eval:followup"), followup_evidence["evidence_state_id"], "DEEP", {"questions": [{"question": "Did fixture follow-up weaken the lead?", "primitive": "Choice", "answer": judgment_vector("WEAKENED", 0.84, 3)["choice"], "applicability": "APPLICABLE"}]}, "deep:followup"), candidate_id=primary["candidate_id"], iteration=1)
+            self._stage(run_id, "JEV_DEEP", lambda: self._record_evaluation(run_id, primary["candidate_id"], make_id("deep-eval:followup"), "EVIDENCE_STATE", followup_evidence["evidence_state_id"], "DEEP", {"questions": [{"question": "Did fixture follow-up weaken the lead?", "primitive": "Choice", "answer": judgment_vector("followup_outcome", "WEAKENED", 0.84, 2)["choice"], "applicability": "APPLICABLE"}]}, "deep:followup"), candidate_id=primary["candidate_id"], iteration=1)
             self._stage(run_id, "DOSSIER", lambda: self._make_dossier(run_id, primary, baseline, followup_evidence, fixture_hypotheses, make_id), candidate_id=primary["candidate_id"])
             self._event(run_id, "RUN_COMPLETED", "run:completed", "FAKE SYNTHETIC fixture run completed with one dossier and one deferred candidate.", data={"status": "COMPLETED", "coverage": "COMPLETE_FOR_SCOPE", "external_provider_calls": {"gdc": 0, "jev": 0, "llm": 0}})
             return run_id
@@ -144,17 +150,16 @@ class DemoOrchestrator:
         self._event(run_id, "STAGE_COMPLETED", f"{key}:completed", f"{stage} completed.", stage=stage, candidate_id=candidate_id, iteration=iteration, data={"stage": stage, "outcome": "COMPLETED", "elapsed_ms": int((time.monotonic() - start) * 1000)})
 
     def _record_evidence(self, run_id, candidate, item, suffix, message, iteration=0):
-        content = canonical_json(item)
-        item["evidence_hash"] = hashlib.sha256(content).hexdigest()
+        item["evidence_hash"] = content_hash(evidence_state_identity_payload(item))
         artifact = self._publish_json(run_id, f"evidence/{item['evidence_state_id']}.json", item, "evidence-state")
         regs = [self.repository.artifact_registration(artifact, run_id), ("INSERT INTO evidence_states(evidence_state_id,run_id,candidate_id,previous_evidence_state_id,iteration,evidence_hash,artifact_id,summary_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)", (item["evidence_state_id"], run_id, candidate["candidate_id"], item.get("previous_evidence_state_id"), iteration, item["evidence_hash"], artifact.artifact_id, _json({"entity": item["entity"], "observation": item["deterministic_observations"][0], "fixture": True}), utc_now())), ("UPDATE candidates SET status='DEEP_ANALYZED',current_stage='EVIDENCE_BUILD',latest_evidence_state_id=?,updated_at=? WHERE candidate_id=?", (item["evidence_state_id"], utc_now(), candidate["candidate_id"]))]
         self._event(run_id, "EVIDENCE_STATE_CREATED", f"evidence:{suffix}:created", message, stage="EVIDENCE_BUILD", candidate_id=candidate["candidate_id"], iteration=iteration, data={"evidence_state_id": item["evidence_state_id"], "previous_evidence_state_id": item.get("previous_evidence_state_id"), "availability": "OBSERVED", "n": item["deterministic_observations"][0]["n_effective"], "effect_like_value": item["deterministic_observations"][0]["effect"]["value"], "synthetic": True}, artifact_refs=[artifact.ref()], registrations=regs)
 
-    def _record_evaluation(self, run_id, candidate_id, evaluation_id, state_id, purpose, vector, key):
-        item = {"evaluation_id": evaluation_id, "candidate_id": candidate_id, "state_id": state_id, "purpose": purpose, "mode": "FAKE", "model": "fixture-jev-deep-v1", "answer_vector": vector, "external_calls": 0}
+    def _record_evaluation(self, run_id, candidate_id, evaluation_id, input_ref_kind, input_ref_id, purpose, vector, key):
+        item = {"evaluation_id": evaluation_id, "candidate_id": candidate_id, "input_ref_kind": input_ref_kind, "input_ref_id": input_ref_id, "purpose": purpose, "mode": "FAKE", "model": "fixture-jev-deep-v1", "answer_vector": vector, "external_calls": 0}
         artifact = self._publish_json(run_id, f"jev/{evaluation_id}.json", item, "jev-evaluation")
-        regs = [self.repository.artifact_registration(artifact, run_id), ("INSERT INTO jev_evaluations(evaluation_id,run_id,candidate_id,state_id,purpose,artifact_id,vector_json,model,created_at) VALUES(?,?,?,?,?,?,?,?,?)", (evaluation_id, run_id, candidate_id, state_id, purpose, artifact.artifact_id, _json(vector), "fixture-jev-deep-v1", utc_now()))]
-        self._event(run_id, "JEV_DEEP_COMPLETED", key, "Fixture Jev-shaped deep judgment vector recorded; no Jev call made.", stage="JEV_DEEP", candidate_id=candidate_id, data={"evaluation_id": evaluation_id, "state_id": state_id, "judgment_vector": vector, "external_calls": 0}, artifact_refs=[artifact.ref()], registrations=regs)
+        regs = [self.repository.artifact_registration(artifact, run_id), ("INSERT INTO jev_evaluations(evaluation_id,run_id,candidate_id,input_ref_kind,input_ref_id,purpose,artifact_id,vector_json,model,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (evaluation_id, run_id, candidate_id, input_ref_kind, input_ref_id, purpose, artifact.artifact_id, _json(vector), "fixture-jev-deep-v1", utc_now()))]
+        self._event(run_id, "JEV_DEEP_COMPLETED", key, "Fixture Jev-shaped deep judgment vector recorded; no Jev call made.", stage="JEV_DEEP", candidate_id=candidate_id, data={"evaluation_id": evaluation_id, "input_ref_kind": input_ref_kind, "input_ref_id": input_ref_id, "judgment_vector": vector, "external_calls": 0}, artifact_refs=[artifact.ref()], registrations=regs)
 
     def _make_dossier(self, run_id, candidate, baseline, after, fixture_hypotheses, make_id):
         dossier_id = make_id("dossier:primary")
@@ -183,7 +188,7 @@ class DemoOrchestrator:
     def _event(self, run_id: str, event_type: str, key: str, message: str, **kwargs):
         event = self.repository.append_event(run_id, event_type=event_type, idempotency_key=key, message=message, **kwargs)
         self.emit(event)
-        self.repository.heartbeat(str(event["run_id"]))
+        self.repository.heartbeat(self.worker_id)
         return event
 
     def _delay(self):

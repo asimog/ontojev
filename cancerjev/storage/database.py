@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+IMMUTABLE_TABLES = (
+    "run_events", "artifacts", "statistical_states", "evidence_states",
+    "jev_evaluations", "hypotheses", "followup_executions", "dossiers",
+)
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS schema_info(version INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS schema_info(version INTEGER NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS research_runs(
  run_id TEXT PRIMARY KEY, mode TEXT NOT NULL, fixture_id TEXT, fixture_version TEXT,
  status TEXT NOT NULL, current_stage TEXT, last_sequence INTEGER NOT NULL DEFAULT 0,
@@ -50,7 +56,8 @@ CREATE TABLE IF NOT EXISTS evidence_states(
 );
 CREATE TABLE IF NOT EXISTS jev_evaluations(
  evaluation_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, candidate_id TEXT,
- state_id TEXT, purpose TEXT NOT NULL, artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id),
+ input_ref_kind TEXT NOT NULL, input_ref_id TEXT NOT NULL, purpose TEXT NOT NULL,
+ artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id),
  vector_json TEXT NOT NULL, model TEXT NOT NULL, created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS hypotheses(
@@ -74,7 +81,30 @@ CREATE INDEX IF NOT EXISTS idx_dossiers_created ON dossiers(created_at DESC,doss
 CREATE TABLE IF NOT EXISTS worker_status(
  singleton INTEGER PRIMARY KEY CHECK(singleton=1), owner_id TEXT, heartbeat_at TEXT, version TEXT
 );
-"""
+""" + "".join(
+    f"CREATE TRIGGER IF NOT EXISTS {table}_no_update BEFORE UPDATE ON {table} "
+    f"BEGIN SELECT RAISE(ABORT, '{table} is immutable'); END;\n"
+    f"CREATE TRIGGER IF NOT EXISTS {table}_no_delete BEFORE DELETE ON {table} "
+    f"BEGIN SELECT RAISE(ABORT, '{table} is immutable'); END;\n"
+    for table in IMMUTABLE_TABLES
+)
+
+
+def _enable_wal(connection: sqlite3.Connection) -> None:
+    """Enable WAL with bounded retries.
+
+    Changing the journal mode needs a brief exclusive lock and does not honour
+    busy_timeout, so simultaneous first connections (API + research process)
+    can otherwise fail with "database is locked".
+    """
+    for attempt in range(5):
+        try:
+            connection.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError:
+            if attempt == 4:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
 
 class Database:
@@ -87,20 +117,33 @@ class Database:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA busy_timeout=5000")
-        connection.execute("PRAGMA journal_mode=WAL")
+        _enable_wal(connection)
         connection.execute(f"PRAGMA synchronous={'FULL' if write else 'NORMAL'}")
         return connection
 
     def bootstrap(self) -> None:
-        with self.connect(write=True) as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        connection = self.connect(write=True)
+        try:
             connection.executescript(SCHEMA)
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute("SELECT version FROM schema_info").fetchone()
             if row is None:
-                connection.execute("INSERT INTO schema_info(version) VALUES(?)", (SCHEMA_VERSION,))
+                connection.execute(
+                    "INSERT INTO schema_info(version) SELECT ? WHERE NOT EXISTS (SELECT 1 FROM schema_info)",
+                    (SCHEMA_VERSION,),
+                )
             elif row["version"] != SCHEMA_VERSION:
-                raise RuntimeError(f"unsupported database schema {row['version']}")
+                raise RuntimeError(
+                    f"unsupported database schema {row['version']}; this build expects schema {SCHEMA_VERSION}. "
+                    "Phase 1 fixture data is not migrated: move or delete the existing data directory."
+                )
             connection.commit()
+        except Exception:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     @contextmanager
     def read(self) -> Iterator[sqlite3.Connection]:

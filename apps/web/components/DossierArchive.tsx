@@ -6,17 +6,18 @@ import { StatusBanner } from "@/components/StatusBanner";
 import { usePolling } from "@/hooks/usePolling";
 import { api } from "@/lib/api";
 import { formatTime } from "@/lib/format";
+import { chainCursor, mergeUniqueById } from "@/lib/pagination";
 import type { ChildRecord, Envelope } from "@/lib/types";
 
 export function DossierArchive() {
   const { data, error, updatedAt } = usePolling((signal) => api<Envelope<ChildRecord>>("/api/dossiers?limit=20", signal), 5000);
   const [extra, setExtra] = useState<ChildRecord[]>([]);
-  const [pageCursor, setPageCursor] = useState<string | null>(null);
+  const [pageCursor, setPageCursor] = useState<string | null | undefined>(undefined);
   const [loading, setLoading] = useState(false);
   const [moreError, setMoreError] = useState<string | null>(null);
 
-  const items = [...(data?.items ?? []), ...extra.filter((item) => !(data?.items ?? []).some((existing) => existing.dossier_id === item.dossier_id))];
-  const nextCursor = pageCursor ?? data?.next_cursor ?? null;
+  const items = mergeUniqueById(data?.items ?? [], extra, (item) => String(item.dossier_id));
+  const nextCursor = chainCursor(pageCursor, data?.next_cursor);
 
   const loadMore = async () => {
     if (!nextCursor) return;
@@ -24,7 +25,7 @@ export function DossierArchive() {
     setMoreError(null);
     try {
       const page = await api<Envelope<ChildRecord>>(`/api/dossiers?limit=20&cursor=${encodeURIComponent(nextCursor)}`);
-      setExtra((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.dossier_id === item.dossier_id))]);
+      setExtra((current) => mergeUniqueById(current, page.items, (item) => String(item.dossier_id)));
       setPageCursor(page.next_cursor);
     } catch {
       setMoreError("Could not load more dossiers.");

@@ -149,7 +149,7 @@ class Repository:
 
     def artifact_registration(self, artifact: PublishedArtifact, run_id: str) -> tuple[str, tuple[Any, ...]]:
         return (
-            "INSERT INTO artifacts(artifact_id,run_id,relative_path,sha256,size_bytes,media_type,purpose,schema_version) VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT INTO artifacts(artifact_id,run_id,relative_path,sha256,size_bytes,media_type,purpose,schema_version) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(artifact_id) DO NOTHING",
             (artifact.artifact_id, run_id, artifact.relative_path, artifact.sha256, artifact.size_bytes, artifact.media_type, artifact.purpose, artifact.schema_version),
         )
 

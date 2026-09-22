@@ -5,7 +5,19 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid5
+
+ARTIFACT_ID_NAMESPACE = NAMESPACE_URL
+
+
+def artifact_id_for(relative_path: str, sha256: str) -> str:
+    """Stable identity for one immutable path + content pair.
+
+    The same bytes at the same path always map to the same artifact_id, so a
+    retry or crash recovery cannot invent a second database identity for the
+    same immutable file. Different bytes at the same path remain a collision.
+    """
+    return str(uuid5(ARTIFACT_ID_NAMESPACE, f"cancerjev-artifact:{relative_path}:{sha256}"))
 
 
 @dataclass(frozen=True)
@@ -49,7 +61,7 @@ class ArtifactStore:
             finally:
                 if os.path.exists(temporary):
                     os.unlink(temporary)
-        return PublishedArtifact(str(uuid4()), relative_path.replace("\\", "/"), digest, len(content), media_type, purpose)
+        return PublishedArtifact(artifact_id_for(relative_path.replace("\\", "/"), digest), relative_path.replace("\\", "/"), digest, len(content), media_type, purpose)
 
     def read(self, relative_path: str, expected_hash: str | None = None) -> bytes:
         content = self._resolve(relative_path).read_bytes()

@@ -1,6 +1,6 @@
 # Verification strategy
 
-This is a test plan, not a report of executed application tests. Phase 0 has no application runtime. Use focused tests first, then the full relevant offline checks once a phase is implemented. No default test, build or CI command contacts GDC, TypeSafe or an LLM.
+This is a test plan, not a report of executed application tests. Phase 0 has no application runtime. Use focused tests first, then the full relevant offline checks once a phase is implemented. No default test, build or CI command contacts GDC, TypeSafe or an LLM. Executed Phase 1 results (including the independent audit that failed the prior revision and the repair verification) live in IMPLEMENTATION_STATUS.md and PHASE_1_VERIFICATION.md.
 
 ## Phase 1 gates
 

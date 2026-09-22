@@ -93,7 +93,7 @@ Cross-project direction requires an actual signed, comparable measure. Mutation 
 EvidenceState
   evidence_state_id, schema_version, evidence_hash, created_at
   run_id, candidate_id, entity, scope_hash
-  source_statistical_state: {state_id, state_hash}
+  source_statistical_state: {state_identity_hash}
   previous_evidence_state_id?, iteration_number: 0..2
   research_puzzle: {observed_pattern_refs[], unresolved_questions[],
                     origin: DETERMINISTIC_TEMPLATE}
@@ -131,6 +131,9 @@ EvidenceState has no writable Jev answer or hypothesis fields. A Jev request env
 | ResearchDossier | id, run/candidate refs, mode, schema_version, JSON artifact, derived Markdown artifact, evidence/judgment/hypothesis/follow-up refs, 25 sections from the master specification, created_at; unique candidate_id |
 
 Content hashes exclude operational UUIDs/timestamps but include schema, scientific inputs, membership, units, context, method/parameters, correction universe and outputs. Keep timestamps separately. Canonical JSON sorts object keys and set-valued IDs, preserves meaningful array order, uses a versioned finite-number encoding, and rejects NaN/Infinity. Byte hashes additionally preserve exact source responses. Identical scientific state can be recognized across runs without conflating differently selected populations.
+
+Phase 1 implements this rule with two explicit identity projections in `cancerjev/domain/identity.py`: `statistical_state_identity_payload` (entity, scope/projects, pattern measurement and unit, quality/missingness, tested context, provenance/methods) and `evidence_state_identity_payload` (entity, source-state content hash, puzzle, observations without operational result ids, project membership, missingness, method/version, limitations, revision). Operational `run_id`/`state_id`/`candidate_id`/`evidence_state_id`/`previous_evidence_state_id` and timestamps are excluded. Artifact byte SHA-256 is separate and always hashes the exact serialized artifact bytes.
+
 
 ## Authoritative dossier sections
 

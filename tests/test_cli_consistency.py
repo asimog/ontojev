@@ -27,6 +27,18 @@ def _json_documents(text: str) -> list[dict]:
         cursor = start + end
 
 
+def test_cli_show_emits_json_summary(runtime, monkeypatch, capsys):
+    settings, repository, artifacts = runtime
+    monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))
+    run_id = DemoOrchestrator(settings, repository, artifacts, lambda event: None).run()
+    main(["show", run_id])
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["run_id"] == run_id
+    assert summary["status"] == "COMPLETED"
+    assert summary["last_sequence"] == 71
+    assert summary["counts"]["states_generated"] == 12
+
+
 def test_cli_store_and_api_expose_identical_events(runtime, monkeypatch, capsys):
     settings, repository, artifacts = runtime
     monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))

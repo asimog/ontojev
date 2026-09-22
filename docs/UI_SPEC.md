@@ -11,17 +11,19 @@ Use current stable Next.js/React/TypeScript pinned at Phase 1 implementation tim
 | Route | Components and behavior |
 |---|---|
 | `/` | SystemStatus, active RunCard, recent RunFeed, BudgetSummary, recent dossier links; includes worker stale/offline state |
-| `/runs` | RunFeed → RunCard; initial loading/empty/error states; 8-second polling while visible; every autonomous run appears without a start button |
-| `/runs/[runId]` | RunDetail, Pipeline, BudgetSummary, CandidateList, EventFeed, JudgmentVector; run header with version/time/status/mode; candidate and iteration filters |
-| `/dossiers` | Paginated archive; entity, puzzle, creation time, run/candidate, prominent synthetic badge in fake mode |
-| `/dossiers/[dossierId]` | DossierView separating observed facts, Jev judgments and generated hypotheses; provenance references and downloadable authoritative JSON/derived Markdown |
+| `/runs` | RunFeed → RunCard; initial loading/empty/error states; 8-second polling while visible; every autonomous run appears without a start button; cursor "Load more runs" keeps all durable history reachable |
+| `/runs/[runId]` | RunDetail, Pipeline, BudgetSummary, CandidateList, EventFeed, JudgmentVector; run header with version/time/status/mode; candidate and iteration filters; run-scoped state remounts when the routed run changes |
+| `/dossiers` | Paginated archive; entity, puzzle, creation time, run/candidate, prominent synthetic badge in fake mode; the load-more control disappears permanently once the final page reports no cursor |
+| `/dossiers/[dossierId]` | DossierView separating observed facts, Jev judgments and generated hypotheses; provenance references (artifact id and served SHA-256) and downloadable authoritative JSON/derived Markdown |
 | `/system` | Worker heartbeat, data path summary, version, provider modes, budget defaults, cursor and cache summary; poll every 15 seconds |
 
 RunCard shows all required counters: projects, requests, bytes, generated/valid/evaluated states, deep candidates, Jev calls, LLM calls, hypotheses, follow-ups, dossiers; secondary counters can expand to keep the card readable. Never label a model probability as scientific confidence. Unknown cost uses “unknown”; genuine zero uses 0.
 
+JudgmentVector renders each primitive against its contract: Noul probability in [0,1]; Choice with the chosen option from the question roster and the full probability map; Score against the 0..4 rubric with the selected level shown as `selected / 4`, the distribution over the rubric levels, the probability-weighted expected value and the selected level's legend text.
+
 Detail polling every 2 seconds while PENDING/RUNNING, using a completion-scheduled timeout so requests do not overlap. Fetch new events after the last accepted sequence; immediately drain continuation pages. Refresh summary in the same cycle. On terminal summary, drain through terminal sequence before stopping active polls. Abort on unmount/route change; pause hidden-tab polling, refresh on visibility restoration; bounded backoff on errors with last-good data and last-success time visible.
 
-EventFeed renders time, stage, type, message and typed detail: GDC endpoint/bytes; state quality; Jev full answer vector; method/N/effect/p/q with unknown markers; hypothesis refs; follow-up action/outcome; dossier link. Payload expansion is lazy and bounded. Default recent-window display may retain only rendered rows for performance, but older durable events remain reachable. Use event_id keys, not array index or timestamp.
+EventFeed renders time, stage, type, message and typed detail: GDC endpoint/bytes; state quality; Jev full answer vector; method/N/effect/p/q with unknown markers; hypothesis refs; follow-up action/outcome; dossier link. Payload expansion is lazy and bounded. Default recent-window display may retain only rendered rows for performance, but older durable events remain reachable. Use event_id keys, not array index or timestamp. Each rendered event also carries its durable `event_id` as a `data-event-id` attribute so browser tests and debugging can compare the rendered feed with the API record.
 
 Auto-follow only when the user is already at the bottom; otherwise show a new-events affordance. `aria-live=polite` announces brief updates, not whole provider dumps. Keyboard-accessible details and controls; color plus text status indicators; readable dark palette, strong typography, responsive card stack. Use system fonts initially so build does not fetch remote fonts.
 

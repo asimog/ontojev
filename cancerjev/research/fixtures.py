@@ -21,6 +21,56 @@ PATTERNS = (
     ("FJEV12", "insufficient synthetic pattern", 0.22, "insufficient"),
 )
 
+# Valid option rosters per fixture question, mirroring the Choice contract.
+CHOICE_ROSTERS = {
+    "wide_pattern_route": ("PROMOTE", "DEFER"),
+    "deep_route": ("FOLLOW_UP", "CLOSE"),
+    "followup_outcome": ("WEAKENED", "UNCHANGED", "STRENGTHENED"),
+    "hypothesis_testability": ("TESTABLE", "NOT_TESTABLE"),
+}
+
+# Jev Score contract: 0..4 follow-up-value rubric, numbered from zero.
+SCORE_LEVELS = ("0", "1", "2", "3", "4")
+SCORE_LEGEND = {
+    "0": "no useful eligible test",
+    "1": "weak reason",
+    "2": "plausible reason",
+    "3": "strong reason",
+    "4": "unusually compelling reason",
+}
+
+
+def _normalized_distribution(options: tuple[str, ...], weights: list[float]) -> dict[str, float]:
+    total = sum(weights)
+    if total <= 0:
+        raise ValueError("distribution weights must be positive")
+    scaled = [weight / total for weight in weights]
+    distribution = {option: round(share, 3) for option, share in zip(options[:-1], scaled[:-1], strict=True)}
+    distribution[options[-1]] = round(max(0.0, 1 - sum(distribution.values())), 3)
+    return distribution
+
+
+def choice_answer(question_id: str, chosen: str, probability: float, confidence: float) -> dict[str, Any]:
+    roster = CHOICE_ROSTERS[question_id]
+    if chosen not in roster:
+        raise ValueError(f"{chosen} is not in the {question_id} roster")
+    if not 0 <= probability <= 1 or not 0 <= confidence <= 1:
+        raise ValueError("choice probabilities must be within [0,1]")
+    weights = [probability if option == chosen else (1 - probability) / (len(roster) - 1) for option in roster]
+    return {"question_id": question_id, "chosen": chosen, "distribution": _normalized_distribution(roster, weights), "confidence": confidence}
+
+
+def score_answer(selected: int, confidence: float) -> dict[str, Any]:
+    if selected not in range(len(SCORE_LEVELS)):
+        raise ValueError("score level outside the 0..4 rubric")
+    if not 0 <= confidence <= 1:
+        raise ValueError("score confidence must be within [0,1]")
+    weights = [0.05] * len(SCORE_LEVELS)
+    weights[selected] = 0.8
+    distribution = _normalized_distribution(SCORE_LEVELS, weights)
+    expected = round(sum(int(level) * share for level, share in distribution.items()), 3)
+    return {"selected": selected, "expected": expected, "distribution": distribution, "confidence": confidence, "legend": dict(SCORE_LEGEND)}
+
 
 def statistical_states(run_id: str, make_id) -> list[dict[str, Any]]:
     result = []
@@ -38,12 +88,12 @@ def statistical_states(run_id: str, make_id) -> list[dict[str, Any]]:
     return result
 
 
-def judgment_vector(label: str, probability: float, score: int) -> dict[str, Any]:
+def judgment_vector(question_id: str, chosen: str, probability: float, score_level: int) -> dict[str, Any]:
     return {
         "fixture_notice": FIXTURE_NOTICE,
         "noul": {"probability": probability, "semantic_label": "pattern merits attention"},
-        "choice": {"chosen": label, "distribution": {"PROMOTE": probability, "DEFER": round(1 - probability, 3)}, "confidence": 0.79},
-        "score": {"selected": score, "expected": float(score), "distribution": {str(score - 1): 0.15, str(score): 0.7, str(score + 1): 0.15}, "confidence": 0.76, "rubric": "1=weak fixture lead, 5=strong fixture lead"},
+        "choice": choice_answer(question_id, chosen, probability, 0.79),
+        "score": score_answer(score_level, 0.76),
     }
 
 
@@ -55,7 +105,7 @@ def evidence(run_id: str, candidate_id: str, state: dict[str, Any], make_id, *, 
         "schema_version": 1, "evidence_state_id": make_id(f"evidence:{candidate_id}:{iteration}"),
         "run_id": run_id, "candidate_id": candidate_id, "fixture_notice": FIXTURE_NOTICE,
         "previous_evidence_state_id": previous, "iteration_number": iteration,
-        "entity": state["entity"], "source_statistical_state": {"state_id": state["state_id"]},
+        "entity": state["entity"], "source_statistical_state": {"state_identity_hash": state["state_hash"]},
         "research_puzzle": {"origin": "DETERMINISTIC_TEMPLATE", "unresolved_questions": ["Is the synthetic pattern robust to influential fixture observations?"]},
         "deterministic_observations": [{
             "result_id": make_id(f"result:{candidate_id}:{iteration}"), "method_id": "FIXTURE_DESCRIPTIVE_V1",

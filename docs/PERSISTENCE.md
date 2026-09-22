@@ -1,6 +1,7 @@
 # Persistence and local runtime
 
-Use Python's SQLite support and explicit small SQL statements. WAL, foreign_keys=ON, busy_timeout=5000 ms, synchronous=FULL for research writes. Keep transactions short; no network calls or artifact serialization inside a database transaction. Schema version is recorded via a small bootstrap/version check; do not port old migrations or introduce an ORM hierarchy.
+Use Python's SQLite support and explicit small SQL statements. WAL, foreign_keys=ON, busy_timeout=5000 ms, synchronous=FULL for research writes. Keep transactions short; no network calls or artifact serialization inside a database transaction. Schema version is recorded via a small bootstrap/version check; do not port old migrations or introduce an ORM hierarchy. Phase 1 persistence schema version is **2** (`schema_info` holds one `UNIQUE` version row; bootstrap closes its connection and commits its version check in one short `BEGIN IMMEDIATE` transaction). A data directory from an earlier revision fails with an actionable `unsupported database schema 1; this build expects schema 2` error instead of being migrated or silently reset; Phase 1 fixture data is synthetic and disposable.
+
 
 API and CLI invoke the same idempotent schema bootstrap before serving/starting, so starting the API first creates an empty readable database and the UI can show “No runs yet.” SQLite serializes this short bootstrap transaction. An incompatible existing schema fails clearly; it is never silently reset. Schema bootstrap does not create a ResearchRun or start research.
 
@@ -12,7 +13,7 @@ API and CLI invoke the same idempotent schema bootstrap before serving/starting,
 | artifacts | artifact_id PK; relative path, sha256, byte size, media type, purpose, schema version |
 | statistical_states | state_id PK; run FK, content hash, artifact FK, selection disposition |
 | evidence_states | evidence_state_id PK; candidate FK, parent FK, iteration, content hash, artifact FK |
-| jev_evaluations | id PK; input state/hash, question/model/cache identity, artifact FK, mode |
+| jev_evaluations | id PK; explicit input reference kind/id (`STATISTICAL_STATE`/`EVIDENCE_STATE`/`HYPOTHESIS`), question/model/cache identity, artifact FK, mode |
 | hypotheses | id PK; candidate FK, originating evidence FK, artifact FK; <=6 lifetime enforced at admission |
 | followup_executions | id PK; candidate FK, action/version/input hash, slot, status, result refs |
 | dossiers | dossier_id PK; candidate_id UNIQUE, run FK, JSON and Markdown artifact FKs |
@@ -22,7 +23,7 @@ API and CLI invoke the same idempotent schema bootstrap before serving/starting,
 
 No generic entity-attribute graph or separate domain database. JSON holds typed complex payloads; scalar columns index actual API queries. Add indexes `(run_id,sequence)`, `(created_at,run_id)`, `(run_id,candidate_id)` and state/evaluation hash lookup as needed. All foreign IDs referenced by an event must already exist or be inserted in that event's transaction.
 
-Immutable records/events disallow UPDATE/DELETE through repository APIs and simple SQLite triggers; corrections create new records. Mutable run/candidate projections are updated only through the event commit function. Projection-rebuild tooling uses the same reducer and a controlled local transaction. The worker heartbeat is not an alternative run log.
+Immutable records/events disallow UPDATE/DELETE through repository APIs and simple SQLite triggers; corrections create new records. Phase 1 creates `BEFORE UPDATE`/`BEFORE DELETE` triggers for `run_events`, `artifacts`, `statistical_states`, `evidence_states`, `jev_evaluations`, `hypotheses`, `followup_executions` and `dossiers`. Mutable run/candidate projections (`research_runs`, `candidates`) and the informational `worker_status` row remain updatable and are only written through the event commit function (heartbeat excepted). Projection-rebuild tooling uses the same reducer and a controlled local transaction. The worker heartbeat is not an alternative run log.
 
 ```text
 data/
@@ -41,7 +42,7 @@ data/
 
 Do not maintain a second authoritative run.json or duplicate dossier archive. `/dossiers` is a database index over these artifacts. Git ignores data except `.gitkeep`. JSON is sufficient initially; Parquet/TSV are optional later formats for bounded tables.
 
-Artifact publish: serialize canonical bytes to a unique temporary file on the same filesystem, flush/fsync, calculate hash and length, close, atomically rename to final immutable name, then insert artifact metadata plus referring records/event in a SQLite transaction. If the DB commit fails, an orphan file is safe and invisible. If rename fails, publish no record/event. Do not claim SQLite and filesystem are one atomic transaction. On read verify metadata/path confinement and, when scientifically consumed, checksum. Missing/corrupt files produce explicit errors. Orphan cleanup is a separate explicit maintenance operation, not deletion on worker startup.
+Artifact publish: serialize canonical bytes to a unique temporary file on the same filesystem, flush/fsync, calculate hash and length, close, atomically rename to final immutable name, then insert artifact metadata plus referring records/event in a SQLite transaction. Artifact identity is deterministic (`uuid5` over relative path + SHA-256), so republishing identical bytes at the same path is a safe retry: it returns the same `artifact_id` without rewriting the file, and a different-bytes collision raises instead of overwriting. Artifact registration is conflict-tolerant (`ON CONFLICT(artifact_id) DO NOTHING`), which recovers a file that exists but whose metadata row was never committed. If the DB commit fails, an orphan file is safe and invisible. If rename fails, publish no record/event. Do not claim SQLite and filesystem are one atomic transaction. On read verify metadata/path confinement and, when scientifically consumed, checksum. Missing/corrupt files produce explicit errors. Orphan cleanup is a separate explicit maintenance operation, not deletion on worker startup.
 
 The worker uses an OS-held exclusive file lock (one small cross-platform locking dependency if necessary) for the entire research-process lifetime. A second `run` or `worker` process exits with a clear ownership error before creating a run. Do not infer lock ownership from an old PID or heartbeat. API reads do not hold this lock.
 

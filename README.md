@@ -53,6 +53,8 @@ Configuration:
 
 `python -m cancerjev run` without `--fixture demo` fails clearly. It never substitutes fixture results for a requested live run. Continuous synthetic mode is `python -m cancerjev worker --fixture demo`; only one research process may own a data directory.
 
+Persistence schema is version 2. A `data/` directory created by an earlier Phase 1 revision is intentionally not migrated: startup fails with a clear `unsupported database schema` error, and the directory should be moved or deleted. Phase 1 data is synthetic and disposable.
+
 ## Verification
 
 ```powershell
@@ -67,6 +69,8 @@ npm run test:e2e  # requires the API and web dev servers described above
 ```
 
 The default Python suite blocks outbound network connections. No test needs Docker, PostgreSQL, Redis, GDC, TypeSafe/Jev, OpenRouter, or secrets.
+
+Phase 1 repair verification (2026-09-22): Ruff passed; Python suite 43 passed / 0 failed / 0 skipped on Windows (Python 3.14.3) and on Linux (WSL Ubuntu, Python 3.11.15); `npm ci` 0 vulnerabilities; TypeScript passed; production build passed; `npm run test:e2e` 4 passed on four consecutive runs (three required plus one after reinstall). Exact commands and results are recorded in [implementation status](docs/IMPLEMENTATION_STATUS.md); the independent audit of the previous revision is preserved in [Phase 1 verification](docs/PHASE_1_VERIFICATION.md).
 
 ## Scope boundary
 
