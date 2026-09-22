@@ -1,0 +1,52 @@
+# Persistence and local runtime
+
+Use Python's SQLite support and explicit small SQL statements. WAL, foreign_keys=ON, busy_timeout=5000 ms, synchronous=FULL for research writes. Keep transactions short; no network calls or artifact serialization inside a database transaction. Schema version is recorded via a small bootstrap/version check; do not port old migrations or introduce an ORM hierarchy.
+
+API and CLI invoke the same idempotent schema bootstrap before serving/starting, so starting the API first creates an empty readable database and the UI can show “No runs yet.” SQLite serializes this short bootstrap transaction. An incompatible existing schema fails clearly; it is never silently reset. Schema bootstrap does not create a ResearchRun or start research.
+
+| Table | Key and role |
+|---|---|
+| research_runs | run_id PK; current projection, config/scope, last_sequence, terminal/coverage/counters |
+| run_events | event_id PK; run FK; UNIQUE(run_id,sequence), UNIQUE(run_id,idempotency_key); immutable full event JSON |
+| candidates | candidate_id PK; run FK; UNIQUE(run_id,promotion_slot), unique investigation context; projection only |
+| artifacts | artifact_id PK; relative path, sha256, byte size, media type, purpose, schema version |
+| statistical_states | state_id PK; run FK, content hash, artifact FK, selection disposition |
+| evidence_states | evidence_state_id PK; candidate FK, parent FK, iteration, content hash, artifact FK |
+| jev_evaluations | id PK; input state/hash, question/model/cache identity, artifact FK, mode |
+| hypotheses | id PK; candidate FK, originating evidence FK, artifact FK; <=6 lifetime enforced at admission |
+| followup_executions | id PK; candidate FK, action/version/input hash, slot, status, result refs |
+| dossiers | dossier_id PK; candidate_id UNIQUE, run FK, JSON and Markdown artifact FKs |
+| worker_status | one row; owner ID, heartbeat timestamp, version; informational |
+| discovery_cursor | one row/version; roster/cursor artifact and offsets; Phase 1 fixture cursor |
+| gdc_attempts / gdc_cache | later Phase 2 only: attempt ledger and normalized request-to-response index |
+
+No generic entity-attribute graph or separate domain database. JSON holds typed complex payloads; scalar columns index actual API queries. Add indexes `(run_id,sequence)`, `(created_at,run_id)`, `(run_id,candidate_id)` and state/evaluation hash lookup as needed. All foreign IDs referenced by an event must already exist or be inserted in that event's transaction.
+
+Immutable records/events disallow UPDATE/DELETE through repository APIs and simple SQLite triggers; corrections create new records. Mutable run/candidate projections are updated only through the event commit function. Projection-rebuild tooling uses the same reducer and a controlled local transaction. The worker heartbeat is not an alternative run log.
+
+```text
+data/
+  cancerjev.db                 # sole status/event authority
+  research.lock                # OS-held lock, not an existence-only PID file
+  cache/gdc/<request-hash>/<response-hash>.body  # Phase 2
+  runs/<run-id>/
+    statistical_states/<id>.json
+    evidence/<id>.json
+    jev/<id>.json
+    hypotheses/<id>.json
+    followups/<id>.json
+    dossier/<dossier-id>.json
+    dossier/<dossier-id>.md
+```
+
+Do not maintain a second authoritative run.json or duplicate dossier archive. `/dossiers` is a database index over these artifacts. Git ignores data except `.gitkeep`. JSON is sufficient initially; Parquet/TSV are optional later formats for bounded tables.
+
+Artifact publish: serialize canonical bytes to a unique temporary file on the same filesystem, flush/fsync, calculate hash and length, close, atomically rename to final immutable name, then insert artifact metadata plus referring records/event in a SQLite transaction. If the DB commit fails, an orphan file is safe and invisible. If rename fails, publish no record/event. Do not claim SQLite and filesystem are one atomic transaction. On read verify metadata/path confinement and, when scientifically consumed, checksum. Missing/corrupt files produce explicit errors. Orphan cleanup is a separate explicit maintenance operation, not deletion on worker startup.
+
+The worker uses an OS-held exclusive file lock (one small cross-platform locking dependency if necessary) for the entire research-process lifetime. A second `run` or `worker` process exits with a clear ownership error before creating a run. Do not infer lock ownership from an old PID or heartbeat. API reads do not hold this lock.
+
+After acquiring the lock, a new owner finds previous PENDING/RUNNING records, commits recovery RUN_STOPPED/INTERRUPTED and candidate dispositions, retaining every old event and artifact. It starts a new run rather than replaying uncertain external requests. FastAPI restart does not alter run status or start research. The UI displays a stale worker heartbeat separately from persisted run status until reconciliation.
+
+Local serving: API binds 127.0.0.1:8000; Next.js uses localhost:3000; CLI/research process runs separately. All point to one absolute `CANCERJEV_DATA_DIR` so differing working directories cannot create accidental databases. Phase 1 needs no keys or provider connectivity. Database connections are process-local; API uses read transactions and does not hold long-lived snapshots across HTTP requests.
+
+Keep RunRepository, EventRepository and ArtifactStore narrow; they can be concrete local implementations without abstract factories. No generic storage provider framework is necessary.
