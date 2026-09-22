@@ -9,8 +9,9 @@ StatisticalStates, scoped to the single TCGA-LUAD cohort; and Phase 3 single-coh
 `wide-v3` judgments, deterministic eligibility, explicit Jev admission/abstention, rankings and
 bounded candidate promotion. **CURRENT:** the architecture is modular and `ResearchSpec`-driven;
 `LUAD_RESEARCH_V1` is the only production research specification. **NEXT:** baseline-vs-Jev
-incremental-value evaluation. Phase 4+ remains documented only. Phase 3 did **not** demonstrate
-improved scientific decision quality.
+incremental-value evaluation. Phase 3 did **not** demonstrate improved scientific decision quality.
+Phase 4+ has no runtime implementation; Phase 4 has a conditional readiness plan
+(`docs/PHASE_4_READINESS_PLAN.md`).
 
 Phase 1 remains available and separate: `run --fixture demo` still produces the synthetic
 dossier run with zero provider calls, and fixture and live records are never mixed.
@@ -191,7 +192,8 @@ On Windows, pytest exited successfully with all 218 offline tests passing but em
 - No seed/temperature control exists for Jev; repeated calls may differ. Cache identity binds projection bytes, question bytes, model and adapter version; policy version is excluded so policy experiments do not rerun inference. `wide-policy-v2` thresholds remain provisional and uncalibrated.
 - The TypeSafe price page is documentation, not a contract; cost stays `null`/unknown because the API exposes no cost field.
 - Schema 3 does not migrate schema 1/2 data directories; they must be moved or deleted (the pre-Phase-2 schema-2 database was preserved as `data/cancerjev.schema2.db.bak`).
-- Hosted CI was not executed locally; the local runs used Python 3.14.3 and Node 24.13.1 while CI pins Python 3.12 and Node 22. **UNVERIFIED:** hosted CI status.
+- A post-Phase-3 audit hardening pass fixed the documented safety/evidence defects (overridable GDC ceilings, nested aggregation truncation, cross-project SSM total, selection-artifact zero substitution, unenforced Jev state cap, cache-cap bypass, response byte accounting, page-advance counting, silent ranking-artifact loss, and live-vector UI rendering): `docs/CODEBASE_AUDIT_2026-09-23.md`. Remaining medium/low findings are listed there with severity and location and are not fixed.
+- Local runs used Python 3.14.3 and Node 24.13.1 while CI pins Python 3.12 and Node 22. GitHub Actions run `35784234662` for commit `d1ab646` passed the Python, frontend, and browser jobs.
 
 ## Next implementation sequence
 
@@ -200,13 +202,14 @@ These are separate tasks; do not combine them.
 1. Targeted pre-Phase-3 readiness audit. **DONE (2026-09-23)** — see `docs/SOURCE_REVIEW.md`.
 2. TCGA-LUAD Wide Jev semantic/admission redesign. **DONE (2026-09-23)** — implementation and bounded live acceptance recorded above; design: `docs/PHASE_3_PLAN.md`.
 3. Baseline-vs-Jev incremental-value evaluation. **NEXT** — separate validation task; do not infer quality from changed rankings.
-4. One Phase-4 vertical slice: E0 → one registered follow-up → E1.
+4. One Phase-4 vertical slice: E0 → one registered follow-up → E1, after the readiness gates in
+   `docs/PHASE_4_READINESS_PLAN.md` are met.
 5. Bounded next-candidate autonomous iteration.
 6. Bounded LLM hypothesis generation + Jev hypothesis evaluation.
 
-## Phase 4–7: documented only, not implemented
+## Phase 4–7: plans only, not implemented
 
-- **Phase 4 — deep deterministic evidence**: `EvidenceState` revisions, registered deterministic follow-ups (`STRATIFY_BY_PROJECT_V1`, `LEAVE_ONE_PROJECT_OUT_V1`, `CHECK_MISSINGNESS_V1`, `OUTLIER_SENSITIVITY_V1`, `COMPARE_MODALITIES_V1`), and a reduced `deep-v2` Jev battery (`docs/JEV_QUESTIONS.md`). No follow-up executes until its scientific contract exists; Jev may rank eligible actions but never invent them.
+- **Phase 4 — deep deterministic evidence**: conditional readiness plan at `docs/PHASE_4_READINESS_PLAN.md`; no `EvidenceState` runtime, registered executable follow-ups, or deep Jev battery exists. Several candidate follow-up IDs are documented, but none is approved or implemented.
 - **Phase 5 — dossiers for live candidates**: structured JSON + derived Markdown from real evidence revisions.
 - **Phase 6 — generative hypotheses**: competing hypotheses may only be generated after deterministic evidence and Jev judgments exist; Jev critiques them; an LLM never writes a measured field. `hypothesis-v2` is documented.
 - **Phase 7 — offline autoresearch**: labelled historical states, LLM-proposed candidate questions, Jev evaluation, classical usefulness tests, pruning and human review to version the production question set.

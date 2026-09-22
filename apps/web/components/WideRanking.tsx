@@ -44,14 +44,19 @@ function RankingTable({ ranking, admitted, baselineTop }: {
       </h3>
       <p className="fine">{ranking.ordering}</p>
       <table>
-        <thead>
-          <tr><th>#</th><th>Gene</th><th>Dimensions</th><th>Policy result</th></tr>
+<thead>
+          <tr><th>#</th><th>Gene</th><th>State / evaluation</th><th>Dimensions</th><th>Policy result</th></tr>
         </thead>
         <tbody>
           {ranking.entries.map((entry) => (
             <tr key={`${ranking.kind}-${entry.state_id}`}>
               <td>{entry.rank}</td>
               <td><strong>{entry.gene_symbol}</strong></td>
+              <td className="fine mono">
+                <code title={entry.state_id}>{entry.state_id.slice(0, 8)}…</code>
+                <br />
+                <small className="mono">{entry.evaluation_id ? `${entry.evaluation_id.slice(0, 8)}…` : "no evaluation"}</small>
+              </td>
               <td>
                 <div className="dimension-list">
                   {Object.entries(entry.dimensions)

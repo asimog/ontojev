@@ -156,3 +156,28 @@ def test_luad_only_scope_is_recorded_without_pooling():
     assert state["scope"]["cohort"] == LUAD
     assert state["scope"]["projects"] == [LUAD]
     assert "TCGA-LUSC" not in state["scope"]["projects"]
+
+
+def test_coverage_ssm_total_is_scoped_to_examined_projects():
+    state = _state([_frame(LUAD)], coverage={LUAD: 7, "TCGA-LUSC": 9, "TCGA-BRCA": 20})
+    coverage = state["mutation"]["coverage"]
+    assert coverage["case_with_ssm"]["value"] == 7
+    assert coverage["case_with_ssm"]["availability"] == "OBSERVED"
+    # The per-project result is the in-scope value and must agree with the scoped total.
+    project_result = state["mutation"]["project_results"][0]
+    assert project_result["project_case_with_ssm"]["value"] == 7
+
+
+def test_coverage_ssm_total_is_not_observed_when_no_in_scope_bucket():
+    state = _state([_frame(LUAD)], coverage={"TCGA-LUSC": 9})
+    coverage = state["mutation"]["coverage"]["case_with_ssm"]
+    assert coverage["value"] is None
+    assert coverage["availability"] == "NOT_OBSERVED"
+
+
+def test_selection_totals_preserve_absence_instead_of_zero():
+    from cancerjev.research.live import _sum_if_complete
+
+    assert _sum_if_complete([3, 4]) == 7
+    assert _sum_if_complete([3, 0]) == 3, "an observed zero bucket is a real value"
+    assert _sum_if_complete([3, None]) is None, "a missing bucket is never substituted with zero"

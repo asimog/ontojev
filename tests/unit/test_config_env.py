@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 
-from cancerjev.config import load_local_env
+import pytest
+
+from cancerjev.config import Settings, load_local_env
 
 
 def test_loads_values_and_ignores_comments_blanks_and_invalid_names(tmp_path, monkeypatch):
@@ -42,3 +44,30 @@ def test_missing_file_and_opt_out_are_inert(tmp_path, monkeypatch):
     env_file.write_text("OPENROUTER_API_KEY=or-value\n", encoding="utf-8")
     assert load_local_env(env_file) == 0
     assert "OPENROUTER_API_KEY" not in os.environ
+
+
+def test_above_hard_cap_settings_are_rejected(monkeypatch):
+    monkeypatch.setenv("CANCERJEV_NO_DOTENV", "1")
+    overrides = {
+        "CANCERJEV_GDC_MAX_REQUESTS": "151",
+        "CANCERJEV_GDC_MAX_BYTES": str(64 * 1024 * 1024 + 1),
+        "CANCERJEV_GDC_PER_RESPONSE_BYTES": str(5 * 1024 * 1024 + 1),
+        "CANCERJEV_GDC_TIMEOUT_SECONDS": "31",
+        "CANCERJEV_JEV_MAX_STATES": "1001",
+    }
+    for name, value in overrides.items():
+        monkeypatch.setenv(name, value)
+        with pytest.raises(ValueError):
+            Settings.from_env()
+        monkeypatch.delenv(name)
+
+
+def test_lowering_hard_caps_is_allowed_and_effective(monkeypatch):
+    monkeypatch.setenv("CANCERJEV_NO_DOTENV", "1")
+    monkeypatch.setenv("CANCERJEV_GDC_MAX_REQUESTS", "10")
+    monkeypatch.setenv("CANCERJEV_GDC_PER_RESPONSE_BYTES", "1024")
+    monkeypatch.setenv("CANCERJEV_JEV_MAX_STATES", "2")
+    settings = Settings.from_env()
+    assert settings.gdc_max_requests == 10
+    assert settings.gdc_per_response_bytes == 1024
+    assert settings.jev_max_states == 2

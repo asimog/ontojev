@@ -450,6 +450,42 @@ def test_run_wide_evaluation_takes_explicit_collaborators(runtime):
     ]
 
 
+def test_run_wide_evaluation_enforces_configured_state_cap(runtime):
+    settings, repository, artifacts = runtime
+    adapter = StubAdapter()
+    service = JevService(settings, repository, artifacts, adapter_factory=lambda: adapter)
+    run_id = repository.create_run("wide-state-cap", mode="LIVE", fixture_id=None, fixture_version=None)
+    states = [_build([_frame("TCGA-LUAD")], state_id="state-a"),
+              _build([_frame("TCGA-LUAD")], state_id="state-b")]
+    for state in states:
+        _register_state(artifacts, repository, run_id, state)
+    emitted: list[str] = []
+
+    def emit(event_run_id, event_type, key, message, **kwargs):
+        emitted.append(event_type)
+        return repository.append_event(event_run_id, event_type=event_type, idempotency_key=key,
+                                       message=message, **kwargs)
+
+    def publish_json(pub_run_id, relative_path, payload, purpose):
+        return artifacts.publish(relative_path, canonical_json(payload), "application/json", purpose)
+
+    result = run_wide_evaluation(
+        run_id=run_id, states=states, coverage="COMPLETE_FOR_SCOPE",
+        repository=repository, jev_service=service, emit=emit, publish_json=publish_json,
+        max_states=1,
+    )
+    assert adapter.calls == 1, "the configured Jev state cap must bound provider work"
+    assert "JEV_WIDE_STATE_CAP_ENFORCED" in emitted
+    cap_event = next(
+        event for event in repository.events(run_id, 0, 100)["items"]
+        if event["type"] == "JEV_WIDE_STATE_CAP_ENFORCED"
+    )
+    assert cap_event["data"]["cap"] == 1
+    assert cap_event["data"]["skipped_state_ids"] == ["state-b"]
+    skipped_entry = next(entry for entry in result["jev"]["entries"] if entry["state_id"] == "state-b")
+    assert skipped_entry["excluded_reason"] == "EVALUATION_MISSING"
+
+
 def test_run_wide_evaluation_abstains_and_defers_provider_failures(runtime):
     settings, repository, artifacts = runtime
     service = JevService(settings, repository, artifacts, adapter_factory=lambda: StubAdapter(fail=True))

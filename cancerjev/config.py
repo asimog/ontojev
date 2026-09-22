@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from cancerjev.gdc.transport import BudgetCaps
+
 ENV_LOCAL_FILENAME = ".env.local"
+
+# Documented hard ceilings (docs/GDC_BUDGETS.md). Operational settings may lower
+# these but may never raise them; an above-default value is rejected at load time.
+_DOCUMENTED_CAPS = BudgetCaps()
+GDC_MAX_REQUESTS_HARD_CAP = _DOCUMENTED_CAPS.max_requests
+GDC_MAX_BYTES_HARD_CAP = _DOCUMENTED_CAPS.max_bytes
+GDC_PER_RESPONSE_BYTES_HARD_CAP = _DOCUMENTED_CAPS.per_response_bytes
+GDC_TIMEOUT_SECONDS_HARD_CAP = _DOCUMENTED_CAPS.timeout_seconds
+JEV_MAX_STATES_HARD_CAP = 1000
 
 
 def load_local_env(path: Path | None = None) -> int:
@@ -75,13 +87,17 @@ class Settings:
             fixture_stage_delay_ms=delay,
             run_interval_minutes=interval,
             web_origin=os.getenv("CANCERJEV_WEB_ORIGIN", "http://localhost:3000"),
-            gdc_max_requests=_positive_int("CANCERJEV_GDC_MAX_REQUESTS", 150),
-            gdc_max_bytes=_positive_int("CANCERJEV_GDC_MAX_BYTES", 64 * 1024 * 1024),
-            gdc_per_response_bytes=_positive_int("CANCERJEV_GDC_PER_RESPONSE_BYTES", 5 * 1024 * 1024),
-            gdc_timeout_seconds=float(os.getenv("CANCERJEV_GDC_TIMEOUT_SECONDS", "30")),
+            gdc_max_requests=_bounded_int("CANCERJEV_GDC_MAX_REQUESTS", 150, GDC_MAX_REQUESTS_HARD_CAP),
+            gdc_max_bytes=_bounded_int("CANCERJEV_GDC_MAX_BYTES", 64 * 1024 * 1024, GDC_MAX_BYTES_HARD_CAP),
+            gdc_per_response_bytes=_bounded_int(
+                "CANCERJEV_GDC_PER_RESPONSE_BYTES", 5 * 1024 * 1024, GDC_PER_RESPONSE_BYTES_HARD_CAP,
+            ),
+            gdc_timeout_seconds=_bounded_seconds(
+                "CANCERJEV_GDC_TIMEOUT_SECONDS", 30.0, GDC_TIMEOUT_SECONDS_HARD_CAP,
+            ),
             gdc_cache_enabled=os.getenv("CANCERJEV_GDC_CACHE", "1") not in {"0", "false", "False"},
             jev_model=os.getenv("CANCERJEV_JEV_MODEL", "jev-1.13.0"),
-            jev_max_states=_positive_int("CANCERJEV_JEV_MAX_STATES", 1000),
+            jev_max_states=_bounded_int("CANCERJEV_JEV_MAX_STATES", 1000, JEV_MAX_STATES_HARD_CAP),
             jev_timeout_seconds=float(os.getenv("CANCERJEV_JEV_TIMEOUT_SECONDS", "30")),
         )
 
@@ -109,5 +125,25 @@ def _positive_int(name: str, default: int) -> int:
     value = _nonnegative_int(name, default)
     if value < 1:
         raise ValueError(f"{name} must be at least 1")
+    return value
+
+
+def _bounded_int(name: str, default: int, maximum: int) -> int:
+    value = _positive_int(name, default)
+    if value > maximum:
+        raise ValueError(f"{name} must not exceed the documented hard cap {maximum}")
+    return value
+
+
+def _bounded_seconds(name: str, default: float, maximum: float) -> float:
+    raw = os.getenv(name, str(default))
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a positive finite number")
+    if value > maximum:
+        raise ValueError(f"{name} must not exceed the documented hard cap {maximum}")
     return value
 

@@ -27,15 +27,29 @@ from cancerjev.storage.repositories import Repository
 
 def run_wide_evaluation(*, run_id: str, states: list[dict[str, Any]], coverage: str,
                         repository: Repository, jev_service: Any, emit: Callable[..., Any],
-                        publish_json: Callable[[str, str, Any, str], Any]) -> dict[str, Any]:
+                        publish_json: Callable[[str, str, Any, str], Any],
+                        max_states: int | None = None) -> dict[str, Any]:
     emit(
         run_id, "JEV_WIDE_STARTED", "jev:wide:started",
         f"Wide Jev evaluation started for {len(states)} states.",
-        stage="JEV_WIDE", data={"states": len(states), "question_set": WIDE_QUESTION_SET_VERSION},
+        stage="JEV_WIDE", data={"states": len(states), "question_set": WIDE_QUESTION_SET_VERSION,
+                                "max_states": max_states},
     )
+    evaluated_states = states
+    skipped_state_ids: list[str] = []
+    if max_states is not None and len(states) > max_states:
+        evaluated_states = states[:max_states]
+        skipped_state_ids = [state["state_id"] for state in states[max_states:]]
+        emit(
+            run_id, "JEV_WIDE_STATE_CAP_ENFORCED", "jev:wide:state-cap",
+            f"Configured Jev state cap {max_states} enforced; {len(skipped_state_ids)} state(s) not evaluated.",
+            stage="JEV_WIDE", level="warning",
+            data={"cap": max_states, "requested_states": len(states),
+                  "evaluated_states": len(evaluated_states), "skipped_state_ids": skipped_state_ids},
+        )
     evaluations: list[dict[str, Any]] = []
     deferred: list[str] = []
-    for state in states:
+    for state in evaluated_states:
         try:
             evaluation = jev_service.evaluate(run_id=run_id, state=state, emit=emit)
         except ProjectionError as exc:
@@ -79,10 +93,11 @@ def run_wide_evaluation(*, run_id: str, states: list[dict[str, Any]], coverage: 
         f"Wide Jev evaluation completed: {len(evaluations)} evaluations, admission {jev['admission']['decision']}, "
         f"{len(promoted)} promoted.",
         stage="JEV_WIDE",
-        data={
+data={
             "evaluations": len(evaluations), "deferred": len(deferred), "promoted": len(promoted),
             "coverage": coverage, "admission_decision": jev["admission"]["decision"],
             "promotion_limit": jev["admission"]["promotion_limit"],
+            "skipped_states": len(skipped_state_ids),
         },
     )
     return {"baseline": baseline, "jev": jev, "promoted": promoted}

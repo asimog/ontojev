@@ -145,6 +145,23 @@ def _raw_dimensions(evaluation: dict[str, Any]) -> dict[str, Any]:
     return dimensions
 
 
+def _ranking_probability(entry: dict[str, Any], question_id: str) -> float | None:
+    dimensions = entry["dimensions"]
+    if dimensions.get("applicability", {}).get(question_id, {}).get("applicable") is not True:
+        return None
+    return dimensions.get(question_id)
+
+
+def _descending_probability(entry: dict[str, Any], question_id: str) -> float:
+    probability = _ranking_probability(entry, question_id)
+    return -probability if probability is not None else 1.0
+
+
+def _ascending_probability(entry: dict[str, Any], question_id: str) -> float:
+    probability = _ranking_probability(entry, question_id)
+    return probability if probability is not None else 1.0
+
+
 def jev_ranking(states: list[dict[str, Any]], evaluations: list[dict[str, Any]]) -> dict[str, Any]:
     by_state = {evaluation["input_ref_id"]: evaluation for evaluation in evaluations}
     entries = []
@@ -173,14 +190,10 @@ def jev_ranking(states: list[dict[str, Any]], evaluations: list[dict[str, Any]])
         })
     entries.sort(key=lambda entry: (
         not entry["qualified"],
-        -(entry["dimensions"].get("warrants_deeper_investigation")
-          if entry["dimensions"].get("warrants_deeper_investigation") is not None else -1.0),
-        -(entry["dimensions"].get("unresolved_uncertainty_material")
-          if entry["dimensions"].get("unresolved_uncertainty_material") is not None else -1.0),
-        -(entry["dimensions"].get("evidence_quality_adequate")
-          if entry["dimensions"].get("evidence_quality_adequate") is not None else -1.0),
-        entry["dimensions"].get("signal_explained_by_coverage")
-        if entry["dimensions"].get("signal_explained_by_coverage") is not None else 1.0,
+        _descending_probability(entry, "warrants_deeper_investigation"),
+        _descending_probability(entry, "unresolved_uncertainty_material"),
+        _descending_probability(entry, "evidence_quality_adequate"),
+        _ascending_probability(entry, "signal_explained_by_coverage"),
         -(entry["dimensions"].get("affected_cases")
           if entry["dimensions"].get("affected_cases") is not None else -1.0),
         entry["state_hash"],
@@ -195,8 +208,10 @@ def jev_ranking(states: list[dict[str, Any]], evaluations: list[dict[str, Any]])
         "policy_version": JEV_POLICY_VERSION,
         "kind": "JEV",
         "ordering": (
-            "qualified first, warrants_deeper_investigation desc, unresolved_uncertainty_material desc, "
-            "evidence_quality_adequate desc, signal_explained_by_coverage asc, affected_cases desc, state_hash asc"
+            "qualified first, applicable warrants_deeper_investigation desc, "
+            "applicable unresolved_uncertainty_material desc, applicable evidence_quality_adequate desc, "
+            "applicable signal_explained_by_coverage asc, "
+            "affected_cases desc, state_hash asc"
         ),
         "entries": entries,
         "admitted_state_ids": admitted,

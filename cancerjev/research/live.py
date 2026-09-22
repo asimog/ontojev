@@ -303,10 +303,13 @@ class LiveOrchestrator:
                               cache_enabled=self.settings.gdc_cache_enabled)
         )
         self._event(run_id, "RUN_STARTED", "run:started", "Live bounded GDC sweep started.", stage=None,
-                    data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
+data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
                         "max_requests": caps.max_requests, "max_bytes": caps.max_bytes,
                         "per_response_bytes": caps.per_response_bytes,
                         "max_case_ids": caps.max_case_ids, "max_gene_ids": caps.max_gene_ids,
+                        "timeout_seconds": caps.timeout_seconds,
+                        "cache_enabled": self.settings.gdc_cache_enabled,
+                        "jev_max_states": self.settings.jev_max_states,
                     }})
         try:
             inventory = self._stage(run_id, "INVENTORY", lambda: self._inventory(run_id, transport))
@@ -325,6 +328,7 @@ class LiveOrchestrator:
                         run_id=run_id, states=states, coverage=coverage,
                         repository=self.repository, jev_service=self.jev_service,
                         emit=self._event, publish_json=self._publish_json,
+                        max_states=self.settings.jev_max_states,
                     ),
                 )
         except (TransportError, ParserError, ScienceError, LiveRunError) as exc:
@@ -453,7 +457,7 @@ class LiveOrchestrator:
         warnings += coverage.warnings
         scope_ids = [project.project_id for project in inventory.selected]
         totals = {
-            gene_id: sum(counts.projects.get(project_id, {}).get(gene_id, 0) for project_id in scope_ids)
+            gene_id: _sum_if_complete([counts.projects.get(project_id, {}).get(gene_id) for project_id in scope_ids])
             for gene_id in count_genes
         }
         selected_gene_ids = ranked_genes[:acquisition.candidate_gene_limit]
@@ -514,7 +518,7 @@ class LiveOrchestrator:
         page_number = 1
         while expected_total is None or len(cases) < expected_total:
             cases_response = transport.request(
-                cases_request(project.project_id, acquisition.case_page_size, offset=offset)
+                cases_request(project.project_id, acquisition.case_page_size, offset=offset, page=page_number)
             )
             page = parse_cases(cases_response.body, self._meta(cases_response, inventory.release))
             if page.offset is None or page.offset != offset:

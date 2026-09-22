@@ -26,7 +26,7 @@ type DetailData = {
   rankings: { baseline: WideRanking | null; jev: WideRanking | null };
 };
 
-function isLiveVector(vector: Record<string, unknown>): boolean {
+function isLiveVector(vector: Record<string, unknown>): vector is LiveEvaluationVector {
   return vector.mode === "LIVE" && typeof vector.answers === "object" && vector.answers !== null;
 }
 
@@ -53,14 +53,15 @@ export function RunDetail({ runId }: { runId: string }) {
         api<{ baseline: WideRanking | null; jev: WideRanking | null }>(`/api/runs/${runId}/rankings`, signal),
       ]);
       let hasMore = true;
-      const incoming: RunEvent[] = [];
       while (hasMore) {
         const page = await api<{ items: RunEvent[]; next_after_sequence: number; has_more: boolean }>(`/api/runs/${runId}/events?after_sequence=${cursor.current}&limit=20`, signal);
-        incoming.push(...page.items);
+        if (page.items.length) {
+          setEvents((current) => [...new Map([...current, ...page.items].map((item) => [item.event_id, item])).values()]
+            .sort((a, b) => a.sequence - b.sequence));
+        }
         cursor.current = page.next_after_sequence;
         hasMore = page.has_more;
       }
-      if (incoming.length) setEvents((current) => [...new Map([...current, ...incoming].map((item) => [item.event_id, item])).values()].sort((a, b) => a.sequence - b.sequence));
       setDetail({ run, candidates: candidates.items, states: states.items, evaluations: evaluations.items, projections: projections.items, hypotheses: hypotheses.items, dossiers: dossiers.items, rankings });
       failures.current = 0;
       setError(null);
@@ -114,9 +115,15 @@ export function RunDetail({ runId }: { runId: string }) {
   const fixtureVectors = detail.evaluations
     .map((entry) => entry.vector as Record<string, unknown>)
     .filter((vector) => vector && !isLiveVector(vector));
-  const liveVectors = detail.evaluations
-    .map((entry) => entry.vector as Record<string, unknown>)
-    .filter((vector) => vector && isLiveVector(vector)) as unknown as LiveEvaluationVector[];
+  const statesById = new Map(detail.states.map((state) => [String(state.state_id), state]));
+  const liveVectors = detail.evaluations.flatMap((evaluation) => {
+    const vector = evaluation.vector as Record<string, unknown> | null;
+    if (!vector || !isLiveVector(vector)) return [];
+    const stateId = String(evaluation.input_ref_id ?? "unknown");
+    const state = statesById.get(stateId);
+    const geneSymbol = String((state?.entity as Record<string, unknown> | undefined)?.gene_symbol ?? "Unknown gene");
+    return [{ vector, stateId, geneSymbol }];
+  });
   return (
     <>
       <StatusBanner error={error} updatedAt={updatedAt} />
@@ -144,7 +151,7 @@ export function RunDetail({ runId }: { runId: string }) {
           <Metric label="LLM calls" value={run.provider_usage.llm_calls} />
         </div>
       </header>
-      <section className="panel"><div className="eyebrow">PIPELINE</div><div className="pipeline">{run.stage_occurrences.filter((item) => item.type === "STAGE_COMPLETED").map((item) => <span key={`${item.stage}-${item.sequence}`}>{item.stage}{item.candidate_id ? ` · c${item.candidate_id.slice(0, 4)}` : ""}{item.iteration ? ` · i${item.iteration}` : ""}</span>)}{run.current_stage && <span className="active">{run.current_stage} · live</span>}</div><p className="fine">Repeated stages are distinct per-candidate or per-iteration occurrences; deferred candidates remain visible in the candidate list below.</p></section>
+       <section className="panel"><div className="eyebrow">PIPELINE</div><div className="pipeline">{run.stage_occurrences.filter((item) => item.type === "STAGE_COMPLETED").map((item) => <span key={`${item.stage}-${item.sequence}`}>{item.stage}{item.candidate_id ? ` · c${item.candidate_id.slice(0, 4)}` : ""}{item.iteration ? ` · i${item.iteration}` : ""}</span>)}{run.current_stage && <span className="active">{run.current_stage} · live</span>}</div><p className="fine">Repeated stages are distinct per-candidate or per-iteration occurrences. Only admitted states become candidates; exclusions and reasons remain in the Jev ranking.</p></section>
       <BudgetSummary run={run} />
       {live ? (
         <>
@@ -193,12 +200,18 @@ export function RunDetail({ runId }: { runId: string }) {
               </div>
             </section>
           )}
-          {liveVectors.map((vector) => <WideJudgment key={vector.evaluation_id} vector={vector} />)}
+          {liveVectors.map(({ vector, stateId, geneSymbol }) => (
+            <WideJudgment key={vector.evaluation_id} vector={vector} stateId={stateId} geneSymbol={geneSymbol} />
+          ))}
         </>
       ) : (
         <>
           <section className="panel"><div className="eyebrow amber">DETERMINISTIC / FIXTURE EVIDENCE</div><h2>{detail.states.length} synthetic statistical states</h2><div className="candidate-grid">{detail.candidates.map((item) => <article className="mini-card" key={String(item.candidate_id)}><span className="badge">{String(item.status)}</span><h3>{String((item.entity as Record<string, unknown>)?.gene_symbol ?? "Synthetic candidate")}</h3><p>{String((item.summary as Record<string, unknown>)?.promotion_reason ?? "Fixture branch")}</p></article>)}</div></section>
-          {fixtureVectors.map((vector, index) => <JudgmentVector key={String(detail.evaluations[index]?.evaluation_id)} vector={vector as Parameters<typeof JudgmentVector>[0]["vector"]} />)}
+          {fixtureVectors.length > 0 && (
+            <div data-testid="fixture-judgment-vector">
+              {fixtureVectors.map((vector, index) => <JudgmentVector key={String(detail.evaluations[index]?.evaluation_id)} vector={vector as Parameters<typeof JudgmentVector>[0]["vector"]} />)}
+            </div>
+          )}
           <section className="panel hypotheses"><div className="eyebrow coral">GENERATED FIXTURE HYPOTHESES</div><h2>Competing explanations, not measured evidence</h2>{detail.hypotheses.map((record) => { const hypothesis = record.hypothesis as Record<string, unknown>; return <article className="hypothesis" key={String(record.hypothesis_id)}><span>{String(hypothesis.label)}</span><h3>{String(hypothesis.statement)}</h3><p>{String(hypothesis.proposed_mechanism)}</p></article>; })}</section>
           <section className="panel"><div className="eyebrow">REGISTERED FOLLOW-UP</div><p>Baseline and revised EvidenceState IDs are preserved in the canonical events below. The deterministic fixture action changes the descriptive value without overwriting baseline evidence.</p></section>
         </>

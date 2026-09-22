@@ -588,6 +588,13 @@ def build_statistical_state(
     if not coverage.complete:
         warnings = list(warnings) + [f"mutation coverage partial: {', '.join(coverage.partial_reasons)}"]
 
+    scope_project_ids = [frame.project_id for frame in ordered]
+    in_scope_coverage = {
+        project_id: coverage.case_with_ssm[project_id]
+        for project_id in scope_project_ids
+        if project_id in coverage.case_with_ssm
+    }
+
     state: dict[str, Any] = {
         "state_id": state_id,
         "schema_version": STATE_SCHEMA_VERSION,
@@ -646,9 +653,9 @@ def build_statistical_state(
             "project_results": mutation_results,
             "coverage": {
                 "case_with_ssm": metric(
-                    "case_with_ssm_total", sum(coverage.case_with_ssm.values()),
-                    "cases", availability="OBSERVED" if coverage.case_with_ssm else "NOT_OBSERVED",
-                    reason_code=None if coverage.case_with_ssm else "NO_COVERAGE_RESPONSE",
+                    "case_with_ssm_total", sum(in_scope_coverage.values()) if in_scope_coverage else None,
+                    "cases", availability="OBSERVED" if in_scope_coverage else "NOT_OBSERVED",
+                    reason_code=None if in_scope_coverage else "NO_IN_SCOPE_COVERAGE",
                 ),
                 "coverage_complete": coverage.complete,
             },

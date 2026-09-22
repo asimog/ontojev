@@ -180,9 +180,13 @@ def cohort_project_request(project_id: str) -> GDCRequest:
     )
 
 
-def cases_request(project_id: str, size: int = MAX_CASES_PAGE, *, offset: int = 0) -> GDCRequest:
+def cases_request(project_id: str, size: int = MAX_CASES_PAGE, *, offset: int = 0,
+                  page: int | None = None) -> GDCRequest:
     _validate_bounded_int(size, minimum=1, maximum=MAX_CASES_PAGE, label="cases size")
     _validate_bounded_int(offset, minimum=0, maximum=None, label="cases offset")
+    if page is not None:
+        _validate_bounded_int(page, minimum=1, maximum=None, label="cases page")
+    logical_page = page if page is not None else (offset // size) + 1
     return _request(
         resolve_endpoint("GET", "/cases"),
         {
@@ -193,7 +197,7 @@ def cases_request(project_id: str, size: int = MAX_CASES_PAGE, *, offset: int = 
             "fields": "case_id,submitter_id,project.project_id,samples.sample_type",
         },
         logical_query_id=f"cases:{project_id}",
-        page=(offset // size) + 1,
+        page=logical_page,
     )
 
 

@@ -145,6 +145,30 @@ def test_inapplicable_coverage_confound_does_not_block_admission():
     assert ranking["entries"][0]["dimensions"]["signal_explained_by_coverage"] == 0.99
 
 
+def test_inapplicable_probabilities_do_not_change_order_but_remain_raw():
+    state_a = _state("state-a", None)
+    state_b = _state("state-b", None)
+    state_a["expression"]["availability"] = "INSUFFICIENT"
+    state_b["expression"]["availability"] = "INSUFFICIENT"
+    inapplicable = (
+        "evidence_quality_adequate", "mutation_evidence_coherent", "expression_evidence_coherent",
+        "signal_explained_by_coverage", "unresolved_uncertainty_material",
+        "warrants_deeper_investigation", "dominant_limitation",
+    )
+    first = jev_ranking([state_a, state_b], [
+        _evaluation(state_a, confound=0.01, inapplicable=inapplicable),
+        _evaluation(state_b, confound=0.99, inapplicable=inapplicable),
+    ])
+    swapped = jev_ranking([state_a, state_b], [
+        _evaluation(state_a, confound=0.99, inapplicable=inapplicable),
+        _evaluation(state_b, confound=0.01, inapplicable=inapplicable),
+    ])
+    assert [entry["state_id"] for entry in first["entries"]] == [entry["state_id"] for entry in swapped["entries"]]
+    assert [entry["dimensions"]["signal_explained_by_coverage"] for entry in first["entries"]] == [0.01, 0.99]
+    assert all(not entry["dimensions"]["applicability"]["signal_explained_by_coverage"]["applicable"]
+               for entry in first["entries"])
+
+
 def test_jev_promotion_limit_is_a_cap_and_failed_states_remain_auditable():
     states = [_state(f"state-{index}", 10 + index) for index in range(PROMOTION_LIMIT + 2)]
     evaluations = [_evaluation(state, warrants=0.9 - index * 0.01) for index, state in enumerate(states)]

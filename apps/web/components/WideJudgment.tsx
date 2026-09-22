@@ -68,11 +68,21 @@ function ChoiceRow({ id, answer, applicable }: { id: string; answer: Answer; app
   );
 }
 
-export function WideJudgment({ vector }: { vector: LiveEvaluationVector }) {
+export function WideJudgment({ vector, stateId, geneSymbol }: {
+  vector: LiveEvaluationVector;
+  stateId?: string;
+  geneSymbol?: string;
+}) {
+  const identity = (
+    <p className="fine mono">
+      {geneSymbol ? `${geneSymbol} · ` : ""}state {stateId ?? "unknown"} · evaluation {vector.evaluation_id}
+    </p>
+  );
   if (vector.error) {
     return (
       <section className="judgment" data-testid="wide-judgment">
         <div className="eyebrow coral">JEV JUDGMENT — FAILED CLOSED</div>
+        {identity}
         <p className="fine">Evaluation {vector.evaluation_id} recorded no judgment: {vector.error.code}.</p>
       </section>
     );
@@ -80,6 +90,7 @@ export function WideJudgment({ vector }: { vector: LiveEvaluationVector }) {
   return (
     <section className="judgment" data-testid="wide-judgment">
       <div className="eyebrow violet">JEV JUDGMENT — NOT A MEASUREMENT</div>
+      {identity}
       <p className="fine mono">
         {vector.resolved_model ?? vector.requested_model} · question set {vector.question_set_version} ·
         tokens {vector.usage.input_tokens ?? "—"}/{vector.usage.output_tokens ?? "—"} ·

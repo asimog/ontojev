@@ -316,6 +316,48 @@ def test_unfiltered_coverage_is_required_for_scientific_use():
     assert len(coverage.case_with_ssm) > 50
 
 
+def test_nested_terms_truncation_is_not_treated_as_complete():
+    counts_body = json.dumps({
+        "aggregations": {"projects": {
+            "sum_other_doc_count": 1,
+            "buckets": [
+                {"key": "P1", "genes": {"my_genes": {"gene_id": {
+                    "sum_other_doc_count": 0,
+                    "buckets": [{"key": "ENSG1", "doc_count": 3}],
+                }}}},
+            ],
+        }},
+    }).encode()
+    counts = parse_gene_case_counts(counts_body, meta_for("/analysis/top_cases_counts_by_genes"))
+    assert counts.complete is False
+    assert any("sum_other_doc_count" in reason for reason in counts.partial_reasons)
+    assert counts.projects["P1"]["ENSG1"] == 3
+
+    gene_body = json.dumps({
+        "aggregations": {"projects": {"buckets": [
+            {"key": "P1", "genes": {"my_genes": {"gene_id": {
+                "sum_other_doc_count": 2,
+                "buckets": [{"key": "ENSG1", "doc_count": 3}],
+            }}}},
+        ]}},
+    }).encode()
+    gene_counts = parse_gene_case_counts(gene_body, meta_for("/analysis/top_cases_counts_by_genes"))
+    assert gene_counts.complete is False
+    assert any("genes:sum_other_doc_count" in reason for reason in gene_counts.partial_reasons)
+
+    coverage_body = json.dumps({
+        "aggregations": {"projects": {"buckets": [
+            {"key": "P1", "case_summary": {"case_with_ssm": {
+                "doc_count_error_upper_bound": 1, "doc_count": 7,
+            }}},
+        ]}},
+    }).encode()
+    coverage = parse_mutated_cases_count(coverage_body, meta_for("/analysis/mutated_cases_count_by_project"))
+    assert coverage.complete is False
+    assert any("case_with_ssm:doc_count_error_upper_bound" in reason for reason in coverage.partial_reasons)
+    assert coverage.case_with_ssm["P1"] == 7
+
+
 def test_tsv_utf8_bom_header_is_accepted():
     body = "\ufeffgene_id\tcase-a\nENSG1\t1.0\n".encode("utf-8")
     values = parse_expression_values(body, meta_for("/gene_expression/values"),

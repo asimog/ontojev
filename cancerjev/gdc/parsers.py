@@ -271,6 +271,18 @@ def _aggregation_completeness(node: dict[str, Any], context: str) -> list[str]:
     return reasons
 
 
+def _nested_aggregation_reasons(node: Any, context: str) -> list[str]:
+    """Completeness flags on a nested terms aggregation node, prefixed by path.
+
+    Root callers keep bare reasons for continuity; nested nodes must be inspected
+    because a terms aggregation can omit or approximate buckets even when the
+    response root reports no truncation (fail-closed toward PARTIAL).
+    """
+    if not isinstance(node, dict):
+        return []
+    return [f"{context}:{reason}" for reason in _aggregation_completeness(node, context)]
+
+
 def response_warnings(body: bytes, meta: ResponseMeta) -> list[str]:
     """Extract API warnings (e.g. unrecognized fields) without full parsing."""
     if meta.completeness != "COMPLETE":
@@ -405,6 +417,8 @@ def parse_top_mutated_genes(body: bytes, meta: ResponseMeta) -> list[DiscoveryHi
 def parse_gene_case_counts(body: bytes, meta: ResponseMeta) -> GeneCaseCounts:
     document = _load_json(body, meta)
     reasons = _aggregation_completeness(document, "counts")
+    projects_node = _optional(document, "aggregations.projects", (dict,), "counts")
+    reasons += _nested_aggregation_reasons(projects_node, "aggregations.projects")
     projects: dict[str, dict[str, int]] = {}
     buckets = _optional(document, "aggregations.projects.buckets", (list,), "counts")
     if buckets is None:
@@ -413,8 +427,11 @@ def parse_gene_case_counts(body: bytes, meta: ResponseMeta) -> GeneCaseCounts:
         if not isinstance(bucket, dict):
             raise ParserError("MALFORMED_JSON", "counts: bucket is not an object")
         project_id = _require(bucket, "key", (str,), "counts")
+        reasons += _nested_aggregation_reasons(bucket, f"counts.project[{project_id}]")
         if project_id in projects:
             raise ParserError("DUPLICATE_ID", f"counts: duplicate project bucket {project_id}")
+        gene_terms = _optional(bucket, "genes.my_genes.gene_id", (dict,), "counts")
+        reasons += _nested_aggregation_reasons(gene_terms, f"counts.project[{project_id}].genes")
         gene_buckets = _optional(bucket, "genes.my_genes.gene_id.buckets", (list,), "counts")
         if gene_buckets is None:
             raise ParserError("MISSING_FIELD", f"counts: missing gene buckets for {project_id}")
@@ -423,6 +440,7 @@ def parse_gene_case_counts(body: bytes, meta: ResponseMeta) -> GeneCaseCounts:
             if not isinstance(gene_bucket, dict):
                 raise ParserError("MALFORMED_JSON", "counts: gene bucket is not an object")
             gene_id = _require(gene_bucket, "key", (str,), "counts")
+            reasons += _nested_aggregation_reasons(gene_bucket, f"counts.project[{project_id}].gene[{gene_id}]")
             doc_count = _require(gene_bucket, "doc_count", (int,), "counts")
             if gene_id in counts:
                 raise ParserError("DUPLICATE_ID", f"counts: duplicate gene bucket {project_id}/{gene_id}")
@@ -436,6 +454,8 @@ def parse_gene_case_counts(body: bytes, meta: ResponseMeta) -> GeneCaseCounts:
 def parse_mutated_cases_count(body: bytes, meta: ResponseMeta) -> ProjectCoverage:
     document = _load_json(body, meta)
     reasons = _aggregation_completeness(document, "coverage")
+    projects_node = _optional(document, "aggregations.projects", (dict,), "coverage")
+    reasons += _nested_aggregation_reasons(projects_node, "aggregations.projects")
     buckets = _optional(document, "aggregations.projects.buckets", (list,), "coverage")
     if buckets is None:
         raise ParserError("MISSING_FIELD", "coverage: missing aggregations.projects.buckets")
@@ -444,6 +464,11 @@ def parse_mutated_cases_count(body: bytes, meta: ResponseMeta) -> ProjectCoverag
         if not isinstance(bucket, dict):
             raise ParserError("MALFORMED_JSON", "coverage: bucket is not an object")
         project_id = _require(bucket, "key", (str,), "coverage")
+        reasons += _nested_aggregation_reasons(bucket, f"coverage.project[{project_id}]")
+        reasons += _nested_aggregation_reasons(
+            bucket.get("case_summary", {}).get("case_with_ssm") if isinstance(bucket.get("case_summary"), dict) else None,
+            f"coverage.project[{project_id}].case_with_ssm",
+        )
         if project_id in coverage:
             raise ParserError("DUPLICATE_ID", f"coverage: duplicate project bucket {project_id}")
         coverage[project_id] = _require(bucket, "case_summary.case_with_ssm.doc_count", (int,), "coverage")

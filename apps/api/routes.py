@@ -162,8 +162,8 @@ def rankings(run_id: UUID, request: Request):
         key = "baseline" if row["relative_path"].endswith("baseline_ranking.json") else "jev"
         try:
             result[key] = json.loads(artifacts.read(row["relative_path"], row["sha256"]))
-        except (OSError, ValueError):
-            result[key] = None
+        except (OSError, ValueError) as exc:
+            raise HTTPException(503, detail=f"{key} ranking artifact unavailable or corrupt") from exc
     return result
 
 

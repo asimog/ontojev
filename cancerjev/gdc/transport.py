@@ -179,12 +179,21 @@ class GDCTransport:
         row = self.repository.gdc_cache_get(request_hash)
         if row is None:
             return None
+        if row.get("completeness") != "COMPLETE":
+            return None
+        if row.get("contract_version") != TRANSPORT_CONTRACT_VERSION:
+            return None
+        cached_size = int(row.get("size_bytes") or 0)
+        if cached_size > self.budget.caps.per_response_bytes:
+            return None
         metadata = self.repository.artifact(row["response_artifact_id"])
         if metadata is None:
             return None
         try:
             body = self.artifacts.read(metadata["relative_path"], row["response_hash"])
         except (OSError, ValueError):
+            return None
+        if len(body) != cached_size:
             return None
         request_id = str(uuid4())
         now = utc_now()
@@ -362,8 +371,12 @@ class GDCTransport:
                 detail = f"HTTP {status}"
                 error_bytes = 0
                 if status in (400, 404, 405, 422):
+                    error_allowance = min(
+                        self.budget.caps.per_response_bytes, self.budget.remaining_bytes,
+                    )
+                    error_limit = max(0, min(65536, error_allowance))
                     try:
-                        error_body = response.read(65536)
+                        error_body = response.read(error_limit) if error_limit else b""
                     except (OSError, http.client.HTTPException):
                         error_body = b""
                     error_bytes = len(error_body)
@@ -407,7 +420,7 @@ class GDCTransport:
             if bytes_read >= allowance:
                 probe = response.read(1)
                 if probe:
-                    self.budget.charge(bytes_read)
+                    bytes_read += len(probe)
                     raise TransportError(
                         TransportErrorCode.RESPONSE_TRUNCATED,
                         f"response exceeds cap {allowance}",

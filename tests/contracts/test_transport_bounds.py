@@ -118,6 +118,41 @@ def test_chunked_body_over_cap_is_truncated(transport_builder, loopback):
     assert _error_code(exc) == TransportErrorCode.RESPONSE_TRUNCATED
 
 
+def test_oversized_body_sentinel_is_charged_once(transport_builder, loopback):
+    body = b"z" * 101
+    loopback.raw("/status", lambda request: (200, {"Content-Type": "application/json",
+                                                   "Transfer-Encoding": "chunked"}, body))
+    transport = transport_builder(caps=BudgetCaps(max_requests=5, max_bytes=1_000_000, per_response_bytes=100))
+    with pytest.raises(TransportError) as exc:
+        transport.request(status_request())
+    assert _error_code(exc) == TransportErrorCode.RESPONSE_TRUNCATED
+    assert transport.budget.bytes_read == 101, "the read allowance and sentinel must be charged exactly once"
+
+
+def test_error_body_is_bounded_by_response_and_run_allowance(transport_builder, loopback):
+    loopback.raw("/status", lambda request: (400, {"Content-Type": "application/json"}, b"E" * 1000))
+    transport = transport_builder(caps=BudgetCaps(max_requests=5, max_bytes=32, per_response_bytes=10),
+                                  cache_enabled=False)
+    with pytest.raises(TransportError) as exc:
+        transport.request(status_request())
+    assert _error_code(exc) == TransportErrorCode.PROVIDER_ERROR
+    assert transport.budget.bytes_read == 10, "error bodies must respect the configured allowance"
+    assert transport.budget.bytes_read <= transport.budget.caps.max_bytes
+
+
+def test_cache_hit_respects_current_response_cap(transport_builder, loopback):
+    loopback.json("/status", STATUS_BODY)
+    first = transport_builder(caps=BudgetCaps(max_requests=5, max_bytes=1_000_000))
+    first.request(status_request())
+    assert len(loopback.requests) == 1
+
+    second = transport_builder(caps=BudgetCaps(max_requests=5, max_bytes=1_000_000, per_response_bytes=1))
+    with pytest.raises(TransportError) as exc:
+        second.request(status_request())
+    assert _error_code(exc) in {TransportErrorCode.RESPONSE_TOO_LARGE, TransportErrorCode.RESPONSE_TRUNCATED}
+    assert len(loopback.requests) == 2, "a cached body larger than the current cap must not be replayed"
+
+
 def test_redirect_is_refused_not_followed(transport_builder, loopback):
     loopback.raw("/status", lambda request: (302, {"Location": "https://evil.example/steal"}, b""))
     transport = transport_builder()
@@ -279,6 +314,12 @@ def test_identity_and_size_caps_are_enforced():
     request = cases_request("TCGA-BRCA", size=100, offset=200)
     assert dict(request.params)["from"] == "200"
     assert request.page == 3
+
+
+def test_cases_page_advance_can_exceed_offset_derived_page():
+    request = cases_request("TCGA-BRCA", size=250, offset=0, page=11)
+    assert dict(request.params)["from"] == "0"
+    assert request.page == 11, "short pages must still consume one page advance each"
 
 
 def test_host_allowlist_rejects_non_gdc_host(runtime):

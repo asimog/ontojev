@@ -47,6 +47,19 @@ def test_api_incremental_events_and_errors(runtime, monkeypatch):
     assert "x-artifact-id" in exposed and "x-artifact-sha256" in exposed and "etag" in exposed
 
 
+def test_corrupt_ranking_artifact_surfaces_an_error(runtime, monkeypatch):
+    settings, repository, artifacts = runtime
+    monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))
+    run_id = repository.create_run("corrupt-ranking", mode="LIVE", fixture_id=None, fixture_version=None)
+    artifact = artifacts.publish(f"runs/{run_id}/wide/jev_ranking.json", b'{"kind":"JEV"}',
+                                 "application/json", "wide-ranking")
+    repository.register_artifact(artifact, run_id)
+    (settings.data_dir / artifact.relative_path).write_bytes(b"corrupt")
+    client = TestClient(create_app())
+    response = client.get(f"/api/runs/{run_id}/rankings")
+    assert response.status_code == 503, "a corrupt ranking artifact must not be reported as no ranking"
+
+
 def test_api_validation_errors_use_the_documented_envelope(runtime, monkeypatch):
     settings, repository, artifacts = runtime
     monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))

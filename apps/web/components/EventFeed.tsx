@@ -73,7 +73,9 @@ function EventDetail({ event }: { event: RunEvent }) {
 }
 
 function isJudgmentVector(value: unknown): value is Parameters<typeof JudgmentVector>[0]["vector"] {
-  return typeof value === "object" && value !== null;
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  return ["noul", "choice", "score"].some((key) => key in candidate);
 }
 
 function renderValue(value: unknown): string {
