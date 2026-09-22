@@ -72,6 +72,13 @@ in clearly separated panels; the research process never writes through FastAPI.
 
 Configuration:
 
+For local development, copy `.env.local.example` to `.env.local` and fill in the provider keys;
+`.env.local` is gitignored and loaded automatically by `cancerjev.config.load_local_env()` (real
+environment variables win, blank values are ignored, values are never logged). Set
+`CANCERJEV_NO_DOTENV=1` to disable. It includes `TYPESAFE_API_KEY`, `OPENROUTER_API_KEY` (reserved
+for future Phase 6 hypothesis generation, not used by any code today), the operational
+`CANCERJEV_*` settings below, and the frontend URL.
+
 - `CANCERJEV_DATA_DIR` — local persistence directory; defaults to `./data`.
 - `CANCERJEV_FIXTURE_STAGE_DELAY_MS` — demo-only delay; defaults to `500`, tests use `0`.
 - `CANCERJEV_RUN_INTERVAL_MINUTES` — worker interval; defaults to `60`.

@@ -133,6 +133,52 @@ WIDE_QUESTIONS: tuple[QuestionDefinition, ...] = (
 
 WIDE_QUESTIONS_BY_ID = {definition.question_id: definition for definition in WIDE_QUESTIONS}
 
+_PRIMITIVES = frozenset({"NOUL", "CHOICE", "SCORE"})
+_APPLICABILITY_RULES = frozenset({
+    "any_observation", "two_observations", "three_mutation_observations",
+    "three_expression_observations", "coverage_imbalance",
+})
+
+
+def validate_definitions(definitions: tuple[QuestionDefinition, ...]) -> None:
+    """Fail closed on question shapes the provider contract cannot accept.
+
+    Mirrors the documented TypeSafe limits: Choice accepts at most 255 options,
+    Score accepts 2-10 ordered levels, and Noul criteria are optional
+    ``true``/``false`` descriptions. Called at import so a malformed question set
+    can never reach the provider.
+    """
+    seen: set[str] = set()
+    for definition in definitions:
+        if not definition.question_id or definition.question_id in seen:
+            raise ValueError(f"invalid or duplicate question id {definition.question_id!r}")
+        seen.add(definition.question_id)
+        if definition.primitive not in _PRIMITIVES:
+            raise ValueError(f"{definition.question_id}: unknown primitive {definition.primitive!r}")
+        if not isinstance(definition.instructions, str) or not definition.instructions.strip():
+            raise ValueError(f"{definition.question_id}: instructions must be non-empty text")
+        if not isinstance(definition.version, int) or definition.version < 1:
+            raise ValueError(f"{definition.question_id}: version must be a positive integer")
+        if definition.applicability_rule not in _APPLICABILITY_RULES:
+            raise ValueError(f"{definition.question_id}: unknown applicability rule")
+        criteria = definition.criteria
+        if definition.primitive == "CHOICE":
+            if not isinstance(criteria, dict) or not criteria:
+                raise ValueError(f"{definition.question_id}: Choice requires option criteria")
+            if len(criteria) > 255:
+                raise ValueError(f"{definition.question_id}: Choice exceeds 255 options")
+            if not all(isinstance(key, str) and key for key in criteria):
+                raise ValueError(f"{definition.question_id}: Choice option keys must be non-empty strings")
+        elif definition.primitive == "SCORE":
+            if not isinstance(criteria, list) or not 2 <= len(criteria) <= 10:
+                raise ValueError(f"{definition.question_id}: Score requires 2-10 ordered levels")
+        elif criteria is not None:
+            if not isinstance(criteria, dict) or set(criteria) - {"true", "false"}:
+                raise ValueError(f"{definition.question_id}: Noul criteria accept only true/false")
+
+
+validate_definitions(WIDE_QUESTIONS)
+
 
 def question_set_hash(definitions: tuple[QuestionDefinition, ...] = WIDE_QUESTIONS) -> str:
     payload = {

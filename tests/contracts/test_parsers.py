@@ -314,3 +314,21 @@ def test_unfiltered_coverage_is_required_for_scientific_use():
     coverage = parse_mutated_cases_count(*load("mutated_cases_count_all"))
     assert coverage.complete is True
     assert len(coverage.case_with_ssm) > 50
+
+
+def test_tsv_utf8_bom_header_is_accepted():
+    body = "\ufeffgene_id\tcase-a\nENSG1\t1.0\n".encode("utf-8")
+    values = parse_expression_values(body, meta_for("/gene_expression/values"),
+                                     expected_cases=["case-a"], expected_genes=["ENSG1"])
+    assert values.values["ENSG1"]["case-a"] == 1.0
+
+
+def test_files_record_without_explicit_open_access_is_not_open():
+    body = json.dumps({"data": {"hits": [
+        {"file_id": "f1", "analysis": {"workflow_type": "STAR - Counts"}},
+        {"file_id": "f2", "access": "open", "analysis": {"workflow_type": "STAR - Counts"}},
+    ]}, "warnings": {}}).encode()
+    provenance = parse_files_provenance(body, meta_for("/files"))
+    assert provenance.files_seen == 2
+    assert provenance.non_open_records == 1
+    assert provenance.workflows == ["STAR - Counts"]

@@ -1,5 +1,8 @@
 # Versioned question architecture
 
+Implementation plan for the pending redesign: `docs/PHASE_3_PLAN.md`. This document describes the
+current (stale) `wide-v2` set and the planned shape; it does not implement the replacement.
+
 Question sets: `wide-v2` (**technically IMPLEMENTED in Phase 3, semantically STALE pending redesign**), `deep-v2` and `hypothesis-v2` (**PLANNED**, Phase 4+/Phase 6, not implemented). `wide-v1` was the Phase 0 draft for synthetic fixtures; `wide-v2` replaced it because the real state contains mutation counts, expression summaries and coverage context, but no signed effects, no registered follow-up, and no defined cross-modal proposition. `wide-v2` was itself designed around a cross-project evidence model; for the single TCGA-LUAD cohort several of its questions are inapplicable or ungrounded, so the set must be redesigned before Phase 3 is treated as scientifically meaningful. No replacement is implemented here.
 
 Each definition carries an ID, primitive, version, full instruction text, criteria, applicability rule and a hash over the canonical definition bytes. Question IDs are not sent to the model; changing wording changes the definition hash. Questions refer only to supplied observations and their stated limitations, and never ask Jev to invent facts, compute quantities, or establish causality.
@@ -84,28 +87,49 @@ State contains one immutable EvidenceState, one generated hypothesis, and determ
 
 The deterministic registry — not `registered_test_exists` — establishes whether a test exists. Hypothesis review is critique, not scientific verification.
 
-## Planned Wide redesign principles (Phase 3 follow-up task, not implemented here)
+## `wide-v3`: planned single-cohort redesign (PLANNED, not implemented)
 
-The next Wide decision is: **which TCGA-LUAD candidate states, if any, contain sufficiently
-coherent and decision-relevant evidence to justify spending bounded future follow-up budget on
-deeper investigation?** The redesign should:
+Full specification: `docs/PHASE_3_PLAN.md`. The next Wide decision is: **which TCGA-LUAD
+candidate states, if any, contain sufficiently coherent and decision-relevant evidence to justify
+spending bounded future follow-up budget on deeper investigation?**
 
-- use atomic questions, not compound ones;
-- separate evidence quality from biological/evidence pattern, and separate both from the value of
-  deeper investigation;
-- never ask Jev for a deterministic fact that code already computes;
-- preserve the deterministic baseline ranking and the raw Jev dimensions;
-- use an explicit admission rule recorded in policy code;
-- permit zero admissions, and support `NONE`/`ABSTAIN`;
-- treat the promotion limit as a maximum, not a quota.
+`wide-v3` uses six atomic Nouls plus one closed Choice over a single-cohort projection
+(`jev-state-projection-v2`). It separates evidence quality, evidence pattern, and the value of
+deeper investigation, and asks no deterministic fact.
 
-Exact question wording, applicability rules and the admission rule belong to the separate
-TCGA-LUAD Wide Jev semantic/admission redesign task. This document does not implement them.
+| # | question_id | Primitive | Dimension | Applicability (deterministic) |
+|---|---|---|---|---|
+| 1 | `evidence_quality_adequate` | Noul | quality | mutation or expression observed |
+| 2 | `mutation_evidence_coherent` | Noul | pattern | mutation observed |
+| 3 | `expression_evidence_coherent` | Noul | pattern | expression observed |
+| 4 | `signal_explained_by_coverage` | Noul | confound | mutation or expression observed |
+| 5 | `unresolved_uncertainty_material` | Noul | value | mutation or expression observed |
+| 6 | `warrants_deeper_investigation` | Noul | value/admission | mutation or expression observed |
+| 7 | `dominant_limitation` | Choice | naming | mutation or expression observed |
+
+Proposed instruction text and the `dominant_limitation` roster are fixed in `docs/PHASE_3_PLAN.md`
+§4.2; the roster is `COVERAGE`, `MISSINGNESS`, `MUTATION_ABSENCE`, `EXPRESSION_SPARSITY`,
+`PARTIAL_AGGREGATION`, `NONE`, `OTHER`.
+
+Planned `wide-policy-v2` (PLANNED): a deterministic eligibility gate
+(`completeness == COMPLETE`, mutation observed, expression in `OBSERVED`/`PARTIAL`) followed by an
+explicit admission rule over raw Nouls with provisional `ADMISSION_*` thresholds and
+`PROMOTION_LIMIT = 3` as a maximum; if no state qualifies, `admission_decision = "ABSTAIN"` and
+zero candidates are promoted. The rule is specified in `docs/PHASE_3_PLAN.md` §4.5. Raw Noul
+probabilities, the full Choice distribution and every applicability flag remain persisted so the
+policy can be recomputed without rerunning Jev. The deterministic baseline (`baseline-wide-v2`) is
+retained separately; Jev never replaces it. Changed ranking is not evidence of a better research
+decision — step 3 (baseline-vs-Jev evaluation) remains required.
+
+The pre-Phase-3 audit's candidate list of semantic judgments that could replace fragile string
+logic (workflow/assay comparability, canonical file selection, gene-mention resolution, clinical
+label normalization) is in `docs/SOURCE_REVIEW.md`; each remains PLANNED and none may compute a
+measurement or write a measured field.
 
 ## Wide policy and baseline comparison
 
 Deterministic baseline (`baseline-wide-v1`, no model input): eligible states ordered by projects with mutation observations descending, then affected-case total descending, then `top_project_share` ascending, then `state_hash` ascending; top-K (≤3) admitted.
 
-Jev policy (`wide-policy-v1`): `warrants_deeper_investigation` descending, then `likely_fragile` ascending, then `pattern_type` class priority (`WIDESPREAD_RECURRENCE` > `PROJECT_SPECIFIC_EXCEPTION` > `WEAK_DISTRIBUTED_SIGNAL` > `NO_COHERENT_PATTERN` > `DATA_QUALITY_CONCERN` > `INSUFFICIENT_EVIDENCE`), then `state_hash` ascending; top-K (≤3) admitted. Raw Noul probabilities, the full Choice distribution and every applicability flag are persisted, so the policy can be recomputed without rerunning Jev. Both rankings are persisted for the baseline-vs-Jev comparison; Jev never replaces the baseline. This ordering depends on stale cross-project dimensions and is expected to change in the Wide redesign; the baseline-vs-Jev evaluation remains the required test of incremental value.
+Jev policy (`wide-policy-v1`): `warrants_deeper_investigation` descending, then `likely_fragile` ascending, then `pattern_type` class priority (`WIDESPREAD_RECURRENCE` > `PROJECT_SPECIFIC_EXCEPTION` > `WEAK_DISTRIBUTED_SIGNAL` > `NO_COHERENT_PATTERN` > `DATA_QUALITY_CONCERN` > `INSUFFICIENT_EVIDENCE`), then `state_hash` ascending; top-K (≤3) admitted. Raw Noul probabilities, the full Choice distribution and every applicability flag are persisted, so the policy can be recomputed without rerunning Jev. Both rankings are persisted for the baseline-vs-Jev comparison; Jev never replaces the baseline. This ordering depends on stale cross-project dimensions and is superseded by the planned `wide-policy-v2` (see `wide-v3` above and `docs/PHASE_3_PLAN.md` §4.4–4.5); the baseline-vs-Jev evaluation remains the required test of incremental value.
 
-Thresholds and gates are recorded in policy code, never hidden in prompts. Provisional starting gates: Noul ≥0.8 yes / ≤0.2 no, middle band uncertain; Choice confidence ≥0.7. These are unvalidated operational parameters, not provider guarantees. A Jev probability never confers statistical significance, causality, or clinical meaning.
+Thresholds and gates are recorded in policy code, never hidden in prompts. Provisional starting gates: Noul ≥0.8 yes / ≤0.2 no, middle band uncertain; Choice confidence ≥0.7. These are unvalidated operational parameters, not provider guarantees. A Jev probability never confers statistical significance, causality, or clinical meaning. Under the planned `wide-policy-v2`, a state that fails the admission thresholds is not admitted, and an empty admission set is a valid `ABSTAIN` outcome rather than a failure.

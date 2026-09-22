@@ -282,7 +282,7 @@ def expression_values_request(case_ids: list[str], gene_ids: list[str]) -> GDCRe
     _validate_ids(gene_ids, limit=MAX_GENE_IDS, label="gene_ids")
     return _request(
         resolve_endpoint("POST", "/gene_expression/values"),
-        body={"case_ids": list(case_ids), "gene_ids": list(gene_ids), "tsv_units": "uqfpkm"},
+        body={"case_ids": list(case_ids), "gene_ids": list(gene_ids), "tsv_units": "uqfpkm", "format": "tsv"},
         accept="text/tab-separated-values",
         logical_query_id="expression:values",
     )

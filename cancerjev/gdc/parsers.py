@@ -519,6 +519,8 @@ def parse_expression_values(body: bytes, meta: ResponseMeta, *, expected_cases: 
         text = body.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ParserError("MALFORMED_TSV", str(exc)) from exc
+    if text.startswith("\ufeff"):
+        text = text[1:]
     lines = [line for line in text.splitlines() if line.strip()]
     if not lines:
         raise ParserError("MALFORMED_TSV", "empty TSV")
@@ -577,7 +579,7 @@ def parse_files_provenance(body: bytes, meta: ResponseMeta) -> FilesProvenance:
     hits = _hits(document, "files")
     for hit in hits:
         access = _optional(hit, "access", (str,), "files")
-        if access is not None and access != "open":
+        if access != "open":
             non_open += 1
         workflow = _optional(hit, "analysis.workflow_type", (str,), "files")
         if workflow and workflow not in workflows:

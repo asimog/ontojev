@@ -1,7 +1,8 @@
 # Implementation status
 
 Factual source of truth. Current `main` HEAD: `60acf6b0b4b809d84878b82b4d2d118f4ec5d3ef`
-("Fix pagination, identifier, and spec validation defects"), working tree clean.
+("Fix pagination, identifier, and spec validation defects"); the pre-Phase-3 readiness audit
+(2026-09-23) changes are applied on top and are uncommitted in this working tree.
 
 **DONE:** Phase 0 design; Phase 1 offline synthetic vertical slice (verified); the GDC × Jev fit
 analysis (`docs/GDC_JEV_FIT_ANALYSIS.md`); Phase 2 real open-access GDC evidence with deterministic
@@ -41,6 +42,14 @@ The generic multi-project sweep was replaced by one explicitly defined cohort: *
 
 **Phase 3 assumptions now stale (not redesigned here).** `wide-v2` was designed for cross-project evidence. Under a single LUAD state: `mutation_project_exception` and `expression_project_exception` (need ≥3 project observations), `likely_fragile` (needs `top_project_share`, which is `NOT_APPLICABLE` with one project) and `coverage_explains_apparent_difference` (needs a cross-project coverage imbalance) become inapplicable or ungrounded; `pattern_type`'s roster is cross-project and is semantically stale. Phase 2 stays functional and Phase 3 still runs, but the question set and the projection's `cross_project` framing must be revisited before Phase 3 is treated as scientifically meaningful for this cohort. No replacement is invented yet.
 
+**Phase 3 redesign (PLANNED, specified in `docs/PHASE_3_PLAN.md`).** The replacement is fully
+specified but not implemented: `jev-state-projection-v2` (single `cohort` block, no cross-project
+fields), `wide-v3` (six atomic Nouls + one closed Choice separating evidence quality, evidence
+pattern and value of investigation), deterministic applicability, `baseline-wide-v2`, and
+`wide-policy-v2` with an explicit admission rule that permits zero admissions and `ABSTAIN` and
+treats `PROMOTION_LIMIT = 3` as a maximum. Exact question wording, projection schema, thresholds,
+tests and acceptance criteria are in `docs/PHASE_3_PLAN.md`; no code changes exist yet.
+
 ## What exists (Phase 3 additions)
 
 - **Owned Jev contracts** (`cancerjev/jev/contracts.py`): normalized Noul/Choice/Score answers with fail-closed validation (missing/unknown questions, wrong primitive, out-of-range or non-finite probabilities, roster/distribution mismatch, invalid confidence/legend, non-summing distributions). No defaults are fabricated.
@@ -64,11 +73,29 @@ The generic multi-project sweep was replaced by one explicitly defined cohort: *
 
 The fit analysis records every endpoint’s open-access review, live contract check and scientific-semantics review, and lists rejected/deferred sources with reasons (`docs/GDC_JEV_FIT_ANALYSIS.md`).
 
+## Pre-Phase-3 readiness audit (2026-09-23)
+
+Targeted audit of the implemented Phases 1–3 against the official GDC documentation repository
+(`https://github.com/NCI-GDC/gdc-docs/tree/develop/docs`) and the live TypeSafe/Jev documentation
+(`https://docs.typesafe.ai`). Full findings, authority order and the Jev opportunity assessment are
+in `docs/SOURCE_REVIEW.md`.
+
+- GDC endpoint/method, filter, pagination and expression shapes match the documentation; the
+  analysis endpoints comply with the "no `format`/`fields`" rule; no credential path exists.
+- TypeSafe primitives, same-state fan-out and model limits match the documentation.
+- Hardening applied: `.env.local` loader + template; explicit `format: tsv` on the expression
+  values request; UTF-8 BOM tolerance and access-missing fail-closed in parsers; import-time
+  question-shape validation; typed provider-error classification.
+- Jev opportunities (workflow/assay comparability, canonical file selection, gene-mention
+  resolution, clinical label normalization) are documented as PLANNED; none is implemented and
+  none may compute a measurement.
+- No live GDC/Jev/LLM call was made for this audit; live behavior is from the retained
+  2026-09-22 captures.
+
 ## Validation hardening (2026-09-23)
 
 Parser, request-builder, pagination and `ResearchSpec` validation were hardened (commit
 `60acf6b`), with focused regression coverage:
-
 - GDC request builders validate sizes/offsets uniformly and reject non-integer and boolean values
   (`cases`, `files`, `projects`, `discovery`); `expression_file_sample_size` is bounded by the
   endpoint cap `MAX_FILES_PAGE = 5`.
@@ -120,7 +147,7 @@ Offline gates re-run 2026-09-23 at HEAD `60acf6b`. The live-provider and fronten
 | Gate | Command | Result |
 |---|---|---|
 | Python lint | `python -m ruff check cancerjev apps tests` | All checks passed (2026-09-23) |
-| Offline suite | `python -m pytest` (live markers excluded by default) | **190 passed**, 0 failed, 0 errors (2 live-marked tests deselected) (2026-09-23) |
+| Offline suite | `python -m pytest` (live markers excluded by default) | **214 passed**, 0 failed, 0 errors (2 live-marked tests deselected) (2026-09-23, audit changes applied) |
 | Live markers | `pytest -m live_gdc` / `-m live_jev` | opt-in; the GDC probe passed in a manual run (14 captures, all 200); the Jev live test skips without a key |
 | Frontend typecheck | `npm run typecheck` | Passed |
 | Frontend build | `npm run build` | Passed (all routes) |
@@ -159,8 +186,8 @@ Offline gates re-run 2026-09-23 at HEAD `60acf6b`. The live-provider and fronten
 
 These are separate tasks; do not combine them.
 
-1. Targeted pre-Phase-3 readiness audit.
-2. TCGA-LUAD Wide Jev semantic/admission redesign.
+1. Targeted pre-Phase-3 readiness audit. **DONE (2026-09-23)** — see `docs/SOURCE_REVIEW.md`.
+2. TCGA-LUAD Wide Jev semantic/admission redesign. **NEXT** — plan: `docs/PHASE_3_PLAN.md`.
 3. Baseline-vs-Jev incremental-value evaluation.
 4. One Phase-4 vertical slice: E0 → one registered follow-up → E1.
 5. Bounded next-candidate autonomous iteration.

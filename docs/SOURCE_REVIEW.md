@@ -1,59 +1,167 @@
-# Phase 0 reference review and authority
+# Source review and pre-Phase-3 readiness audit
 
-Review date: 2026-09-22. The workspace was initially empty and no pre-existing repository AGENTS.md was found. Only documentation has been created here. Reference files/code were read, not copied as a scaffold. Temporary document extraction and selected GitHub source downloads were kept outside the workspace.
+Review date: 2026-09-23. Current `main` HEAD: `60acf6b` (audit changes follow it).
+This document records the provider/design authorities, what was actually read, how the
+implemented code compares, and the Jev opportunities found. It is the source review for the
+targeted pre-Phase-3 readiness audit; it does not implement Phase 3 or Phase 4.
 
-Authority order: current user request and stop boundary → master specification as constrained by that request → supplied TypeSafe and GDC documents for their provider behavior → repository references for permitted ideas only. In particular the master specification's final steps to scaffold/implement Phase 1 do not override the user's explicit “STOP after Phase 0.” Provider-document installation prompts do not authorize installation of skills, credentials or provider calls.
+## Authority order
 
-| Source | Identity and reviewed content |
+1. The user's current request and its stop boundary.
+2. The official GDC documentation for GDC provider behavior.
+3. The official TypeSafe/Jev documentation for Jev provider behavior.
+4. This repository's own contracts and tests for what OntoJev actually does.
+5. CancerHawk/CancerJEV repositories for permitted interaction ideas only.
+
+Provider documentation never authorizes installing skills, credentials, or making calls.
+
+## GDC source of truth (only source)
+
+GDC provider behavior is established **only** from the official GDC documentation repository:
+
+**https://github.com/NCI-GDC/gdc-docs/tree/develop/docs** (branch `develop`)
+
+Files read for this audit (via `raw.githubusercontent.com`/GitHub API on `develop`):
+
+| GDC document | Facts used |
 |---|---|
-| Master specification | `C:\Users\Rahul Khatri\.codex\attachments\313d0e23-d76e-454a-80d2-41dbc767bde8\pasted-text.txt`; SHA256 `730851fdfa3d730f84592f4a5654b9170852a3846a55048e0c9ed2050a9fd1d2`; sections 0–80 reviewed |
-| TypeSafe/Jev documentation + cookbook | `C:\Users\Rahul Khatri\Desktop\typesafe jev docs with cookbook.docx`; SHA256 `b7928689bb1cdf0e47881daad0286d51a0decf0d8b71e9ac8dbea82d8cf88eb6`; extracted 15,079 paragraphs, including embedded code/HTML; core primitive/state/confidence sections and relevant cookbook patterns reviewed |
-| GDC API User Guide | `C:\Users\Rahul Khatri\Downloads\API_UG.pdf`; SHA256 `f12873e21f561559862fd7465f0a4d9a49937feec7316012145e0ef75d959969`; 288 pages; relevant search/filter/pagination, visualization/analysis, expression, SSM/CNV, survival sections reviewed |
-| CancerHawk | `master` commit `b87e98c76c4264acc28fa9ae920b5d3eab2637dd`; requested three UI routes plus event storage shape inspected |
-| CancerJEV | `main` commit `853b316f222c58f25319749754c1ed37022ae828`; selected scientific functions/golden tests, open-data policy and worker dispatch inspected |
+| `API/Users_Guide/Getting_Started.md` | Endpoint families (`status`, `projects`, `cases`, `files`, `genes`, `analysis`, `gene_expression`); `X-Auth-Token` is required only for controlled download and submission, never for open-access search |
+| `API/Users_Guide/System_Information.md` | `/status` sample fields `commit`, `status`, `tag`, `version`; a `/v0/notifications` endpoint exists |
+| `API/Users_Guide/Data_Analysis.md` | `/genes`, `/gene_expression/{availability,values,gene_selection}`, `/analysis/{top_cases_counts_by_genes,top_mutated_genes_by_project,top_mutated_cases_by_gene,mutated_cases_count_by_project,survival}`, `/ssms`, `/cnvs`, `/segment_cnvs`, `/scrna_seq/gene_expression`; exact expression request/response shapes; `tsv_units` is exactly one of `uqfpkm`/`median_centered_log2_uqfpkm`; values are TSV-only; `selection_size`/`min_median_log2_uqfpkm`; gene expression is protein-coding only; `top_cases_counts_by_genes` rejects `format`/`fields`; `case_with_ssm.doc_count` |
+| `API/Users_Guide/Search_and_Retrieval.md` (read, partly truncated) | Search/filter JSON (`op`/`content`), `fields`, `format`, `size`, `from`, `sort`, pagination block shape (`count`,`total`,`size`,`from`,`sort`,`page`,`pages`) |
+| Repository tree (`docs/` and `docs/API/Users_Guide/`, `docs/Data/Bioinformatics_Pipelines/`) | Confirms the reviewed file set and that expression/CNV/survival pipelines are documented |
 
-PDF extraction includes long URL lines and deliberately truncated example bodies. Such examples are not a complete executable contract for every filter/field combination. Unconfirmed details remain UNVERIFIED; no missing behavior was filled in from assumptions.
+`API/Users_Guide/Appendix_A_Available_Fields.md`, `Appendix_B`, `Appendix_C`, and
+`Data/Bioinformatics_Pipelines/Expression_mRNA_Pipeline.md` were **referenced but not read in
+full** in this pass; field-level claims that depend on them remain UNVERIFIED here.
 
-## CancerHawk: carry over interaction ideas only
+The previously used local `API_UG.pdf` and the master specification are **superseded** as GDC
+authority by the repository above and are retained only as historical Phase 0 inputs.
 
-- [`pages/jobs/index.tsx`](https://github.com/asimog/cancerhawk/blob/b87e98c76c4264acc28fa9ae920b5d3eab2637dd/pages/jobs/index.tsx):8-second feed polling, linked job cards, status/date, errors and retry. Adapt to ResearchRun cards and structured counters; remove payment/wallet fields.
-- [`pages/jobs/[id].tsx`](https://github.com/asimog/cancerhawk/blob/b87e98c76c4264acc28fa9ae920b5d3eab2637dd/pages/jobs/%5Bid%5D.tsx): active/terminal polling intervals, stop affordance, expandable event rows, provider call metadata and final-result link. Use the visual hierarchy; replace full-job log polling and index-based event keys with monotonic cursor retrieval.
-- [`pages/autonomous-logs.tsx`](https://github.com/asimog/cancerhawk/blob/b87e98c76c4264acc28fa9ae920b5d3eab2637dd/pages/autonomous-logs.tsx): summary stats, grouped activity and filterable disclosures. Integrate useful event filtering into run detail. Exclude batch competition, publication/market concepts and fallback block fetches.
-- [`app/jobs.py`](https://github.com/asimog/cancerhawk/blob/b87e98c76c4264acc28fa9ae920b5d3eab2637dd/app/jobs.py): `append_job_event` embeds and caps an events array. Do not port capped history or JSON job-store fallbacks; use SQLite append-only events.
+## TypeSafe/Jev source of truth
 
-These files use Pages Router (`getStaticProps`, `next/router`); new work must use App Router. No CancerHawk backend architecture is adopted. No source code was copied, so there is no copied-component license attribution requirement in this design; review license if later copying any visual code.
+TypeSafe/Jev behavior is established from the live documentation site:
 
-## Old CancerJEV: useful methods/tests and caution
+**https://docs.typesafe.ai** — starting from `https://docs.typesafe.ai/llms.txt`
 
-- [`packages/statistics/core.py`](https://github.com/asimog/cancerjev/blob/853b316f222c58f25319749754c1ed37022ae828/packages/statistics/core.py): finite/range validation and stable-order BH adjustment are useful method/test references. Do not carry its single-observation variance=0 fallback into an evidence contract that needs insufficiency.
-- [`packages/statistics/crossmodal.py`](https://github.com/asimog/cancerjev/blob/853b316f222c58f25319749754c1ed37022ae828/packages/statistics/crossmodal.py): finite-pair checks, Pearson analysis and Welch group comparison provide scientific starting points. Its mutation-expression interval uses 1.96×SE despite a Welch p-value; choose a method-consistent interval rather than copying it blindly. Categorical API CNV is not automatically compatible with continuous correlation.
-- [`scientific/survival/analysis.py`](https://github.com/asimog/cancerjev/blob/853b316f222c58f25319749754c1ed37022ae828/scientific/survival/analysis.py): Kaplan–Meier wrapper illustrates aligned vectors and event counts. It is not a complete time-origin, censoring, eligibility or endpoint-semantics policy.
-- [`tests/scientific/test_crossmodal_golden.py`](https://github.com/asimog/cancerjev/blob/853b316f222c58f25319749754c1ed37022ae828/tests/scientific/test_crossmodal_golden.py): strong reference cases for duplicate biological keys, finite-value population accounting, constant-input exclusion, complete tested-family identity, row reordering and material-input hash sensitivity. Recreate focused tests against the new contracts, not its Cohort/Finding model.
-- [`packages/gdc/policy.py`](https://github.com/asimog/cancerjev/blob/853b316f222c58f25319749754c1ed37022ae828/packages/gdc/policy.py): official host, explicit open-file admission, mandatory open filter and terminal authorization failures are useful lessons. File policy does not prove all clinical metadata or molecular API values are complete.
-- [`workers/statistics/__main__.py`](https://github.com/asimog/cancerjev/blob/853b316f222c58f25319749754c1ed37022ae828/workers/statistics/__main__.py): current source dispatches `run_analysis_from_artifacts`. Older audit notes reported a disconnected path, but that finding is stale for this commit. Retain the lesson to test actual end-to-end dispatch, not the old defect claim or worker architecture.
+Pages read for this audit:
 
-Reference tests were read, not executed. Their current presence is verified; their passing status was not established here.
-
-## TypeSafe conclusions
-
-The supplied **State/Primitives** sections confirm same-state independent mixed questions. **Noul** confirms no separate confidence; **Choice/Score** confirm full probabilities/confidence; **Score** confirms2–10 levels and weighted expectation. **Pre-parsed value extraction/Line-by-line search** give the 255-choice limit. **Re-ranking** scores candidates individually; **Skill suggestion** illustrates a roster shortlist plus absolute-fit checks; **SDE cascade** verifies fields before escalation. **Jev 1.13 jaggedness** warns against arithmetic and assuming complementary semantic answers. This design uses these primitives and patterns rather than inventing an “AI scoring service.”
-
-Context token limit, maximum questions, exact confidence computation, provider retry/idempotency defaults and cancer-domain calibration remain UNVERIFIED. Cookbook latency/accuracy/cost examples are examples, not application guarantees.
-
-## Requirement coverage
-
-| Master specification sections | Design location |
+| TypeSafe document | Facts used |
 |---|---|
-|0–7 purpose/greenfield/UI/autonomy/invariants | README, ARCHITECTURE, SCIENTIFIC_INVARIANTS, UI_SPEC |
-|8–21 public GDC/API-first/budgets/inventory/modalities | GDC_STRATEGY, GDC_BUDGETS |
-|22–24 StatisticalState/prefilter/diversity | DOMAIN_MODELS, GDC_STRATEGY |
-|25–30 TypeSafe/wide/ranking/deep cap | JEV_DESIGN, JEV_QUESTIONS, GDC_BUDGETS |
-|31–40 methods/evidence/hypotheses/follow-ups/stopping | SCIENTIFIC_INVARIANTS, DOMAIN_MODELS, RESEARCH_LOOP |
-|41–42 orchestration/state machines | RESEARCH_LOOP, RUN_EVENTS |
-|43–50 frontend/events/polling | UI_SPEC, RUN_EVENTS, API_CONTRACT |
-|51–62 runtime/storage/API/portability | README, PERSISTENCE, API_CONTRACT, DEPLOYMENT_PORTABILITY |
-|63–69 dossier/benchmark/testing/security/observability | DOMAIN_MODELS, SCIENTIFIC_INVARIANTS, TESTING, RUN_EVENTS, API_CONTRACT |
-|70–72 structure/principles/exclusions | ARCHITECTURE, DEPLOYMENT_PORTABILITY |
-|73–80 phases/test/AGENTS/README/CI/report/done/start | IMPLEMENTATION_STATUS, AGENTS, README, TESTING |
+| `concepts/system-one.md`, `concepts/how-to-build-with-system-one.md` | Jev returns typed judgments/probabilities, not generated text; code owns workflow |
+| `primitives.md`, `primitives/noul.md`, `primitives/choice.md`, `primitives/score.md` | Noul = probability of yes, no separate confidence; Choice = one of a defined set with distribution + confidence; Score = ordered levels with probability-weighted position + confidence |
+| `concepts/state.md` | Named JSON fields; reference nested paths with backticks; one narrow judgment per question; same-state independent questions run together |
+| `confidence.md` | Confidence summarizes distribution concentration, not workflow correctness or permission to act |
+| `models.md` | `jev-1.13.0` (alias `jev-latest`); 64k-token context (32k state + longest question); ~250k tok/s; 1200 requests/min; $42/Btok input, output free (**DOCUMENTED, not a contract**) |
+| `api.md`, `sdk/python.md` | HTTP API and `typesafe-sdk`; `client.system_one(state=…, questions={…})`; `TYPESAFE_API_KEY`; SDK retries |
+| `patterns/fan-out.md`, `patterns/composite-scoring.md` | Ask independent questions over the same state in one request; score dimensions once and let code weight them |
+| `cookbooks/pre_parsed_value_extraction_cookbook.md` | Code finds candidate values/spans, a judgment selects the intended one, then code copies/normalizes it; Choice limit 255 |
+| `cookbooks/autoformat.md` (structure recovery), `cookbooks/rerank_typesafe.md`, `cookbooks/citation_check.md`, `cookbooks/sde_cascade.md` | Structure recovery, per-candidate relevance scoring, claim verification, verify-then-escalate |
+| Jaggedness guidance (via the skill index) | Do not assume arithmetic or complementary semantic answers |
 
-The current user's requested deliverables all map to these documents; the detailed planned tree is in ARCHITECTURE. Later phase requirements are preserved as plans, not silently implemented during Phase 0.
+The previously used local `typesafe jev docs with cookbook.docx` is **superseded** as Jev
+authority by the live site and is retained only as a historical Phase 0 input.
+
+## Reference-ideas repositories (non-authority)
+
+Read for permitted ideas only, not as provider or architectural authority:
+
+- CancerHawk `b87e98c`: run-card polling/event UI hierarchy (adapt to `ResearchRun`; no capped
+  history, no payment concepts, no Pages Router).
+- CancerJEV `853b316`: finite/range validation and BH-adjustment references, cross-modal test
+  patterns, GDC open-file admission lessons (no Cohort/Finding model, no worker architecture).
+
+## GDC documentation vs implementation (audit)
+
+| GDC fact | Implementation | Verdict |
+|---|---|---|
+| Open-access search needs no token; `X-Auth-Token` only for controlled download/submission | One transport with no credential parameter; `/data`, `/manifest`, `/slicing` not routable | MATCH |
+| `/status` sample: `commit`,`status`,`tag`,`version` | `parse_status` reads `commit`/`status`/`tag` (and optional `data_release`); inventory also records `release_commit`/`release_tag` | MATCH, with a documented gap: the live API also returns `data_release` (present in retained captures) though the docs sample omits it; `data_release` stays optional and never fabricated |
+| `/cases` pagination `size`/`from`/`sort` with `count`,`total`,`from`,`pages` | `cases_request` sends `size ≤250`, `from`, `sort=case_id`; parser validates pagination types and requires offset/consistency; orchestrator fails closed on inconsistent totals/offsets | MATCH |
+| `/gene_expression/availability` POST `{case_ids,gene_ids}` → `cases.details[]`, `genes.details[]` | `expression_availability_request` and `parse_expression_availability` use exactly these shapes and reject unrequested identifiers | MATCH |
+| `/gene_expression/values` is TSV-only; `tsv_units` exactly one value; header `gene_id` + case columns; requested cases may be absent | `expression_values_request` sends `tsv_units=uqfpkm` (and now explicit `format=tsv`); parser validates header, width, duplicates, unrequested IDs and records `missing_case_ids` | MATCH (explicit `format=tsv` added) |
+| `/gene_expression/gene_selection` uses `selection_size` (max genes) and is protein-coding only | `expression_gene_selection_request` sets `selection_size=len(gene_ids)`; parser accepts a returned subset and records missing genes | MATCH |
+| `/analysis/top_cases_counts_by_genes` rejects `format`/`fields` | `gene_case_counts_request` sends only `gene_ids` | MATCH |
+| `/analysis/mutated_cases_count_by_project` → `case_with_ssm.doc_count` | `parse_mutated_cases_count` reads that path | MATCH |
+| `/analysis/survival`, `/ssms`, `/cnvs`, `/segment_cnvs`, `/scrna_seq/gene_expression` exist | Not allowlisted/implemented | DELIBERATE (out of current scope; no Phase 4 work) |
+| `/files` metadata with `access=open` | `files_expression_request` filters `access=open`; a returned non-open or **access-missing** record fails closed | MATCH (access-missing now fails closed) |
+
+## TypeSafe documentation vs implementation (audit)
+
+| TypeSafe fact | Implementation | Verdict |
+|---|---|---|
+| Typed answers, not prose | One adapter; owned contracts; fail-closed validation | MATCH |
+| Noul has no separate confidence | Contract accepts `probability_yes` only | MATCH |
+| Choice ≤255 options; Score 2–10 ordered levels | Question definitions are now validated at import against these limits | MATCH (validation added) |
+| Same-state independent questions run together | One `system_one` call per state with the whole question set | MATCH |
+| Confidence is distribution concentration, not permission | Wide policy combines raw dimensions deterministically; confidence not used as correctness | MATCH |
+| SDK retries; terminal provider failures need stable handling | Adapter now classifies 401/403, 422, 429, 529 into typed provider error codes | MATCH (classification added) |
+| Model `jev-1.13.0`, 64k context, 32k state budget | Pinned model; projection byte cap 64 KiB keeps state well inside 32k tokens | MATCH |
+| Credentials server-side only | Key read from env at call time; `.env.local` loader never logs values | MATCH |
+
+## Jev opportunity assessment (intelligent judgment instead of fragile code)
+
+The skill asks where a narrow semantic judgment can replace complex parsing or brittle string
+logic. The ownership rule is unchanged: **Jev never computes a measurement, never writes a
+measured field, and never authorizes an endpoint or action.** Every opportunity below consumes
+values that code already extracted and returns a judgment that Python policy may use.
+
+| Fragile code today | Judgment opportunity | Primitive | Guardrail | Status |
+|---|---|---|---|---|
+| Expression workflow/strategy comparability is raw string equality over `analysis.workflow_type` / `experimental_strategy` (labels drift across releases, e.g. `STAR - Counts` variants) | "Do these two labels describe the same expression quantification pipeline?" over code-extracted labels | Noul (one per candidate pair) or Choice over supplied labels | Annotation only; the deterministic `comparability` field is never overwritten; no label is invented | PLANNED (Wide redesign / Phase 4) |
+| Canonical open expression file per case is not selected; only workflow strings are collected | "Which of these code-extracted open file IDs is the canonical quantification file for this case?" | Choice over supplied file IDs (pre-parsed value extraction) | Choice only among supplied IDs; code validates membership and keeps provenance | PLANNED |
+| Phase 6 hypothesis text will need to resolve gene mentions | "Which of these code-retrieved `/genes` candidates does this mention refer to?" | Choice over supplied Ensembl IDs | Ensembl ID stays authoritative; Jev selects, never invents an ID | PLANNED (Phase 6) |
+| Future clinical fields (`ajcc_pathologic_stage`, `tumor_grade`, `primary_diagnosis`) carry `Not Reported`/`NOS` variants | Normalize to a code-supplied dictionary value | Choice over supplied dictionary values | No clinical measurement from Jev; code owns the dictionary | PLANNED (Phase 4+, out of scope) |
+| Cross-project evidence pattern typing | Redesign of the stale `wide-v2` set | Noul/Choice | See `JEV_QUESTIONS.md`; not implemented here | PLANNED (Phase 3 redesign) |
+
+Explicit **non-opportunities** (must stay deterministic code): JSON/TSV parsing and numeric
+values, population membership and counts, missingness, coverage arithmetic, `access` open/closed
+classification, pagination/offset/total consistency, request hashes, and budgets. Asking Jev for
+any of these would violate the measurement boundary.
+
+## Readiness findings and hardening applied in this audit
+
+- **H1 (config):** added a stdlib `.env.local` loader (`cancerjev.config.load_local_env`), a
+  gitignored `.env.local`, and a tracked `.env.local.example` covering `TYPESAFE_API_KEY`,
+  `OPENROUTER_API_KEY` (future Phase 6 only), operational `CANCERJEV_*` settings, and the
+  frontend URL. Real environment variables win; blank values and invalid names are ignored;
+  values are never logged.
+- **H2 (GDC request):** `/gene_expression/values` now sends explicit `format: tsv`, matching the
+  documented example.
+- **H3 (GDC parser):** a UTF-8 BOM before the TSV header is tolerated; a `/files` record with no
+  explicit `access` now fails closed as non-open (previously only an explicit non-`open` value
+  counted).
+- **H4 (Jev contract):** question definitions are validated at import against the documented
+  limits (Choice ≤255, Score 2–10, known primitive/applicability, non-empty text).
+- **H5 (Jev provider):** terminal provider failures are classified into
+  `PROVIDER_AUTH`/`PROVIDER_VALIDATION`/`PROVIDER_RATE_LIMIT`/`PROVIDER_OVERLOADED` so Python
+  policy can defer instead of treating them as a scientific result.
+- **H6 (budget):** the documented 5 MiB per-response cap already matches the code default
+  (corrected in the prior task); no further change.
+- **H7 (docs):** GDC/TypeSafe authorities, this audit, and the opportunity plan are recorded here;
+  `README`, `ARCHITECTURE`, `JEV_DESIGN`, `JEV_QUESTIONS`, `GDC_STRATEGY`, `GDC_BUDGETS`,
+  `TESTING`, and `IMPLEMENTATION_STATUS` are updated to match.
+
+## Remaining UNVERIFIED
+
+- No live GDC, Jev or LLM call was made for this audit; live behavior is from retained
+  2026-09-22 captures only.
+- `Appendix_A/B/C` field support and `analysis/top_mutated_genes_by_project` `fields` support were
+  not re-verified against the field appendix.
+- The presence of `data_release` in `/status` across deployments is not guaranteed by the docs
+  sample; code treats it as optional.
+- Hosted CI, frontend typecheck/build/e2e, provider pricing/quota, and scientific value of Jev
+  remain unverified.
+
+## Next sequence
+
+This audit is step 1. The following remain separate tasks (see `IMPLEMENTATION_STATUS.md`):
+
+```text
+1. targeted pre-Phase-3 readiness audit            ← this document
+2. TCGA-LUAD Wide Jev semantic/admission redesign
+3. baseline-vs-Jev incremental-value evaluation
+4. one Phase-4 vertical slice: E0 → one registered follow-up → E1
+5. bounded next-candidate autonomous iteration
+6. bounded LLM hypothesis generation + Jev hypothesis evaluation
+```

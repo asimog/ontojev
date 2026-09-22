@@ -33,6 +33,30 @@ class JevProviderError(Exception):
         self.detail = detail
 
 
+_STATUS_ERROR_CODES = {
+    401: "PROVIDER_AUTH",
+    403: "PROVIDER_AUTH",
+    422: "PROVIDER_VALIDATION",
+    429: "PROVIDER_RATE_LIMIT",
+    529: "PROVIDER_OVERLOADED",
+}
+
+
+def _provider_error_code(exc: Exception) -> str:
+    """Classify a provider failure without importing provider exception types.
+
+    The SDK retries 429/529 with backoff by default; a terminal failure still
+    needs a stable code so Python policy can defer rather than treat it as a
+    scientific result.
+    """
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(status, int) and status in _STATUS_ERROR_CODES:
+        return _STATUS_ERROR_CODES[status]
+    return "PROVIDER_ERROR"
+
+
 class TypeSafeAdapter:
     def __init__(self, *, model: str, timeout: float = 30.0, api_key: str | None = None) -> None:
         self.model = model
@@ -71,7 +95,7 @@ class TypeSafeAdapter:
             with TypeSafeClient(api_key=self.api_key, timeout=self.timeout, model=self.model) as client:
                 response = client.system_one(state=state, questions=questions, model=self.model)
         except Exception as exc:  # noqa: BLE001 - provider failures become typed errors
-            raise JevProviderError("PROVIDER_ERROR", f"{type(exc).__name__}: {exc}") from exc
+            raise JevProviderError(_provider_error_code(exc), f"{type(exc).__name__}: {exc}") from exc
         latency_ms = int((time.monotonic() - started) * 1000)
 
         answers: dict[str, dict[str, Any]] = {}

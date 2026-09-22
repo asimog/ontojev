@@ -10,6 +10,7 @@ import os
 
 import pytest
 
+from cancerjev.config import load_local_env
 from cancerjev.jev.questions import WIDE_QUESTIONS
 from cancerjev.jev.service import JevService
 from tests.science.test_methods import _build, _frame
@@ -17,6 +18,7 @@ from tests.science.test_methods import _build, _frame
 
 @pytest.mark.live_jev
 def test_real_jev_evaluation_of_one_state(runtime):
+    load_local_env()
     if not os.getenv("TYPESAFE_API_KEY"):
         pytest.skip("TYPESAFE_API_KEY is not set")
     settings, repository, artifacts = runtime

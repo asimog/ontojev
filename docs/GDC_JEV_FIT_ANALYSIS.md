@@ -38,7 +38,7 @@ Phase 1 infrastructure is preserved as-is; Phase 2 extends it (schema 3, new mod
 | 4 | `NCI-GDC/gdcdictionary` | Field-level schema semantics: types, enums, required/optional, links | **DOCUMENTED** (targeted schemas only; see §B.1) |
 | 5 | Official GDC bioinformatics pipeline documentation (DNA/RNA processing) | Scientific meaning of derived analysis results | **DOCUMENTED** (see §H) |
 | 6 | `NCI-GDC/gdc-mutation-indexer`, `gdc-models`, `gdc-rnaseq-cwl`, `gdc-dnaseq-cwl`, `maf-lib`, `gdc-client` | Secondary/background only; none is a runtime dependency | Reference only |
-| — | Supplied local `API_UG.pdf` (Phase 0) | Historical reference; superseded by live captures where they differ | Reference only |
+| — | Supplied local `API_UG.pdf` (Phase 0) | Historical reference only; superseded as provider authority by the official `NCI-GDC/gdc-docs` documentation repository (`develop/docs`) and by live captures where they differ | Reference only |
 
 Rule applied: documentation establishes intent; the retained live capture establishes deployed behavior; where they disagree, the capture wins for what the code may rely on, and the disagreement is recorded.
 

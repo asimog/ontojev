@@ -4,6 +4,50 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+ENV_LOCAL_FILENAME = ".env.local"
+
+
+def load_local_env(path: Path | None = None) -> int:
+    """Load local development variables from ``.env.local`` (stdlib only).
+
+    Local convenience for keys such as ``TYPESAFE_API_KEY`` and
+    ``OPENROUTER_API_KEY``. Values already present in the process environment
+    always win, blank values are ignored, and values are never logged or
+    persisted. Set ``CANCERJEV_NO_DOTENV=1`` to disable, or
+    ``CANCERJEV_ENV_FILE`` to point at another file. Returns the number of
+    variables set.
+    """
+    if os.getenv("CANCERJEV_NO_DOTENV", "").strip().lower() in {"1", "true", "yes"}:
+        return 0
+    target = path or Path(os.getenv("CANCERJEV_ENV_FILE", ENV_LOCAL_FILENAME))
+    if not target.is_absolute():
+        target = Path.cwd() / target
+    if not target.is_file():
+        return 0
+    loaded = 0
+    for raw_line in target.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, separator, value = line.partition("=")
+        key = key.strip()
+        if not separator or not _is_env_name(key) or key in os.environ:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        if not value:
+            continue
+        os.environ[key] = value
+        loaded += 1
+    return loaded
+
+
+def _is_env_name(name: str) -> bool:
+    return bool(name) and not name[0].isdigit() and all(char == "_" or char.isalnum() for char in name)
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -22,6 +66,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
+        load_local_env()
         data_dir = Path(os.getenv("CANCERJEV_DATA_DIR", "data")).expanduser().resolve()
         delay = _nonnegative_int("CANCERJEV_FIXTURE_STAGE_DELAY_MS", 500)
         interval = _positive_int("CANCERJEV_RUN_INTERVAL_MINUTES", 60)

@@ -48,6 +48,10 @@ fixture and live records are never mixed in rankings, caches or dossiers.
   example TCGA-LUSC) reuses the same GDC/science core without modifying it.
 - `Settings` (`cancerjev/config.py`) owns operational configuration: paths, timeouts, transport
   byte/request budgets, cache enablement, and provider/model identity. The two are never mixed.
+  Local development may place these values plus `TYPESAFE_API_KEY` in a gitignored `.env.local`;
+  `load_local_env` loads them only when the real environment does not already define the name,
+  never logs values, and is disabled by `CANCERJEV_NO_DOTENV=1`. Provider keys remain server-side
+  and never enter `ResearchSpec` or any artifact.
 - GDC code owns endpoint allowlists, allowed fields, open-access enforcement, parsers and
   absolute safety caps. Those are code, not `ResearchSpec` values; there are no
   runtime-configurable arbitrary GDC queries.
@@ -77,7 +81,12 @@ hypotheses, no follow-ups, no LLM.
 `cross_project` framing were designed for the older cross-project evidence model. For a single
 TCGA-LUAD cohort several questions become inapplicable or ungrounded. The integration is real,
 but the question set is **semantically stale pending redesign**; no claim is made that Phase 3
-improved a research decision.
+improved a research decision. The replacement is specified in `docs/PHASE_3_PLAN.md`:
+`jev-state-projection-v2` (single-cohort `cohort` block), `wide-v3` (six atomic Nouls + one closed
+Choice separating evidence quality, evidence pattern and value of investigation), and
+`wide-policy-v2` with a deterministic eligibility gate and an explicit admission rule that permits
+zero admissions and `ABSTAIN` and treats the promotion limit as a maximum. None of it is
+implemented yet.
 
 ## Simplification review
 

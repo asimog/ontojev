@@ -131,10 +131,13 @@ override the request ceiling. The contract-verification probe is a separate boun
 (≤30 requests, ≤8 MiB) reproducible through the `probe` command; probe captures are written under
 `data/gdc-contract-captures-<date>/` with per-request metadata and hashes.
 
-Jev's 1,000-state cap is not a 1,000-question cap: the current `wide-v2` set has six questions, so
-up to 6,000 judgments. **PLANNED** Phase 4 bounds are separate and not enforced: at most three
+Jev's 1,000-state cap is not a 1,000-question cap: the implemented `wide-v2` set has six questions
+(up to 6,000 judgments), and the **PLANNED** `wide-v3` set has seven (up to 7,000 judgments; see
+`docs/PHASE_3_PLAN.md`). **PLANNED** Phase 4 bounds are separate and not enforced: at most three
 evidence versions, ≤60 deep evaluations, and six hypotheses × three versions × 20 candidates ≤360
 additional calls; total planned Jev evaluations ≤1,420 before any retries. No live retries until a
-separate provider call/token/spend policy is frozen. Actual provider prices, service quotas and
-cancellation billing are **UNVERIFIED** from supplied material for the intended live configuration.
-Display unknown cost as unknown, never $0.
+separate provider call/token/spend policy is frozen. The TypeSafe documentation (see
+`docs/SOURCE_REVIEW.md`) states `jev-1.13.0` at 64k context (32k state budget), ~250k tok/s, 1200
+requests/min, and $42/Btok input with output free; those are **DOCUMENTED**, not a contract, and
+actual prices, quotas and cancellation billing for the intended live configuration remain
+**UNVERIFIED**. Display unknown cost as unknown, never $0.
