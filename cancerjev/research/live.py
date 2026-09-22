@@ -54,6 +54,7 @@ from cancerjev.gdc.parsers import (
     response_warnings,
 )
 from cancerjev.gdc.transport import BudgetCaps, GDCResponse, GDCTransport, RunBudget, TransportError
+from cancerjev.research.wide import run_wide_evaluation
 from cancerjev.science.methods import ProjectFrame, ScienceError, build_statistical_state
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
@@ -222,7 +223,14 @@ class LiveOrchestrator:
             if any(state["quality"]["completeness"] != "COMPLETE" for state in states):
                 coverage = "PARTIAL"
             if self.jev_service is not None:
-                self._stage(run_id, "JEV_WIDE", lambda: self._wide_jev(run_id, states, coverage))
+                self._stage(
+                    run_id, "JEV_WIDE",
+                    lambda: run_wide_evaluation(
+                        run_id=run_id, states=states, coverage=coverage,
+                        repository=self.repository, jev_service=self.jev_service,
+                        emit=self._event, publish_json=self._publish_json,
+                    ),
+                )
         except (TransportError, ParserError, ScienceError, LiveRunError) as exc:
             code = getattr(exc, "code", type(exc).__name__)
             self._event(
@@ -537,10 +545,3 @@ class LiveOrchestrator:
             data={"valid_count": len(states), "selected_count": 0, "selection_rule": WIDE_SCAN_RULE},
         )
         return states
-
-    # ------------------------------------------------------------------ Phase 3
-
-    def _wide_jev(self, run_id: str, states: list[dict[str, Any]], coverage: str) -> None:
-        from cancerjev.research.wide import run_wide_evaluation
-
-        run_wide_evaluation(self, run_id, states, coverage)
