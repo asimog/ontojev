@@ -321,6 +321,16 @@ Deterministic wide policy (`wide-policy-v1`): `warrants_deeper_investigation` de
 
 ## M. Proposed Phase 2 scope
 
+> **Superseded by the implemented single-cohort design.** The multi-project selection described
+> below (up to 8 projects with 50–250 cases, recurrence + round-robin gene pooling, one case page
+> and one expression request per project) was replaced by `LUAD_RESEARCH_V1`: exactly one
+> `TCGA-LUAD` project selected by `project_id`, bounded paginated `/cases` (size ≤250, ≤10 pages),
+> deterministic expression batching (each ≤250 cases × ≤10 genes) merged by identifier, and
+> provider `gene_selection` retained only when the whole cohort fits one request. The section is
+> retained as the Phase 0/1 analysis record, not as current behavior. The `wide-v2` table above is
+> likewise technically implemented but semantically stale for the single-cohort state
+> (`docs/JEV_QUESTIONS.md`).
+
 **2A — transport, capture, contract verification.** `GDCTransport` (single socket owner, host/endpoint/method allowlists, no auth, no redirects, streamed reads with per-response and per-run byte caps, attempt ledger, response publication and hashing, cache, pagination ledger), strict parsers for the admitted endpoints, budget tables (schema 3), contract-capture command that reproduces the research captures, adversarial offline tests, and the open-access security tests.
 
 **2B — mutation + coverage lane.** Project inventory → deterministic scope (up to 8 projects with 50–250 cases, sorted by `(case_count, project_id)`) → case manifests (one complete page each) → discovery (`top_mutated_genes_by_project`, ≤20/project) → gene selection (up to 6 recurrent genes appearing in ≥2 projects ordered by appearance count, affected total, gene ID; then round-robin by provider rank across projects to 10 total) → gene resolution (`/genes`) → gene-specific counts (`top_cases_counts_by_genes`, ≤100 genes) → SSM coverage (`mutated_cases_count_by_project`, unfiltered) → deterministic methods → StatisticalStates. The recurrence + round-robin rule was added after the first live sweep produced a locus-clustered gene set; it is deterministic and documented in the run’s selection artifact.

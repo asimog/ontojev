@@ -54,6 +54,6 @@ Context token limit, maximum questions, exact confidence computation, provider r
 |51–62 runtime/storage/API/portability | README, PERSISTENCE, API_CONTRACT, DEPLOYMENT_PORTABILITY |
 |63–69 dossier/benchmark/testing/security/observability | DOMAIN_MODELS, SCIENTIFIC_INVARIANTS, TESTING, RUN_EVENTS, API_CONTRACT |
 |70–72 structure/principles/exclusions | ARCHITECTURE, DEPLOYMENT_PORTABILITY |
-|73–80 phases/test/AGENTS/README/CI/report/done/start | PHASE_1_PLAN, IMPLEMENTATION_STATUS, AGENTS, README, TESTING |
+|73–80 phases/test/AGENTS/README/CI/report/done/start | IMPLEMENTATION_STATUS, AGENTS, README, TESTING |
 
 The current user's requested deliverables all map to these documents; the detailed planned tree is in ARCHITECTURE. Later phase requirements are preserved as plans, not silently implemented during Phase 0.

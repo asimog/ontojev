@@ -13,7 +13,7 @@ class Settings:
     web_origin: str
     gdc_max_requests: int = 150
     gdc_max_bytes: int = 64 * 1024 * 1024
-    gdc_per_response_bytes: int = 8 * 1024 * 1024
+    gdc_per_response_bytes: int = 5 * 1024 * 1024
     gdc_timeout_seconds: float = 30.0
     gdc_cache_enabled: bool = True
     jev_model: str = "jev-1.13.0"
@@ -32,7 +32,7 @@ class Settings:
             web_origin=os.getenv("CANCERJEV_WEB_ORIGIN", "http://localhost:3000"),
             gdc_max_requests=_positive_int("CANCERJEV_GDC_MAX_REQUESTS", 150),
             gdc_max_bytes=_positive_int("CANCERJEV_GDC_MAX_BYTES", 64 * 1024 * 1024),
-            gdc_per_response_bytes=_positive_int("CANCERJEV_GDC_PER_RESPONSE_BYTES", 8 * 1024 * 1024),
+            gdc_per_response_bytes=_positive_int("CANCERJEV_GDC_PER_RESPONSE_BYTES", 5 * 1024 * 1024),
             gdc_timeout_seconds=float(os.getenv("CANCERJEV_GDC_TIMEOUT_SECONDS", "30")),
             gdc_cache_enabled=os.getenv("CANCERJEV_GDC_CACHE", "1") not in {"0", "false", "False"},
             jev_model=os.getenv("CANCERJEV_JEV_MODEL", "jev-1.13.0"),

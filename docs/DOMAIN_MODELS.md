@@ -2,6 +2,11 @@
 
 Proposed version `1`. These are application-owned schemas, not claims about provider fields. Strict validation rejects non-finite numbers, unknown executable actions, inconsistent foreign references, and unknown schema versions. UTC RFC3339 timestamps, UUID identifiers, nonnegative integer counts, SHA-256 lowercase hex digests. Optional fields are nullable with a reason; null is never silently converted to zero.
 
+Status labels: **IMPLEMENTED** contracts are precise and match code. **PROVISIONAL** (Phase 4+)
+shapes describe intent only; they are not required to be implemented exactly, and the smallest
+representation compatible with the existing repository should be chosen when that phase begins.
+A future refresh is normally just another bounded `ResearchRun`, not a permanent cycle subsystem.
+
 ## Shared contracts
 
 `EvidenceAvailability = OBSERVED | MISSING | NOT_EXAMINED | NOT_ACQUIRED | UNAVAILABLE_ACCESS | UNAVAILABLE_SOURCE | INSUFFICIENT | INCOMPATIBLE | FAILED | PARTIAL | UNSUPPORTED_IN_V1`.
@@ -25,7 +30,7 @@ ResearchRun
   created_at, started_at?, ended_at?
   worker_id, worker_version, code_revision?, environment_hash
   config_snapshot_artifact, config_hash, routing_policy_version
-  cursor_before, selected_project_ids[0..12], scope_hash
+  cursor_before, selected_project_ids[] (one project for a single-cohort spec), scope_hash
   counts: projects_attempted, projects_completed, states_generated,
     states_valid, states_selected, states_evaluated, candidates_promoted,
     hypotheses_created, followups_started, dossiers_created,
@@ -38,7 +43,10 @@ ResearchRun
 
 Counters refer to real actions. Fake runs use zero external calls/bytes and separately labeled simulated activity. COMPLETED means the bounded run ended normally, not that all candidates succeeded or that all GDC was covered. Configuration is frozen at creation.
 
-## CandidateInvestigation
+## CandidateInvestigation (PROVISIONAL, Phase 4+)
+
+A candidate gene is not itself a scientific investigation: an investigation is the candidate plus
+its cohort/population and research question. The shape below is intent, not a required table.
 
 ```text
 CandidateInvestigation
@@ -123,7 +131,10 @@ WideRanking (artifact + event)
 
 The baseline ranking is always computed from deterministic dimensions; the Jev ranking is computed from persisted raw judgment vectors. Both are retained so Phase 3 can compare baseline vs baseline+Jev on the same states. Jev never replaces the baseline.
 
-## EvidenceState
+## EvidenceState (PROVISIONAL, Phase 4+)
+
+Evidence revisions are immutable (`E0 → E1 → E2`). The exact fields below are provisional; choose
+the smallest representation compatible with the existing repository when Phase 4 begins.
 
 ```text
 EvidenceState
@@ -160,11 +171,17 @@ EvidenceState has no writable Jev answer or hypothesis fields. A Jev request env
 | JevEvaluation | evaluation_id, run/candidate/state refs and hashes, purpose, exact question-set artifact/hash/version, requested/resolved model, adapter version, typed full answers, latency, usage, cache provenance, error, routing policy version; see JEV_DESIGN |
 | Hypothesis | id, candidate_id, evidence_state_id, statement, proposed_mechanism, predictions[], contradicted_if[], distinguishing_tests[], required_evidence[], unsupported_assumptions[], proposed_action_ids[], factual_observation_refs[], generation_id; never a measured result |
 | HypothesisEvaluation | evaluation_id, one hypothesis_id, one evidence_state_id, judgment vector; no sibling hypotheses or sibling verdicts in provider input |
-| FollowUpAction definition | action_id, version, typed parameters, required data/fields, eligibility, minimum n, method_id, limitations, worst-case request/byte reservation, executor function |
-| FollowUpExecution | execution_id, candidate_id, action/version, input evidence hash, validated parameters, consumed slot, iteration, status, source requests, new result refs, failure/defer reason |
-| DiscoveryCursor | version, inventory hash, sweep number, stable project order, next project offset, per-project lane/case/gene offsets, attempted/completed/skipped dispositions, freshness timestamp |
+| FollowUpAction definition (PROVISIONAL) | action_id, version, typed parameters, required data/fields, eligibility, minimum n, method_id, limitations, worst-case request/byte reservation, executor function |
+| FollowUpExecution (PROVISIONAL) | execution_id, candidate_id, action/version, input evidence hash, validated parameters, consumed slot, iteration, status, source requests, new result refs, failure/defer reason |
+| DiscoveryCursor (PROVISIONAL, not required) | version, inventory hash, sweep number, stable project order, next project offset, per-project lane/case/gene offsets, attempted/completed/skipped dispositions, freshness timestamp |
 | GDCRequestAttempt | request_id, logical_query_id, run_id, attempt_no, method, endpoint, canonical request/hash, status, byte counts, reserved allowance, timestamps, HTTP status, response hash/ref, completeness, error |
 | ResearchDossier | id, run/candidate refs, mode, schema_version, JSON artifact, derived Markdown artifact, evidence/judgment/hypothesis/follow-up refs, 25 sections from the master specification, created_at; unique candidate_id |
+
+`DiscoveryCursor` is **not required architecture**. With the current single-cohort bounded sweep a
+refresh can simply be another `ResearchRun` (the API reports `cursor.present = false`). No
+persisted `NextResearchMove` exists or is planned; a next move is a plain Python result
+(`FOLLOW_UP`, `GENERATE_HYPOTHESES`, `TEST_HYPOTHESIS`, `NEXT_CANDIDATE`, `COMPLETE`, `ABSTAIN`).
+The PROVISIONAL Phase 4+ shapes must not be scaffolded before their phase is approved.
 
 Content hashes exclude operational UUIDs/timestamps but include schema, scientific inputs, membership, units, context, method/parameters, correction universe and outputs. Keep timestamps separately. Canonical JSON sorts object keys and set-valued IDs, preserves meaningful array order, uses a versioned finite-number encoding, and rejects NaN/Infinity. Byte hashes additionally preserve exact source responses. Identical scientific state can be recognized across runs without conflating differently selected populations.
 

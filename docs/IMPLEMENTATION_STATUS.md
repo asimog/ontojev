@@ -1,12 +1,24 @@
 # Implementation status
 
-**DONE:** Phase 0 design, Phase 1 offline synthetic vertical slice (verified), the GDC × Jev fit analysis (`docs/GDC_JEV_FIT_ANALYSIS.md`), Phase 2 real open-access GDC evidence with deterministic StatisticalStates (now scoped to the single TCGA-LUAD cohort), and Phase 3 real Jev wide evaluation over those states. **CURRENT:** locally verified Phase 2 and Phase 3 against the live public GDC API and the live TypeSafe API. **NEXT:** nothing without explicit approval; Phase 4+ is documented only. Phase 3 questions are stale for the single-cohort state and are not redesigned here.
+Factual source of truth. Current `main` HEAD: `60acf6b0b4b809d84878b82b4d2d118f4ec5d3ef`
+("Fix pagination, identifier, and spec validation defects"), working tree clean.
 
-Phase 1 remains available and separate: `run --fixture demo` still produces the 71-event synthetic dossier run with zero provider calls, and fixture and live records are never mixed.
+**DONE:** Phase 0 design; Phase 1 offline synthetic vertical slice (verified); the GDC × Jev fit
+analysis (`docs/GDC_JEV_FIT_ANALYSIS.md`); Phase 2 real open-access GDC evidence with deterministic
+StatisticalStates, scoped to the single TCGA-LUAD cohort; Phase 3 technical Wide Jev integration
+(projection, one adapter, cache, baseline and Jev rankings). **CURRENT:** the implemented
+architecture is modular and `ResearchSpec`-driven; `LUAD_RESEARCH_V1` is the only production
+research specification. **NEXT:** the six-step sequence at the end of this document. Phase 4+ is
+documented only. Phase 3's `wide-v2` question set is technically implemented but semantically
+stale for the single-cohort state and is not redesigned here. Phase 3 did **not** demonstrate
+improved scientific decision quality; that requires the baseline-vs-Jev evaluation below.
+
+Phase 1 remains available and separate: `run --fixture demo` still produces the synthetic
+dossier run with zero provider calls, and fixture and live records are never mixed.
 
 ## What exists (Phase 2 additions)
 
-- **One GDC transport** (`cancerjev/gdc/transport.py`): fixed host `api.gdc.cancer.gov`, endpoint/method allowlist, no authentication by construction (no credential parameter, no token loader, no `Authorization`/`X-Auth-Token` path), no redirect following, `Accept-Encoding: identity` with compressed responses rejected, streamed reads with per-response (8 MiB), per-run byte (64 MiB), request (150), page (10/query), case-ID (250) and gene-ID (100) caps, bounded retries for safe GETs only, a persisted attempt ledger, raw-response publication with SHA-256, and a normalized request cache.
+- **One GDC transport** (`cancerjev/gdc/transport.py`): fixed host `api.gdc.cancer.gov`, endpoint/method allowlist, no authentication by construction (no credential parameter, no token loader, no `Authorization`/`X-Auth-Token` path), no redirect following, `Accept-Encoding: identity` with compressed responses rejected, streamed reads with per-response (5 MiB), per-run byte (64 MiB), request (150), page (10/query), case-ID (250) and gene-ID (100) caps, bounded retries for safe GETs only, a persisted attempt ledger, raw-response publication with SHA-256, and a normalized request cache.
 - **Strict parsers** (`cancerjev/gdc/parsers.py`) for the eleven admitted endpoints: required fields and types enforced, `warnings.fields` surfaced, aggregation completeness fields preserved, duplicates and unexpected identifiers rejected, NaN/Infinity rejected, TSV joined by returned labels.
 - **Deterministic methods** (`cancerjev/science/methods.py`): `MUTATION_AFFECTED_CASE_COUNT_V1`, `PROJECT_SSM_COVERAGE_V1`, `EXPRESSION_LOG2_SUMMARY_V1`, `EXPRESSION_PROVIDER_SUMMARY_V1`, `PROJECT_DOMINANCE_V1`, each with the full declaration set (population, duplicate rule, estimator, missingness, limitations, provenance). No p-values, no effect sizes, no recurrence fraction, no biological direction.
 - **Real StatisticalStates**: one per gene, covering per-project affected-case counts, SSM coverage, local `log2(UQFPKM+1)` summaries, provider summaries retained separately, per-project coverage metrics, cross-project descriptives, missingness, and full source provenance with scientific identity hashing.
@@ -52,7 +64,31 @@ The generic multi-project sweep was replaced by one explicitly defined cohort: *
 
 The fit analysis records every endpoint’s open-access review, live contract check and scientific-semantics review, and lists rejected/deferred sources with reasons (`docs/GDC_JEV_FIT_ANALYSIS.md`).
 
-## Phase 2 acceptance record (2026-09-22)
+## Validation hardening (2026-09-23)
+
+Parser, request-builder, pagination and `ResearchSpec` validation were hardened (commit
+`60acf6b`), with focused regression coverage:
+
+- GDC request builders validate sizes/offsets uniformly and reject non-integer and boolean values
+  (`cases`, `files`, `projects`, `discovery`); `expression_file_sample_size` is bounded by the
+  endpoint cap `MAX_FILES_PAGE = 5`.
+- `parse_cases` preserves an explicit zero pagination count, rejects malformed/non-integer or
+  negative pagination fields, and requires a consistent `from` offset and page count; the live
+  orchestrator fails closed with `CASE_PAGE_OFFSET_INCONSISTENT` when the provider's reported
+  offset does not match the requested offset, and `CASE_TOTAL_INCONSISTENT` when the page total
+  disagrees with the inventory case count or changes across pages.
+- Expression availability and gene selection reject unrequested identifiers
+  (`UNEXPECTED_IDENTIFIER`); merged expression batches must cover the cohort case frame exactly.
+- `AcquisitionSpec` rejects non-integer runtime values; `ResearchSpec.spec_id` must be a non-blank
+  string.
+- The documented per-response hard cap (5 MiB) now matches the code default; previously the code
+  default was 8 MiB, above the documented cap.
+
+## Phase 2 acceptance record (2026-09-22, historical — superseded by the single-cohort scope)
+
+This run used the earlier multi-project sweep (8 projects) that was subsequently replaced by
+`LUAD_RESEARCH_V1`; it is retained as historical evidence of the transport, parser and
+deterministic-state path, not as the current cohort.
 
 Acceptance run `51a1828f-33d8-47d9-baa3-583fec577b75` — **COMPLETED**, coverage `COMPLETE_FOR_SCOPE`:
 
@@ -72,12 +108,19 @@ Acceptance run `36e09880-bd72-4a15-af2a-eb3abe6ef266` — **COMPLETED**:
 - Both rankings persisted (10 baseline + 10 Jev entries); 3 candidates promoted (`TP53`, `PRPF3`, `TPTE`); zero LLM calls; zero deep analysis.
 - Cache verification run `ea2067d8-48aa-40f0-ba5b-a8eb6da29999`: 0 GDC requests (49 cache hits), 0 Jev provider calls (10 cached evaluations with `cache_source_evaluation_id`), identical promotions.
 
-## Verification record — 2026-09-22
+This record demonstrates that the Phase 3 integration works and is reproducible. It does **not**
+demonstrate that Jev improved a research decision: the question set was cross-project and is now
+semantically stale for the single LUAD cohort, and no baseline-vs-Jev evaluation has been run.
+
+## Verification record
+
+Offline gates re-run 2026-09-23 at HEAD `60acf6b`. The live-provider and frontend rows are the
+2026-09-22 record and were **not** re-run in this documentation-alignment task.
 
 | Gate | Command | Result |
 |---|---|---|
-| Python lint | `.venv\Scripts\python -m ruff check cancerjev apps tests` | All checks passed |
-| Offline suite | `python -m pytest` (live markers excluded by default) | **189 passed**, 0 failed (2 live-marked tests deselected) |
+| Python lint | `python -m ruff check cancerjev apps tests` | All checks passed (2026-09-23) |
+| Offline suite | `python -m pytest` (live markers excluded by default) | **190 passed**, 0 failed, 0 errors (2 live-marked tests deselected) (2026-09-23) |
 | Live markers | `pytest -m live_gdc` / `-m live_jev` | opt-in; the GDC probe passed in a manual run (14 captures, all 200); the Jev live test skips without a key |
 | Frontend typecheck | `npm run typecheck` | Passed |
 | Frontend build | `npm run build` | Passed (all routes) |
@@ -104,13 +147,24 @@ Acceptance run `36e09880-bd72-4a15-af2a-eb3abe6ef266` — **COMPLETED**:
 
 - Mutation evidence is **count-only**: `case_with_ssm` is not a callable-negative denominator, so no recurrence fraction is computed; absent buckets are `NOT_OBSERVED`.
 - Provider expression `median`/`stddev` estimator conventions are undocumented; a live two-case capture is consistent with a population denominator and is recorded as `INFERRED_POPULATION_SD_UNVERIFIED`. Provider summaries never drive policy.
-- The examined gene set is selection-biased (provider top-mutated ranking with a recurrence + round-robin rule); the state records the bias and does not claim a genome-wide scan.
+- The examined gene set is selection-biased: genes are taken from the cohort's provider top-mutated ranking by provider rank (no recurrence + round-robin pooling). The state records the bias and does not claim a genome-wide scan.
 - Case-to-sample resolution for expression values is **UNVERIFIED**; no sample-matched cross-modal claim is made.
 - GDC release atomicity across requests is **UNVERIFIED**; reproducibility means replay from retained responses and hashes.
 - No seed/temperature control exists for Jev; repeated calls may differ. Cache identity binds projection bytes, question bytes, model and adapter version; policy version is excluded so policy experiments do not rerun inference.
 - The TypeSafe price page is documentation, not a contract; cost stays `null`/unknown because the API exposes no cost field.
 - Schema 3 does not migrate schema 1/2 data directories; they must be moved or deleted (the pre-Phase-2 schema-2 database was preserved as `data/cancerjev.schema2.db.bak`).
 - Hosted CI was not executed locally; the local runs used Python 3.14.3 and Node 24.13.1 while CI pins Python 3.12 and Node 22. **UNVERIFIED:** hosted CI status.
+
+## Next implementation sequence
+
+These are separate tasks; do not combine them.
+
+1. Targeted pre-Phase-3 readiness audit.
+2. TCGA-LUAD Wide Jev semantic/admission redesign.
+3. Baseline-vs-Jev incremental-value evaluation.
+4. One Phase-4 vertical slice: E0 → one registered follow-up → E1.
+5. Bounded next-candidate autonomous iteration.
+6. Bounded LLM hypothesis generation + Jev hypothesis evaluation.
 
 ## Phase 4–7: documented only, not implemented
 

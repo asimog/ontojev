@@ -77,6 +77,16 @@ def test_no_authentication_headers_are_ever_sent(transport_builder, loopback):
     assert recorded.headers["accept-encoding"] == "identity"
 
 
+def test_default_caps_match_documented_hard_budgets():
+    caps = BudgetCaps()
+    assert caps.max_requests == 150
+    assert caps.max_bytes == 64 * 1024 * 1024
+    assert caps.per_response_bytes == 5 * 1024 * 1024
+    assert caps.max_pages_per_query == 10
+    assert caps.max_case_ids == 250
+    assert caps.max_gene_ids == 100
+
+
 def test_declared_content_length_over_cap_is_rejected(transport_builder, loopback):
     def responder(request):
         return 200, {"Content-Type": "application/json", "Content-Length": "999999"}, b"{}"

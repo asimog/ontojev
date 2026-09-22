@@ -14,7 +14,7 @@ from cancerjev.gdc.transport import BudgetCaps, GDCTransport, RunBudget
 @pytest.mark.live_gdc
 def test_bounded_anonymous_contract_probe(runtime, tmp_path):
     settings, repository, artifacts = runtime
-    caps = BudgetCaps(max_requests=30, max_bytes=8 * 1024 * 1024, per_response_bytes=8 * 1024 * 1024)
+    caps = BudgetCaps(max_requests=30, max_bytes=8 * 1024 * 1024, per_response_bytes=5 * 1024 * 1024)
     run_id = repository.create_run("live-contract-probe", mode="LIVE", fixture_id=None, fixture_version=None,
                                    scope={"purpose": "CONTRACT_PROBE"})
     transport = GDCTransport(

@@ -2,6 +2,13 @@
 
 Deterministic code is authoritative for N, membership, units, counts, source values, effects, uncertainty intervals, p/q, tested universes and missingness. Jev and LLM outputs live in different record types with no path to write these fields. Provider-returned deterministic summaries retain their source attribution; local calculations retain method provenance. A Jev probability does not confer statistical significance or establish causality.
 
+**Claim boundary — candidate-target investigation, not therapeutic validation.** OntoJev's first
+research decision is: among candidate genes in a defined cohort, which have sufficiently coherent
+and adequate public GDC evidence to justify spending bounded follow-up budget on deeper
+candidate-target investigation? Public GDC evidence alone does not establish dependency,
+druggability, therapeutic efficacy, safety, clinical benefit, biomarker qualification or drug
+success. Documentation, UI copy and dossiers must not imply those claims.
+
 Missing, not examined, not acquired, inaccessible, insufficient, incompatible and failed remain distinct from observed negative. Partial retrieval is not a complete denominator. Public mutation absence is not an assertion of biological wild type; missing CNV is not diploid; no expression column is not zero.
 
 Use case as the biological analysis unit only where the method defines it. Enforce unique biological keys and explicit sample/workflow resolution. Duplicates cannot silently multiply N. Compare within compatible `(program,project,sample_type,workflow,pipeline,unit,method)` groups; cross-project comparisons require a documented comparability rule. The same gene across projects is insufficient.

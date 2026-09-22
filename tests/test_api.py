@@ -91,6 +91,7 @@ def test_system_reports_live_configuration(runtime, monkeypatch):
     assert system["data"]["artifact_files"] > 0
     assert system["versions"] == {"api": "2.0.0", "schema": 3, "worker": "0.1.0"}
     assert system["budget_defaults"]["gdc_requests"] == 150
+    assert system["budget_defaults"]["per_response_bytes"] == 5 * 1024 * 1024
     assert system["budget_defaults"]["max_case_ids"] == 250
     assert system["cursor"]["present"] is False
     assert system["cache"] == {"entries": 0, "bytes": 0, "jev_entries": 0, "reason": None}

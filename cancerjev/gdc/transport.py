@@ -62,7 +62,7 @@ class TransportError(Exception):
 class BudgetCaps:
     max_requests: int = 150
     max_bytes: int = 64 * 1024 * 1024
-    per_response_bytes: int = 8 * 1024 * 1024
+    per_response_bytes: int = 5 * 1024 * 1024
     max_pages_per_query: int = 10
     max_case_ids: int = 250
     max_gene_ids: int = 100
