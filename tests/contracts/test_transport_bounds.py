@@ -12,11 +12,13 @@ from cancerjev.gdc.endpoints import (
     GDCRequest,
     cases_request,
     expression_availability_request,
+    files_expression_request,
     gene_case_counts_request,
     genes_request,
     projects_request,
     resolve_endpoint,
     status_request,
+    top_mutated_genes_request,
 )
 from cancerjev.gdc.transport import BudgetCaps, TransportError, TransportErrorCode
 
@@ -248,6 +250,22 @@ def test_identity_and_size_caps_are_enforced():
         genes_request(["x" * 129])
     with pytest.raises(EndpointError):
         cases_request("TCGA-BRCA", offset=-1)
+    with pytest.raises(EndpointError):
+        cases_request("TCGA-BRCA", size=True)
+    with pytest.raises(EndpointError):
+        cases_request("TCGA-BRCA", offset=1.5)
+    with pytest.raises(EndpointError):
+        files_expression_request("TCGA-BRCA", size=6)
+    with pytest.raises(EndpointError):
+        files_expression_request("TCGA-BRCA", size=False)
+    with pytest.raises(EndpointError):
+        projects_request(size=True)
+    with pytest.raises(EndpointError):
+        projects_request(size=1.5)
+    with pytest.raises(EndpointError):
+        top_mutated_genes_request("TCGA-BRCA", size=True)
+    with pytest.raises(EndpointError):
+        top_mutated_genes_request("TCGA-BRCA", size=0)
     request = cases_request("TCGA-BRCA", size=100, offset=200)
     assert dict(request.params)["from"] == "200"
     assert request.page == 3

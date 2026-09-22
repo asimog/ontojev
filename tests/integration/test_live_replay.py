@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
@@ -114,29 +115,22 @@ def test_large_cohort_is_paged_batched_and_merged_deterministically(runtime, mon
     assert expression["provider_unavailable_reason"] == "BATCHED_PROVIDER_SUMMARY_NOT_COHORT_WIDE"
 
 
-def test_case_limit_duplicate_and_total_drift_fail_closed(runtime, monkeypatch):
-    too_small = _test_spec(max_cases=300)
+@pytest.mark.parametrize(
+    ("spec", "replay_options", "reason"),
+    [
+        (_test_spec(max_cases=300), {}, "COHORT_CASE_LIMIT_EXCEEDED"),
+        (_test_spec(), {"duplicate_case_across_pages": True}, "DUPLICATE_CASE_ID"),
+        (_test_spec(), {"inconsistent_case_total_after_first": True}, "CASE_TOTAL_INCONSISTENT"),
+        (_test_spec(), {"inconsistent_case_offset_after_first": True}, "CASE_PAGE_OFFSET_INCONSISTENT"),
+    ],
+)
+def test_invalid_case_pagination_fails_closed(runtime, monkeypatch, spec, replay_options, reason):
     orchestrator, _, repository = _orchestrator(
-        runtime, monkeypatch, research_spec=too_small,
-        project_case_counts={"TCGA-LUAD": 520},
+        runtime, monkeypatch, research_spec=spec,
+        project_case_counts={"TCGA-LUAD": 520}, **replay_options,
     )
     run_id = orchestrator.run()
-    assert repository.get_run(run_id)["outcome_reason"] == "COHORT_CASE_LIMIT_EXCEEDED"
-
-    bounded = _test_spec()
-    duplicate, _, _ = _orchestrator(
-        runtime, monkeypatch, research_spec=bounded,
-        project_case_counts={"TCGA-LUAD": 520}, duplicate_case_across_pages=True,
-    )
-    duplicate_run = duplicate.run()
-    assert repository.get_run(duplicate_run)["outcome_reason"] == "DUPLICATE_CASE_ID"
-
-    drifting, _, _ = _orchestrator(
-        runtime, monkeypatch, research_spec=bounded,
-        project_case_counts={"TCGA-LUAD": 520}, inconsistent_case_total_after_first=True,
-    )
-    drifting_run = drifting.run()
-    assert repository.get_run(drifting_run)["outcome_reason"] == "CASE_TOTAL_INCONSISTENT"
+    assert repository.get_run(run_id)["outcome_reason"] == reason
 
 
 def test_live_replay_with_jev_wide_evaluation(runtime, monkeypatch):
@@ -330,7 +324,7 @@ def test_incomplete_case_frame_fails_closed(runtime, monkeypatch):
     run_id = orchestrator.run()
     run = repository.get_run(run_id)
     assert run["status"] == "FAILED"
-    assert run["outcome_reason"] == "CASE_FRAME_INCOMPLETE"
+    assert run["outcome_reason"] == "CASE_TOTAL_INCONSISTENT"
     assert repository.list_table("statistical_states", run_id) == []
 
 

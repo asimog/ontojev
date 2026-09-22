@@ -80,6 +80,25 @@ def test_real_case_frame_capture_is_complete_and_ordered():
     assert all(case.project_id == "TCGA-CHOL" for case in page.cases)
     ids = [case.case_id for case in page.cases]
     assert ids == sorted(ids)
+    assert page.offset == 0
+    assert page.size == 250
+
+
+def test_case_parser_preserves_explicit_zero_count():
+    body, meta = load("cases_small")
+    document = json.loads(body)
+    document["data"]["pagination"]["count"] = 0
+    page = parse_cases(json.dumps(document).encode(), meta)
+    assert page.count == 0
+
+
+def test_case_parser_rejects_malformed_pagination_types():
+    body, meta = load("cases_small")
+    document = json.loads(body)
+    document["data"]["pagination"]["from"] = "0"
+    with pytest.raises(ParserError) as exc:
+        parse_cases(json.dumps(document).encode(), meta)
+    assert exc.value.code == "INVALID_PAGINATION"
 
 
 def test_real_genes_capture():
@@ -137,6 +156,27 @@ def test_real_expression_availability_capture():
     assert availability.missing_cases == [] and availability.missing_genes == []
 
 
+def test_expression_availability_rejects_unrequested_identifiers():
+    body = json.dumps({
+        "cases": {
+            "details": [{"case_id": "wrong-case", "has_gene_expression_values": True}],
+            "with_gene_expression_count": 1,
+            "without_gene_expression_count": 0,
+        },
+        "genes": {
+            "details": [{"gene_id": "ENSG1", "has_gene_expression_values": True}],
+            "with_gene_expression_count": 1,
+            "without_gene_expression_count": 0,
+        },
+    }).encode()
+    with pytest.raises(ParserError) as exc:
+        parse_expression_availability(
+            body, meta_for("/gene_expression/availability"),
+            expected_cases=["case-a"], expected_genes=["ENSG1"],
+        )
+    assert exc.value.code == "UNEXPECTED_IDENTIFIER"
+
+
 def test_real_gene_selection_capture():
     selection = parse_gene_selection(*load("expression_gene_selection"),
                                      expected_genes=["ENSG00000141510"])
@@ -145,6 +185,18 @@ def test_real_gene_selection_capture():
     assert abs((gene.median or 0) - 3.757) < 0.01
     assert abs((gene.stddev or 0) - 0.29998) < 0.001
     assert selection.missing_genes == []
+
+
+def test_gene_selection_rejects_unrequested_genes():
+    body = json.dumps({"gene_selection": [
+        {"gene_id": "ENSG2", "symbol": "B", "log2_uqfpkm_median": 1.0,
+         "log2_uqfpkm_stddev": 0.5},
+    ]}).encode()
+    with pytest.raises(ParserError) as exc:
+        parse_gene_selection(
+            body, meta_for("/gene_expression/gene_selection"), expected_genes=["ENSG1"],
+        )
+    assert exc.value.code == "UNEXPECTED_IDENTIFIER"
 
 
 def test_real_expression_values_capture_uses_labels_not_order():

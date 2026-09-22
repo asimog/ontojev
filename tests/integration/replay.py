@@ -157,7 +157,8 @@ class ReplayTransport:
                   incomplete_frame: bool = False, empty_expression_projects: set[str] | None = None,
                   drop_value_columns: int = 0, project_case_counts: dict[str, int] | None = None,
                   duplicate_case_across_pages: bool = False,
-                  inconsistent_case_total_after_first: bool = False) -> None:
+                  inconsistent_case_total_after_first: bool = False,
+                  inconsistent_case_offset_after_first: bool = False) -> None:
         self.artifacts = artifacts
         self.run_id = run_id
         self.controlled_files = controlled_files
@@ -167,6 +168,7 @@ class ReplayTransport:
         self.project_case_counts = project_case_counts or PROJECTS
         self.duplicate_case_across_pages = duplicate_case_across_pages
         self.inconsistent_case_total_after_first = inconsistent_case_total_after_first
+        self.inconsistent_case_offset_after_first = inconsistent_case_offset_after_first
         self.requests: list[GDCRequest] = []
         self._counter = 0
 
@@ -197,7 +199,11 @@ class ReplayTransport:
                 size=int(params["size"]), offset=offset,
                 incomplete=self.incomplete_frame,
             )
-            if offset and (self.duplicate_case_across_pages or self.inconsistent_case_total_after_first):
+            if offset and (
+                self.duplicate_case_across_pages
+                or self.inconsistent_case_total_after_first
+                or self.inconsistent_case_offset_after_first
+            ):
                 document = json.loads(body)
                 if self.duplicate_case_across_pages:
                     project_id = _filter_project(request)
@@ -206,6 +212,8 @@ class ReplayTransport:
                     )[offset - 1]
                 if self.inconsistent_case_total_after_first:
                     document["data"]["pagination"]["total"] += 1
+                if self.inconsistent_case_offset_after_first:
+                    document["data"]["pagination"]["from"] -= 1
                 body = _json(document)
         elif name == "files":
             body = files_body(_filter_project(request), controlled=self.controlled_files)

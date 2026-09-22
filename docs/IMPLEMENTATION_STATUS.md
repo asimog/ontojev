@@ -77,7 +77,7 @@ Acceptance run `36e09880-bd72-4a15-af2a-eb3abe6ef266` — **COMPLETED**:
 | Gate | Command | Result |
 |---|---|---|
 | Python lint | `.venv\Scripts\python -m ruff check cancerjev apps tests` | All checks passed |
-| Offline suite | `python -m pytest` (live markers excluded by default) | **170 passed**, 2 deselected, 0 failed |
+| Offline suite | `python -m pytest` (live markers excluded by default) | **189 passed**, 0 failed (2 live-marked tests deselected) |
 | Live markers | `pytest -m live_gdc` / `-m live_jev` | opt-in; the GDC probe passed in a manual run (14 captures, all 200); the Jev live test skips without a key |
 | Frontend typecheck | `npm run typecheck` | Passed |
 | Frontend build | `npm run build` | Passed (all routes) |

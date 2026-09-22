@@ -17,6 +17,7 @@ from cancerjev.domain.events import canonical_json
 MAX_CASE_IDS = 250
 MAX_GENE_IDS = 100
 MAX_CASES_PAGE = 250
+MAX_FILES_PAGE = 5
 MAX_PROJECTS_PAGE = 100
 MAX_DISCOVERY_HITS = 20
 
@@ -116,6 +117,15 @@ def _validate_ids(values: list[str], *, limit: int, label: str) -> list[str]:
     return list(values)
 
 
+def _validate_bounded_int(value: int, *, minimum: int, maximum: int | None, label: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise EndpointError(f"{label} must be an integer")
+    if value < minimum or (maximum is not None and value > maximum):
+        upper = f"..{maximum}" if maximum is not None else " or greater"
+        raise EndpointError(f"{label} must be {minimum}{upper}")
+    return value
+
+
 def _filter_json(filter_object: dict[str, Any]) -> str:
     return json.dumps(filter_object, separators=(",", ":"), sort_keys=True, allow_nan=False)
 
@@ -138,8 +148,7 @@ def status_request() -> GDCRequest:
 
 
 def projects_request(size: int = MAX_PROJECTS_PAGE) -> GDCRequest:
-    if not 1 <= size <= MAX_PROJECTS_PAGE:
-        raise EndpointError(f"projects size must be 1..{MAX_PROJECTS_PAGE}")
+    _validate_bounded_int(size, minimum=1, maximum=MAX_PROJECTS_PAGE, label="projects size")
     return _request(
         resolve_endpoint("GET", "/projects"),
         {
@@ -172,10 +181,8 @@ def cohort_project_request(project_id: str) -> GDCRequest:
 
 
 def cases_request(project_id: str, size: int = MAX_CASES_PAGE, *, offset: int = 0) -> GDCRequest:
-    if not 1 <= size <= MAX_CASES_PAGE:
-        raise EndpointError(f"cases size must be 1..{MAX_CASES_PAGE}")
-    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
-        raise EndpointError("cases offset must be a non-negative integer")
+    _validate_bounded_int(size, minimum=1, maximum=MAX_CASES_PAGE, label="cases size")
+    _validate_bounded_int(offset, minimum=0, maximum=None, label="cases offset")
     return _request(
         resolve_endpoint("GET", "/cases"),
         {
@@ -191,6 +198,7 @@ def cases_request(project_id: str, size: int = MAX_CASES_PAGE, *, offset: int = 
 
 
 def files_expression_request(project_id: str, size: int = 5) -> GDCRequest:
+    _validate_bounded_int(size, minimum=1, maximum=MAX_FILES_PAGE, label="files size")
     return _request(
         resolve_endpoint("GET", "/files"),
         {
@@ -220,8 +228,7 @@ def genes_request(gene_ids: list[str]) -> GDCRequest:
 
 
 def top_mutated_genes_request(project_id: str, size: int = MAX_DISCOVERY_HITS) -> GDCRequest:
-    if not 1 <= size <= MAX_DISCOVERY_HITS:
-        raise EndpointError(f"discovery size must be 1..{MAX_DISCOVERY_HITS}")
+    _validate_bounded_int(size, minimum=1, maximum=MAX_DISCOVERY_HITS, label="discovery size")
     return _request(
         resolve_endpoint("GET", "/analysis/top_mutated_genes_by_project"),
         {

@@ -69,6 +69,8 @@ class CasesPage:
     cases: list[CaseRecord]
     total: int | None
     count: int
+    size: int | None
+    offset: int | None
     pages: int | None
     complete: bool
     warnings: list[str]
@@ -339,12 +341,28 @@ def parse_cases(body: bytes, meta: ResponseMeta) -> CasesPage:
             sample_types=sample_types,
         ))
     pagination = _optional(document, "data.pagination", (dict,), "cases") or {}
-    total = _optional(pagination, "total", (int,), "cases")
-    count = _optional(pagination, "count", (int,), "cases")
-    pages = _optional(pagination, "pages", (int,), "cases")
-    complete = bool(total is not None and count is not None and count == total and (pages or 1) <= 1)
-    return CasesPage(cases=records, total=total, count=count or len(records), pages=pages,
-                     complete=complete, warnings=_warnings(document))
+    pagination_values: dict[str, int | None] = {}
+    for name in ("total", "count", "size", "from", "pages"):
+        value = pagination.get(name)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+            raise ParserError("INVALID_PAGINATION", f"cases: pagination {name} must be an integer")
+        pagination_values[name] = value
+    total = pagination_values["total"]
+    count = pagination_values["count"]
+    size = pagination_values["size"]
+    offset = pagination_values["from"]
+    pages = pagination_values["pages"]
+    for name, value in (("total", total), ("count", count), ("from", offset), ("pages", pages)):
+        if value is not None and value < 0:
+            raise ParserError("INVALID_PAGINATION", f"cases: pagination {name} must be non-negative")
+    if size is not None and size < 1:
+        raise ParserError("INVALID_PAGINATION", "cases: pagination size must be positive")
+    effective_count = count if count is not None else len(records)
+    complete = bool(
+        total is not None and effective_count == total and (offset or 0) == 0 and (pages or 1) <= 1
+    )
+    return CasesPage(cases=records, total=total, count=effective_count, size=size, offset=offset,
+                     pages=pages, complete=complete, warnings=_warnings(document))
 
 
 def parse_genes(body: bytes, meta: ResponseMeta) -> list[GeneRecord]:
@@ -436,11 +454,15 @@ def parse_mutated_cases_count(body: bytes, meta: ResponseMeta) -> ProjectCoverag
 def parse_expression_availability(body: bytes, meta: ResponseMeta, *, expected_cases: list[str],
                                   expected_genes: list[str]) -> ExpressionAvailability:
     document = _load_json(body, meta)
+    expected_case_set = set(expected_cases)
+    expected_gene_set = set(expected_genes)
     cases: dict[str, bool] = {}
     for detail in _require(document, "cases.details", (list,), "availability"):
         if not isinstance(detail, dict):
             raise ParserError("MALFORMED_JSON", "availability: case detail is not an object")
         case_id = _require(detail, "case_id", (str,), "availability")
+        if case_id not in expected_case_set:
+            raise ParserError("UNEXPECTED_IDENTIFIER", f"availability: unrequested case {case_id}")
         if case_id in cases:
             raise ParserError("DUPLICATE_ID", f"availability: duplicate case {case_id}")
         cases[case_id] = bool(_require(detail, "has_gene_expression_values", (bool,), "availability"))
@@ -449,6 +471,8 @@ def parse_expression_availability(body: bytes, meta: ResponseMeta, *, expected_c
         if not isinstance(detail, dict):
             raise ParserError("MALFORMED_JSON", "availability: gene detail is not an object")
         gene_id = _require(detail, "gene_id", (str,), "availability")
+        if gene_id not in expected_gene_set:
+            raise ParserError("UNEXPECTED_IDENTIFIER", f"availability: unrequested gene {gene_id}")
         if gene_id in genes:
             raise ParserError("DUPLICATE_ID", f"availability: duplicate gene {gene_id}")
         genes[gene_id] = bool(_require(detail, "has_gene_expression_values", (bool,), "availability"))
@@ -464,11 +488,14 @@ def parse_expression_availability(body: bytes, meta: ResponseMeta, *, expected_c
 
 def parse_gene_selection(body: bytes, meta: ResponseMeta, *, expected_genes: list[str]) -> ProviderSelection:
     document = _load_json(body, meta)
+    expected_gene_set = set(expected_genes)
     genes: dict[str, ProviderGene] = {}
     for item in _require(document, "gene_selection", (list,), "gene_selection"):
         if not isinstance(item, dict):
             raise ParserError("MALFORMED_JSON", "gene_selection: entry is not an object")
         gene_id = _require(item, "gene_id", (str,), "gene_selection")
+        if gene_id not in expected_gene_set:
+            raise ParserError("UNEXPECTED_IDENTIFIER", f"gene_selection: unrequested gene {gene_id}")
         if gene_id in genes:
             raise ParserError("DUPLICATE_ID", f"gene_selection: duplicate {gene_id}")
         genes[gene_id] = ProviderGene(

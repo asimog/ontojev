@@ -103,7 +103,8 @@ def _sum_if_complete(values: list[int | None]) -> int | None:
 
 
 def _merge_expression_availability(
-    case_ids: list[str], gene_ids: list[str], parts: list[ExpressionAvailability],
+    case_ids: list[str], gene_ids: list[str],
+    parts: list[tuple[list[str], ExpressionAvailability]],
 ) -> ExpressionAvailability:
     expected_cases = set(case_ids)
     expected_genes = set(gene_ids)
@@ -112,9 +113,14 @@ def _merge_expression_availability(
     missing_cases: set[str] = set()
     missing_genes: set[str] = set()
     warnings: list[str] = []
-    for part in parts:
-        unexpected_cases = sorted(set(part.cases) - expected_cases)
-        unexpected_genes = sorted(set(part.genes) - expected_genes)
+    examined_cases: set[str] = set()
+    for batch_case_ids, part in parts:
+        batch_cases = set(batch_case_ids)
+        if not batch_cases <= expected_cases or examined_cases & batch_cases:
+            raise LiveRunError("INVALID_EXPRESSION_BATCH", "expression batches overlap or contain unknown cases")
+        examined_cases.update(batch_cases)
+        unexpected_cases = sorted((set(part.cases) | set(part.missing_cases)) - batch_cases)
+        unexpected_genes = sorted((set(part.genes) | set(part.missing_genes)) - expected_genes)
         if unexpected_cases or unexpected_genes:
             raise LiveRunError(
                 "UNEXPECTED_EXPRESSION_IDENTIFIER",
@@ -132,13 +138,15 @@ def _merge_expression_availability(
         missing_cases.update(part.missing_cases)
         missing_genes.update(part.missing_genes)
         warnings.extend(part.warnings)
+    if examined_cases != expected_cases:
+        raise LiveRunError("INCOMPLETE_EXPRESSION_BATCHES", "expression batches do not cover the cohort case frame")
     missing_cases.update(expected_cases - set(cases))
     missing_genes.update(expected_genes - set(genes))
     return ExpressionAvailability(
         cases={case_id: cases[case_id] for case_id in case_ids if case_id in cases},
         genes={gene_id: genes[gene_id] for gene_id in gene_ids if gene_id in genes},
-        with_count=_sum_if_complete([part.with_count for part in parts]),
-        without_count=_sum_if_complete([part.without_count for part in parts]),
+        with_count=_sum_if_complete([part.with_count for _, part in parts]),
+        without_count=_sum_if_complete([part.without_count for _, part in parts]),
         missing_cases=sorted(missing_cases), missing_genes=sorted(missing_genes),
         warnings=warnings,
     )
@@ -509,6 +517,11 @@ class LiveOrchestrator:
                 cases_request(project.project_id, acquisition.case_page_size, offset=offset)
             )
             page = parse_cases(cases_response.body, self._meta(cases_response, inventory.release))
+            if page.offset is None or page.offset != offset:
+                raise LiveRunError(
+                    "CASE_PAGE_OFFSET_INCONSISTENT",
+                    f"{project.project_id}: requested offset {offset}, provider reported {page.offset}",
+                )
             if page.total is None:
                 raise LiveRunError("CASE_TOTAL_MISSING", f"{project.project_id}: cases page has no total")
             if expected_total is None:
@@ -521,7 +534,7 @@ class LiveOrchestrator:
                     )
                 if project.case_count is not None and expected_total != project.case_count:
                     raise LiveRunError(
-                        "CASE_FRAME_INCOMPLETE",
+                        "CASE_TOTAL_INCONSISTENT",
                         f"{project.project_id}: case page total {expected_total} differs from inventory "
                         f"case count {project.case_count}",
                     )
@@ -585,7 +598,7 @@ class LiveOrchestrator:
         if case_ids:
             batches = [case_ids[index:index + acquisition.case_batch_size]
                        for index in range(0, len(case_ids), acquisition.case_batch_size)]
-            availability_parts: list[ExpressionAvailability] = []
+            availability_parts: list[tuple[list[str], ExpressionAvailability]] = []
             value_parts: list[tuple[list[str], ExpressionValues | None]] = []
             for batch_number, batch_case_ids in enumerate(batches, start=1):
                 availability_response = transport.request(
@@ -595,7 +608,7 @@ class LiveOrchestrator:
                     availability_response.body, self._meta(availability_response, inventory.release),
                     expected_cases=batch_case_ids, expected_genes=gene_ids,
                 )
-                availability_parts.append(batch_availability)
+                availability_parts.append((batch_case_ids, batch_availability))
                 sources.append(self._source(
                     availability_response,
                     locator=f"/gene_expression/availability[{project.project_id}]/batch/{batch_number}",

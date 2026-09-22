@@ -5,7 +5,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from cancerjev.gdc.endpoints import MAX_CASE_IDS, MAX_CASES_PAGE, MAX_DISCOVERY_HITS, MAX_GENE_IDS
+from cancerjev.gdc.endpoints import (
+    MAX_CASE_IDS,
+    MAX_CASES_PAGE,
+    MAX_DISCOVERY_HITS,
+    MAX_FILES_PAGE,
+    MAX_GENE_IDS,
+)
 
 
 @dataclass(frozen=True)
@@ -31,6 +37,9 @@ class AcquisitionSpec:
     expression_file_sample_size: int
 
     def __post_init__(self) -> None:
+        for name, value in asdict(self).items():
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError(f"{name} must be an integer")
         if not 1 <= self.case_page_size <= MAX_CASES_PAGE:
             raise ValueError(f"case_page_size must be 1..{MAX_CASES_PAGE}")
         if not 1 <= self.case_batch_size <= MAX_CASE_IDS:
@@ -45,8 +54,8 @@ class AcquisitionSpec:
             raise ValueError("candidate_gene_limit must be 1..count_gene_limit")
         if self.candidate_gene_limit > MAX_GENE_IDS:
             raise ValueError(f"candidate_gene_limit must not exceed {MAX_GENE_IDS}")
-        if not 1 <= self.expression_file_sample_size <= 100:
-            raise ValueError("expression_file_sample_size must be 1..100")
+        if not 1 <= self.expression_file_sample_size <= MAX_FILES_PAGE:
+            raise ValueError(f"expression_file_sample_size must be 1..{MAX_FILES_PAGE}")
 
 
 @dataclass(frozen=True)
@@ -56,7 +65,7 @@ class ResearchSpec:
     acquisition: AcquisitionSpec
 
     def __post_init__(self) -> None:
-        if not self.spec_id or len(self.spec_id) > 128:
+        if not isinstance(self.spec_id, str) or not self.spec_id.strip() or len(self.spec_id) > 128:
             raise ValueError("spec_id must be a non-empty string of at most 128 characters")
 
     def as_dict(self) -> dict[str, Any]:
