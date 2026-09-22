@@ -1,0 +1,45 @@
+{
+  "authentication_headers_sent": [],
+  "body_bytes_read": 2750,
+  "body_sha256": "4fca7be99e08540bccf283c414034c1ca68300899c2888104cbc0c3e5e5cd64e",
+  "completeness": "COMPLETE",
+  "endpoint": "/projects",
+  "error": null,
+  "http_status": 200,
+  "latency_ms": 1024,
+  "method": "GET",
+  "normalized_body": null,
+  "normalized_params": {
+    "fields": "project_id,name,program.name,primary_site,disease_type,summary.case_count,summary.file_count,summary.data_categories.data_category",
+    "size": "3"
+  },
+  "parser_version": "research-probe-1",
+  "per_response_cap": 524288,
+  "probe_name": "projects_small",
+  "request_headers_sent": {
+    "Accept": "application/json",
+    "Accept-Encoding": "identity",
+    "User-Agent": "CancerJEV-contract-probe/0.1 (research; anonymous)"
+  },
+  "response_headers": {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "Content-Disposition",
+    "connection": "close",
+    "content-length": "2750",
+    "content-type": "application/json",
+    "date": "Tue, 22 Sep 2026 08:26:08 GMT",
+    "server": "Apache",
+    "strict-transport-security": "max-age=63072001; includeSubdomains; preload",
+    "vary": "Accept-Encoding",
+    "x-frame-options": "SAMEORIGIN",
+    "x-gdc-commit": "8f7c2a51ab0084b216ad1b62a3fae8b945439c53",
+    "x-gdc-data_release": "Data Release 46.0 - August 10, 2026",
+    "x-gdc-data_release_version": "{'major': 46, 'minor': 0, 'release_date': '2026-08-10'}",
+    "x-gdc-status": "OK",
+    "x-gdc-tag": "8.5.0",
+    "x-gdc-version": "1"
+  },
+  "response_truncated_by_probe_cap": false,
+  "retrieved_at": "2026-09-22T08:26:06.884149Z",
+  "url": "https://api.gdc.cancer.gov/projects?size=3&fields=project_id%2Cname%2Cprogram.name%2Cprimary_site%2Cdisease_type%2Csummary.case_count%2Csummary.file_count%2Csummary.data_categories.data_category"
+}

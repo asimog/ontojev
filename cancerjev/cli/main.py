@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
+from pathlib import Path
 
 from cancerjev.cli.console import render_event, render_json_event
 from cancerjev.config import Settings
+from cancerjev.gdc.capture import CaptureSink, run_contract_probe
+from cancerjev.gdc.transport import BudgetCaps, GDCTransport, RunBudget
+from cancerjev.research.live import LiveOrchestrator
 from cancerjev.research.orchestrator import DemoOrchestrator
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.database import Database
@@ -18,19 +23,60 @@ def parser() -> argparse.ArgumentParser:
     commands = root.add_subparsers(dest="command", required=True)
     for name in ("run", "worker"):
         command = commands.add_parser(name)
-        command.add_argument("--fixture", choices=["demo"])
+        mode = command.add_mutually_exclusive_group()
+        mode.add_argument("--fixture", choices=["demo"])
+        mode.add_argument("--live", action="store_true", help="real bounded open-access GDC sweep")
+        command.add_argument("--jev", action="store_true",
+                             help="Phase 3 wide Jev evaluation over real states (requires TYPESAFE_API_KEY)")
+    probe = commands.add_parser("probe", help="bounded anonymous GDC contract capture")
+    probe.add_argument("--capture-dir", default=None)
     show = commands.add_parser("show")
     show.add_argument("run_id")
     show.add_argument("--events", action="store_true")
     return root
 
 
+def _services(settings: Settings) -> tuple[Repository, ArtifactStore]:
+    database = Database(settings.database_path)
+    database.bootstrap()
+    return Repository(database), ArtifactStore(settings.data_dir)
+
+
+def _probe(settings: Settings, repository: Repository, artifacts: ArtifactStore, capture_dir: str | None) -> None:
+    caps = BudgetCaps(
+        max_requests=30, max_bytes=8 * 1024 * 1024,
+        per_response_bytes=settings.gdc_per_response_bytes,
+        timeout_seconds=settings.gdc_timeout_seconds,
+    )
+    run_id = repository.create_run("probe", mode="LIVE", fixture_id=None, fixture_version=None,
+                                   scope={"purpose": "CONTRACT_PROBE"})
+
+    def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+        event = repository.append_event(run_id, event_type=event_type, idempotency_key=key, message=message, **kwargs)
+        render_event(event)
+
+    emit("RUN_STARTED", "run:started", "Contract probe run started.", data={"mode": "LIVE", "purpose": "CONTRACT_PROBE"})
+    transport = GDCTransport(repository, artifacts, RunBudget(caps=caps), run_id, emit, cache_enabled=False)
+    directory = (
+        Path(capture_dir) if capture_dir
+        else settings.data_dir / f"gdc-contract-captures-{time.strftime('%Y-%m-%d')}" / f"probe-{run_id[:8]}"
+    )
+    sink = CaptureSink(directory)
+    summary = run_contract_probe(transport, sink, release=None)
+    totals = repository.gdc_run_totals(run_id)
+    emit(
+        "RUN_COMPLETED", "run:completed",
+        f"Contract probe completed with {summary['captures']} captures.",
+        data={"status": "COMPLETED", "reason_code": "CONTRACT_PROBE_COMPLETE", "coverage": "COMPLETE_FOR_SCOPE",
+              "captures": summary["captures"], "bytes": totals["bytes"], "gdc_attempts": totals["attempts"]},
+    )
+    print(f"[PROBE] captures written to {directory} ({summary['captures']} requests, {summary['bytes']} bytes)", flush=True)
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parser().parse_args(argv)
     settings = Settings.from_env()
-    database = Database(settings.database_path)
-    database.bootstrap()
-    repository = Repository(database)
+    repository, artifacts = _services(settings)
     if args.command == "show":
         run = repository.get_run(args.run_id)
         if not run:
@@ -41,14 +87,37 @@ def main(argv: list[str] | None = None) -> None:
             for event in page["items"]:
                 render_json_event(event)
         return
-    if args.fixture != "demo":
-        raise SystemExit("Live research is not implemented in Phase 1. Use --fixture demo.")
+    if args.command == "probe":
+        try:
+            with ResearchOwnership(settings.lock_path):
+                repository.recover_interrupted()
+                _probe(settings, repository, artifacts, args.capture_dir)
+        except OwnershipError as exc:
+            raise SystemExit(str(exc)) from exc
+        return
+    live = bool(getattr(args, "live", False))
+    jev_requested = bool(getattr(args, "jev", False))
+    if jev_requested and not live:
+        raise SystemExit("--jev requires --live (Jev evaluates real GDC states only).")
+    if not live and args.fixture != "demo":
+        raise SystemExit("Choose --fixture demo for the offline demonstration or --live for a real open-access GDC sweep.")
     try:
         with ResearchOwnership(settings.lock_path):
             recovered = repository.recover_interrupted()
             for run_id in recovered:
                 print(f"[RECOVERY] preserved and stopped interrupted run {run_id}", flush=True)
-            orchestrator = DemoOrchestrator(settings, repository, ArtifactStore(settings.data_dir), render_event)
+            if live:
+                jev_service = None
+                if jev_requested:
+                    from cancerjev.jev.service import JevService
+
+                    if not os.getenv("TYPESAFE_API_KEY"):
+                        raise SystemExit("--jev requires the TYPESAFE_API_KEY environment variable (server-side only).")
+                    jev_service = JevService(settings, repository, artifacts)
+                orchestrator = LiveOrchestrator(settings, repository, artifacts, render_event,
+                                                jev_service=jev_service)
+            else:
+                orchestrator = DemoOrchestrator(settings, repository, artifacts, render_event)
             if args.command == "run":
                 orchestrator.run()
                 return
@@ -60,4 +129,3 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(str(exc)) from exc
     except KeyboardInterrupt:
         print("[WORKER] stopped", flush=True)
-

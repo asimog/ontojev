@@ -10,7 +10,7 @@ export function RecentDossiers() {
   if (!data || data.items.length === 0) return null;
   return (
     <section>
-      <div className="section-heading"><div><span className="eyebrow">RECENT DOSSIERS</span><h2>Synthetic research output</h2></div><Link href="/dossiers">Archive →</Link></div>
+      <div className="section-heading"><div><span className="eyebrow">RECENT DOSSIERS</span><h2>Research output</h2></div><Link href="/dossiers">Archive →</Link></div>
       <div className="archive">
         {data.items.map((item) => {
           const summary = item.summary as Record<string, unknown>;

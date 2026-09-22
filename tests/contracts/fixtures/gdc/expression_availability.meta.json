@@ -1,0 +1,45 @@
+{
+  "authentication_headers_sent": [],
+  "body_bytes_read": 410,
+  "body_sha256": "73ffd4e14adb2ebe38822a123d80bef71a0bfd32879d6b73ce23652ff0e85c6b",
+  "completeness": "COMPLETE",
+  "endpoint": "/gene_expression/availability",
+  "error": null,
+  "http_status": 200,
+  "latency_ms": 1084,
+  "method": "POST",
+  "normalized_body": {
+    "case_ids": [
+      "57a1604c-60b7-4b30-a75e-f70939532c5c",
+      "2779fa01-ac93-4e80-a997-3385f72172c3"
+    ],
+    "gene_ids": [
+      "ENSG00000141510"
+    ]
+  },
+  "normalized_params": null,
+  "parser_version": "research-probe-1",
+  "per_response_cap": 524288,
+  "probe_name": "expression_availability",
+  "request_headers_sent": {
+    "Accept": "application/json",
+    "Accept-Encoding": "identity",
+    "Content-Type": "application/json",
+    "User-Agent": "CancerJEV-contract-probe/0.1 (research; anonymous)"
+  },
+  "response_headers": {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "Content-Disposition",
+    "connection": "close",
+    "content-length": "410",
+    "content-type": "application/json",
+    "date": "Tue, 22 Sep 2026 08:26:17 GMT",
+    "server": "Apache",
+    "strict-transport-security": "max-age=63072001; includeSubdomains; preload",
+    "vary": "Accept-Encoding",
+    "x-frame-options": "SAMEORIGIN"
+  },
+  "response_truncated_by_probe_cap": false,
+  "retrieved_at": "2026-09-22T08:26:16.124352Z",
+  "url": "https://api.gdc.cancer.gov/gene_expression/availability"
+}

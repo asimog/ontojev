@@ -15,9 +15,9 @@ def test_api_incremental_events_and_errors(runtime, monkeypatch):
     pending_id = repository.create_run("pagination-test")
     client = TestClient(create_app())
     health = client.get("/health")
-    assert health.json() == {"status": "ok", "schema_version": 2}
+    assert health.json() == {"status": "ok", "schema_version": 3}
     assert health.headers["cache-control"] == "no-store"
-    assert client.get("/api/system").json()["providers"] == {"gdc": False, "jev": False, "llm": False}
+    assert client.get("/api/system").json()["providers"] == {"gdc": True, "jev": False, "llm": False}
     first_page = client.get("/api/runs?limit=1").json()
     assert first_page["items"][0]["run_id"] == pending_id
     assert first_page["has_more"] is True and first_page["next_cursor"]
@@ -81,7 +81,7 @@ def test_evaluations_expose_explicit_input_references(runtime, monkeypatch):
         assert all("state_id" not in item for item in items)
 
 
-def test_system_reports_phase1_configuration(runtime, monkeypatch):
+def test_system_reports_live_configuration(runtime, monkeypatch):
     settings, repository, artifacts = runtime
     monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))
     run_id = DemoOrchestrator(settings, repository, artifacts, lambda event: None).run()
@@ -89,10 +89,11 @@ def test_system_reports_phase1_configuration(runtime, monkeypatch):
     system = client.get("/api/system").json()
     assert system["data"]["directory"] == settings.data_dir.name
     assert system["data"]["artifact_files"] > 0
-    assert system["versions"] == {"api": "1.0.0", "schema": 2, "worker": "0.1.0"}
-    assert system["budget_defaults"]["gdc_requests"] is None
+    assert system["versions"] == {"api": "2.0.0", "schema": 3, "worker": "0.1.0"}
+    assert system["budget_defaults"]["gdc_requests"] == 150
+    assert system["budget_defaults"]["max_case_ids"] == 250
     assert system["cursor"]["present"] is False
-    assert system["cache"] == {"entries": 0, "reason": "The GDC cache is Phase 2."}
+    assert system["cache"] == {"entries": 0, "bytes": 0, "jev_entries": 0, "reason": None}
     assert system["worker"]["fresh"] is None
     run = repository.get_run(run_id)
     assert system["worker"]["owner_id"] == run["worker_id"]

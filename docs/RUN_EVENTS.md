@@ -30,12 +30,15 @@ Payload families:
 |---|---|
 | RUN_CREATED, RUN_STARTED, RUN_COMPLETED, RUN_FAILED, RUN_STOPPED | status, reason_code?, config_ref at creation, final counters and coverage on completion |
 | STAGE_STARTED, STAGE_COMPLETED | stage, candidate_id?, iteration?, outcome, elapsed_ms on completion |
-| INVENTORY_STARTED/COMPLETED, PROJECT_SCOPE_SELECTED | inventory_ref?, selected_project_ids, cursor_ref, completeness |
+| INVENTORY_STARTED/COMPLETED, PROJECT_SCOPE_SELECTED | inventory_ref?, selected_project_ids, cursor_ref, completeness, release identity |
 | GDC_REQUEST_STARTED | request_id, logical_query_id, endpoint, attempt_no, request ordinal, reserved bytes, cache=false |
 | GDC_REQUEST_COMPLETED/FAILED, GDC_CACHE_HIT | request_id/source_request_id, status, body bytes, response ref?, completeness, latency, totals, reason? |
 | GDC_RESPONSE_LIMIT_EXCEEDED, GDC_REQUEST_BUDGET_EXHAUSTED, GDC_RUN_BYTE_BUDGET_EXHAUSTED | resource, configured_limit, consumed, requested, affected query/candidate, disposition |
 | WIDE_SCAN_STARTED/COMPLETED, STATISTICAL_STATE_CREATED, PREFILTER_REJECTED, WIDE_STATE_DEFERRED | state refs, lane, counts, validity/selection reason |
+| JEV_PROJECTION_CREATED | projection_id, state_id, projection_version, source_state_hash, projection_hash, artifact ref, included-field contract |
 | JEV_WIDE_STARTED/COMPLETED, JEV_DEEP_STARTED/COMPLETED | evaluation refs, state count, call count, full-vector summary ref, model, usage, errors |
+| JEV_WIDE_STATE_EVALUATED, JEV_EVALUATION_FAILED | evaluation ref, input ref, applicability map, raw judgment vector or fail-closed error, cache source, model |
+| WIDE_RANKING_COMPLETED | baseline ranking artifact ref, policy ranking artifact ref, policy version, admitted candidate refs |
 | CANDIDATE_PROMOTED | candidate_id, source_state_id, evaluation_id, promotion_slot, policy_version, reason |
 | DEEP_ANALYSIS_STARTED/COMPLETED, EVIDENCE_STATE_CREATED | method/action refs, input/output state hashes, observation refs, availability |
 | HYPOTHESES_GENERATED, HYPOTHESIS_EVALUATED | hypothesis refs, evidence hash, evaluation refs, usage |
@@ -44,7 +47,7 @@ Payload families:
 
 Use stage start/completion records for every Phase 1 stage. This resolves the master spec's shorthand list (`INVENTORY`, `FOLLOWUP`, etc.) as stage names rather than a competing event vocabulary. Operation-specific records provide detail; counters are updated only by their designated records, never double-counted by stage completion.
 
-Phase 1 registers this exact subset of the families above. Detail records implemented per item rather than per stage: `INVENTORY_COMPLETED`, `WIDE_SCAN_STARTED`, `WIDE_SCAN_COMPLETED`, `STATISTICAL_STATE_CREATED`, `JEV_WIDE_STATE_EVALUATED` (one per evaluated state), `CANDIDATE_PROMOTED`, `CANDIDATE_DEFERRED`, `EVIDENCE_STATE_CREATED`, `EVIDENCE_BUILD_COMPLETED` (per evidence revision), `JEV_DEEP_COMPLETED` (one per evaluation), `HYPOTHESES_GENERATED`, `HYPOTHESIS_EVALUATED` (one per hypothesis), `FOLLOWUP_STARTED`, `FOLLOWUP_COMPLETED`, `DOSSIER_CREATED`. `STAGE_STARTED`/`STAGE_COMPLETED` carry every stage listed in the stage enum, including repeats per candidate and iteration. Later phases add the GDC/provider families; no Phase 1 code path emits them. The full registered set is exactly the 22 types in `REGISTERED_EVENT_TYPES`; a test asserts the orchestrator's emissions are a subset of it.
+Phase 1 registered the 22-type fixture subset. Phase 2 adds the live GDC families (`INVENTORY_STARTED`, `PROJECT_SCOPE_SELECTED`, `GDC_REQUEST_STARTED/COMPLETED/FAILED`, `GDC_CACHE_HIT`, the three budget-limit types) and Phase 3 adds the Jev families (`JEV_PROJECTION_CREATED`, `JEV_WIDE_STARTED/COMPLETED`, `JEV_WIDE_STATE_EVALUATED`, `JEV_EVALUATION_FAILED`, `WIDE_RANKING_COMPLETED`). `REGISTERED_EVENT_TYPES` is the single source of truth for the exact current set; a test asserts the live and fixture orchestrators emit only registered types, and an unknown type or schema version is rejected before a sequence is allocated. The event schema version stays 1: Phase 2/3 add registered types, not a new envelope. Fixture and live runs share the same vocabulary; the run `mode` distinguishes them, and fixture events continue to carry explicit `FAKE`/`SYNTHETIC` markers.
 
 `domain/runs.py` owns allowed transitions and `domain/events.py` owns payload validation and the reducer. `append_event` starts a short SQLite transaction, validates current state, allocates `last_sequence+1`, inserts the event, applies the reducer and commits. Uniqueness on `(run_id,sequence)`, `event_id`, and `(run_id,idempotency_key)` prevents duplicates. A failed transaction consumes no sequence. An uncertain caller retries with the same idempotency key and receives the existing event.
 

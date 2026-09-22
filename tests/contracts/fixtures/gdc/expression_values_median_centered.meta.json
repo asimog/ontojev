@@ -1,0 +1,46 @@
+{
+  "authentication_headers_sent": [],
+  "body_bytes_read": 115,
+  "body_sha256": "6d7ef28e174a616a5de5aea8838c0e0e537398969cbfcc1d8a4df9186658ad7b",
+  "completeness": "COMPLETE",
+  "endpoint": "/gene_expression/values",
+  "error": null,
+  "http_status": 200,
+  "latency_ms": 1182,
+  "method": "POST",
+  "normalized_body": {
+    "case_ids": [
+      "2779fa01-ac93-4e80-a997-3385f72172c3",
+      "57a1604c-60b7-4b30-a75e-f70939532c5c"
+    ],
+    "gene_ids": [
+      "ENSG00000141510"
+    ],
+    "tsv_units": "median_centered_log2_uqfpkm"
+  },
+  "normalized_params": null,
+  "parser_version": "research-probe-1",
+  "per_response_cap": 524288,
+  "probe_name": "expression_values_median_centered",
+  "request_headers_sent": {
+    "Accept": "text/tab-separated-values",
+    "Accept-Encoding": "identity",
+    "Content-Type": "application/json",
+    "User-Agent": "CancerJEV-contract-probe/0.1 (research; anonymous)"
+  },
+  "response_headers": {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "Content-Disposition",
+    "connection": "close",
+    "content-type": "text/tab-separated-values; charset=utf-8",
+    "date": "Tue, 22 Sep 2026 08:29:13 GMT",
+    "server": "Apache",
+    "strict-transport-security": "max-age=63072001; includeSubdomains; preload",
+    "transfer-encoding": "chunked",
+    "vary": "Accept-Encoding",
+    "x-frame-options": "SAMEORIGIN"
+  },
+  "response_truncated_by_probe_cap": false,
+  "retrieved_at": "2026-09-22T08:29:12.261738Z",
+  "url": "https://api.gdc.cancer.gov/gene_expression/values"
+}

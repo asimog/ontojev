@@ -52,9 +52,23 @@ p { line-height: 1.65; }
 .badge { font: 800 10px Arial; text-transform: uppercase; letter-spacing: .12em; background: #e7e7df; padding: 7px 9px; border-radius: 2px; display: inline-block; }
 .badge + .badge { margin-left: 7px; }
 .badge.fake { color: #7f311f; background: #f6d8cd; }
+.badge.live { color: #14532d; background: #cdebd6; }
 .badge.status.running { background: #d9e9fd; color: #21588e; }
 .badge.status.completed { background: var(--mint); color: var(--green); }
 .badge.status.stopped, .badge.status.failed { background: #f1d2cd; color: #8a271d; }
+.button.ghost { background: transparent; color: var(--green); border: 1px solid var(--line); padding: 7px 10px; font-size: 11px; }
+.table-scroll { overflow-x: auto; margin-top: 14px; }
+.table-scroll table, .ranking table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.table-scroll th, .table-scroll td, .ranking th, .ranking td { border-bottom: 1px solid var(--line); padding: 9px 10px; text-align: left; vertical-align: top; }
+.table-scroll th, .ranking th { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.state-detail { margin-top: 14px; }
+pre.artifact { max-height: 460px; overflow: auto; background: #f2f1ec; padding: 14px; font-size: 11px; border: 1px solid var(--line); }
+.ranking-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+.ranking { border: 1px solid var(--line); padding: 18px; }
+.ranking h3 { font-size: 18px; margin-bottom: 4px; }
+.dimension-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.dimension-list span { background: #eeeaf9; padding: 3px 6px; font-size: 10px; }
+.judgment-row.inapplicable { opacity: .62; border-style: dashed !important; }
 .metrics { display: grid; grid-template-columns: repeat(6, 1fr); gap: 1px; border: 1px solid var(--line); background: var(--line); margin: 22px 0; }
 .metrics > div { padding: 14px; background: var(--panel); }
 .metrics strong { display: block; font: 24px Georgia; }
@@ -130,7 +144,7 @@ p { line-height: 1.65; }
   main { width: min(100% - 28px, 1180px); padding-top: 32px; }
   .hero { grid-template-columns: 1fr; gap: 10px; padding: 50px 0; }
   .orb { display: none; }
-  .run-grid, .archive, .candidate-grid, .judgment-grid, .system-grid { grid-template-columns: 1fr; }
+  .run-grid, .archive, .candidate-grid, .judgment-grid, .system-grid, .ranking-grid { grid-template-columns: 1fr; }
   .metrics { grid-template-columns: repeat(3, 1fr); }
   .metrics.secondary { grid-template-columns: repeat(2, 1fr); }
   .event summary { grid-template-columns: 36px 64px 1fr; }

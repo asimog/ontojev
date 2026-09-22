@@ -24,7 +24,7 @@ Case/gene limits count the combined supplied identifiers, not 250 for each subgr
 
 ## Sole transport path
 
-Every GDC operation, including inventory, mapping queries, errors and retries, goes through `GDCClient.request(run_budget, validated_request)`. No science, Jev, LLM, API route or helper creates its own network client. Fixed HTTPS host `api.gdc.cancer.gov`, allowlisted paths/methods, no GDC Authorization/X-Auth-Token, no redirect following, no automatic library retries. `/data`, manifests, BAM slicing and archive downloads are absent from the allowlist.
+Every GDC operation, including inventory, mapping queries, errors, retries and contract probes, goes through `GDCTransport.request(run_budget, validated_request)`. No science, Jev, LLM, API route or helper creates its own network client. Fixed HTTPS host `api.gdc.cancer.gov`, allowlisted paths/methods, no GDC Authorization/X-Auth-Token, no redirect following, no automatic library retries. `/data`, manifests, BAM slicing and archive downloads are absent from the allowlist. The contract-capture probe is the same transport with a capture sink; it cannot reach endpoints the runtime allowlist excludes, and its own budgets are bounded per invocation.
 
 Steps:
 
@@ -51,5 +51,7 @@ GDC budget exhaustion emits `GDC_REQUEST_BUDGET_EXHAUSTED` or `GDC_RUN_BYTE_BUDG
 ## Feasibility and cost visibility
 
 Caps are ceilings, not quotas. A proposed planning envelope is 10 inventory/metadata calls, up to 4 wide calls ×12 projects (48), up to 3 initial deep calls ×20 candidates (60), leaving 32 of 150 for retries and selected follow-ups. This is not a promise that every endpoint or candidate fits. Worst-case responses would exceed 64 MiB long before the request ceiling; bytes always override this plan. Fair admission may result in fewer than 12 projects or 20 candidates.
+
+**Phase 2 measured envelope (VERIFIED from the live contract captures and design):** one full bounded slice is ≈45 requests and <2 MiB: 1 `/status`, 1 `/projects`, 8 `/analysis/top_mutated_genes_by_project`, 1 `/analysis/top_cases_counts_by_genes`, 1 `/analysis/mutated_cases_count_by_project`, 1 `/genes`, 8 `/cases`, 8 `/gene_expression/availability`, 8 `/gene_expression/gene_selection`, 8 `/gene_expression/values`. The live contract-verification pass itself used 30 requests / 80,653 bytes and is reproducible through the `probe` command; probe captures are written under `data/gdc-contract-captures-<date>/` with per-request metadata and hashes.
 
 Jev's 1,000-state cap is not a 1,000-question cap: nine wide questions mean up to 9,000 judgments. With at most three evidence versions, deep evaluations are <=60 and six independently reviewed hypotheses ×three versions ×20 candidates are <=360 additional calls; total planned Jev evaluations <=1,420 before any retries. No live retries until separate provider call/token/spend policy is frozen. LLM generation occurs at most twice/candidate with total six hypotheses, and template dossiers avoid an extra model call. Actual provider prices, service quotas and cancellation billing are **UNVERIFIED** from supplied material for the intended live configuration. Display unknown cost as unknown, never $0.

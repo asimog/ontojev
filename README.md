@@ -1,22 +1,26 @@
-# CancerJEV — Phase 1 offline execution architecture
+# CancerJEV — open-access GDC evidence with deterministic science and Jev judgment
 
-CancerJEV Phase 1 is an implemented, deliberately synthetic demonstration of a durable autonomous-research execution loop. It proves local process ownership, one canonical `RunEvent` stream, SQLite projections, immutable artifacts, a read-only FastAPI API, and a live Next.js App Router interface.
-
-It does **not** analyze cancer data. Every fixture surface is marked `FAKE` / `SYNTHETIC`.
+CancerJEV retrieves public, open-access GDC data through one bounded anonymous transport, measures it with deterministic scientific methods, and asks Jev narrow semantic questions about the resulting compact state. Python policy decides what happens next. There is no LLM hypothesis generation, no GDC authentication, and no GDC file download.
 
 ```text
-deterministic demo fixture
+public open GDC (no authentication)
         ↓
-canonical RunEvent commits
+bounded API transport + immutable captures
         ↓
-SQLite + immutable local artifacts
+strict normalization + population validation
         ↓
-FastAPI read API
+deterministic science (counts, coverage, log2 summaries)
         ↓
-Next.js polling UI
+real StatisticalState (per gene)
         ↓
-synthetic JSON + Markdown dossier
+compact versioned Jev projection
+        ↓
+Jev wide semantic judgment (probability / choice)
+        ↓
+explicit Python policy → bounded candidate admission
 ```
+
+Phase 1 remains available as an offline synthetic vertical slice (`--fixture demo`) and is never mixed with live records. Phases 4–7 (deep evidence, follow-ups, generative hypotheses, autoresearch) are documented only.
 
 ## Run locally
 
@@ -27,53 +31,74 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
 
-# Terminal 1
+# Terminal 1 — read API
 $env:CANCERJEV_DATA_DIR="$PWD\data"
-python -m uvicorn apps.api.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn apps.api.main:create_app --factory --host 127.0.0.1 --port 8000
 
-# Terminal 2
+# Terminal 2 — UI
 cd apps/web
 npm ci
 npm run dev
 
-# Terminal 3, repository root
+# Terminal 3 — real bounded open-access sweep (no credentials)
 $env:CANCERJEV_DATA_DIR="$PWD\data"
+python -m cancerjev run --live
+
+# Optional: Phase 3 wide Jev evaluation (server-side key only)
+$env:TYPESAFE_API_KEY="<your TypeSafe key>"
+python -m cancerjev run --live --jev
+
+# Fixture demonstration (offline, synthetic)
 python -m cancerjev run --fixture demo
+
+# Bounded anonymous contract capture
+python -m cancerjev probe
 ```
 
-Open `http://localhost:3000/runs`. The UI automatically observes the process through the shared database; the research process never writes through FastAPI.
+Open `http://localhost:3000/runs`. The UI shows deterministic measurements and Jev judgments in clearly separated panels; the research process never writes through FastAPI.
 
 Configuration:
 
 - `CANCERJEV_DATA_DIR` — local persistence directory; defaults to `./data`.
 - `CANCERJEV_FIXTURE_STAGE_DELAY_MS` — demo-only delay; defaults to `500`, tests use `0`.
-- `CANCERJEV_RUN_INTERVAL_MINUTES` — fake worker interval; defaults to `60`.
+- `CANCERJEV_RUN_INTERVAL_MINUTES` — worker interval; defaults to `60`.
 - `CANCERJEV_WEB_ORIGIN` — local CORS origin; defaults to `http://localhost:3000`.
+- `CANCERJEV_GDC_MAX_REQUESTS` / `CANCERJEV_GDC_MAX_BYTES` / `CANCERJEV_GDC_PER_RESPONSE_BYTES` — application caps; defaults `150`, `64 MiB`, `8 MiB`.
+- `CANCERJEV_GDC_CACHE` — set `0` to disable the normalized response cache.
+- `CANCERJEV_JEV_MODEL` — pinned model; defaults to `jev-1.13.0`.
+- `TYPESAFE_API_KEY` — required only for `--jev`; read at call time and never persisted or logged.
 - `NEXT_PUBLIC_CANCERJEV_API_URL` — browser API URL; defaults to `http://127.0.0.1:8000`.
 
-`python -m cancerjev run` without `--fixture demo` fails clearly. It never substitutes fixture results for a requested live run. Continuous synthetic mode is `python -m cancerjev worker --fixture demo`; only one research process may own a data directory.
+`--jev` requires `--live`; the fixture path never constructs a live provider. Persistence schema is version 3; earlier data directories are intentionally not migrated and should be moved or deleted.
 
-Persistence schema is version 2. A `data/` directory created by an earlier Phase 1 revision is intentionally not migrated: startup fails with a clear `unsupported database schema` error, and the directory should be moved or deleted. Phase 1 data is synthetic and disposable.
+## Open-access guarantees
+
+- One transport owns every GDC request; it has no credential parameter and never constructs `Authorization` or `X-Auth-Token`.
+- Host, endpoints and methods are allowlisted; `/data`, manifests and file downloads are not routable; redirects are refused; responses are size-capped and retained with SHA-256.
+- File metadata queries always filter `access=open`; a controlled record fails closed and is never admitted to science.
+- 401/403 become `UNAVAILABLE_ACCESS` with no retry and no credential lookup.
+- Adversarial tests enforce all of the above; live captures record `authentication_headers_sent: []`.
 
 ## Verification
 
 ```powershell
 python -m ruff check cancerjev apps tests
-python -m pytest
+python -m pytest                      # 154 offline tests; live markers excluded by default
+python -m pytest -m live_gdc          # opt-in bounded live contract probe
+python -m pytest -m live_jev          # opt-in live Jev evaluation (needs TYPESAFE_API_KEY)
 
 cd apps/web
-npm ci
 npm run typecheck
 npm run build
-npm run test:e2e  # requires the API and web dev servers described above
+npm run test:e2e                      # requires the API and web dev servers above
 ```
 
-The default Python suite blocks outbound network connections. No test needs Docker, PostgreSQL, Redis, GDC, TypeSafe/Jev, OpenRouter, or secrets.
+The default Python suite blocks outbound network connections except loopback test servers. No default test needs Docker, PostgreSQL, Redis, GDC, TypeSafe/Jev, OpenRouter, or secrets.
 
-Phase 1 repair verification (2026-09-22): Ruff passed; Python suite 43 passed / 0 failed / 0 skipped on Windows (Python 3.14.3) and on Linux (WSL Ubuntu, Python 3.11.15); `npm ci` 0 vulnerabilities; TypeScript passed; production build passed; `npm run test:e2e` 4 passed on four consecutive runs (three required plus one after reinstall). Exact commands and results are recorded in [implementation status](docs/IMPLEMENTATION_STATUS.md); the independent audit of the previous revision is preserved in [Phase 1 verification](docs/PHASE_1_VERIFICATION.md).
+Verified 2026-09-22: Ruff passed; 154 offline tests passed; TypeScript passed; production build passed; 4 browser tests passed; live Phase 2 run completed with 10 real states and zero Jev/LLM calls; live Phase 3 run produced 10 real `jev-1.13.0` evaluations with 3 bounded promotions; a second Phase 3 run was served entirely from cache with zero provider calls. Full evidence, SHAs and limitations are in [implementation status](docs/IMPLEMENTATION_STATUS.md).
 
 ## Scope boundary
 
-Phase 2 is not approved. There is no real GDC client/cache/attempt ledger, TypeSafe/Jev adapter, LLM adapter, production statistical method, provider credential path, or deployment coupling. The future scientific contracts remain in `docs/`; fixture shortcuts do not redefine them.
+Phase 4+ is not implemented: no deep evidence revisions, no registered follow-up execution, no generative hypotheses, no LLM calls. Jev judgments are semantic policy inputs, never measurements, significance, or clinical claims. Scientific contracts live in `docs/`, including the central [GDC × Jev fit analysis](docs/GDC_JEV_FIT_ANALYSIS.md).
 
-See [implementation status](docs/IMPLEMENTATION_STATUS.md), [architecture](docs/ARCHITECTURE.md), [API contract](docs/API_CONTRACT.md), and [testing contract](docs/TESTING.md).
+See [architecture](docs/ARCHITECTURE.md), [domain models](docs/DOMAIN_MODELS.md), [scientific invariants](docs/SCIENTIFIC_INVARIANTS.md), [GDC strategy](docs/GDC_STRATEGY.md), [GDC budgets](docs/GDC_BUDGETS.md), [Jev design](docs/JEV_DESIGN.md), [question architecture](docs/JEV_QUESTIONS.md), [research loop](docs/RESEARCH_LOOP.md), [API contract](docs/API_CONTRACT.md), [UI spec](docs/UI_SPEC.md), and [testing contract](docs/TESTING.md).

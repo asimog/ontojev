@@ -1,4 +1,4 @@
-name: Phase 1 offline verification
+name: Phase 2/3 offline verification
 
 on:
   push:
@@ -60,7 +60,7 @@ jobs:
           NEXT_PUBLIC_CANCERJEV_API_URL: http://127.0.0.1:8000
         run: |
           cd ../..
-          python -m uvicorn apps.api.main:app --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/api.log" 2>&1 &
+          python -m uvicorn apps.api.main:create_app --factory --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/api.log" 2>&1 &
           cd apps/web
           npm run dev > "$RUNNER_TEMP/web.log" 2>&1 &
           for attempt in {1..30}; do

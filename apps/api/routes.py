@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 from uuid import UUID
@@ -13,6 +14,7 @@ from cancerjev.storage.database import SCHEMA_VERSION
 from cancerjev.storage.repositories import Repository
 
 router = APIRouter()
+API_VERSION = "2.0.0"
 
 
 def services(request: Request) -> tuple[Repository, ArtifactStore]:
@@ -35,15 +37,22 @@ def system(request: Request):
         worker = connection.execute("SELECT * FROM worker_status WHERE singleton=1").fetchone()
         active = connection.execute("SELECT run_id FROM research_runs WHERE status IN ('PENDING','RUNNING') ORDER BY created_at DESC LIMIT 1").fetchone()
         artifacts = connection.execute("SELECT COUNT(*) AS count FROM artifacts").fetchone()
+        cache_entries = connection.execute("SELECT COUNT(*) AS count FROM gdc_cache").fetchone()["count"]
+        jev_cache_entries = connection.execute("SELECT COUNT(*) AS count FROM jev_cache").fetchone()["count"]
+        cache_bytes = connection.execute("SELECT COALESCE(SUM(size_bytes),0) AS total FROM gdc_cache").fetchone()["total"]
     heartbeat_at = worker["heartbeat_at"] if worker else None
     fresh = None
     if active and heartbeat_at:
         fresh = (datetime.now(UTC) - datetime.fromisoformat(heartbeat_at.replace("Z", "+00:00"))).total_seconds() <= 60
     return {
         "schema_version": SCHEMA_VERSION,
-        "phase": 1,
-        "mode": "FAKE_ONLY",
-        "providers": {"gdc": False, "jev": False, "llm": False},
+        "phase": 3,
+        "mode": "LIVE_AND_FIXTURE",
+        "providers": {
+            "gdc": True,
+            "jev": bool(os.getenv("TYPESAFE_API_KEY")),
+            "llm": False,
+        },
         "worker": {"owner_id": worker["owner_id"], "heartbeat_at": heartbeat_at, "version": worker["version"], "fresh": fresh} if worker else None,
         "active_run_id": active["run_id"] if active else None,
         "data": {
@@ -51,10 +60,21 @@ def system(request: Request):
             "database_bytes": settings.database_path.stat().st_size if settings.database_path.exists() else 0,
             "artifact_files": artifacts["count"],
         },
-        "versions": {"api": "1.0.0", "schema": SCHEMA_VERSION, "worker": worker["version"] if worker else None},
-        "budget_defaults": {"gdc_requests": None, "gdc_bytes": None, "reason": "No live provider budgets exist in Phase 1 fixture mode."},
-        "cursor": {"present": False, "reason": "No discovery cursor exists in Phase 1 fixture mode."},
-        "cache": {"entries": 0, "reason": "The GDC cache is Phase 2."},
+        "versions": {"api": API_VERSION, "schema": SCHEMA_VERSION, "worker": worker["version"] if worker else None},
+        "budget_defaults": {
+            "gdc_requests": settings.gdc_max_requests,
+            "gdc_bytes": settings.gdc_max_bytes,
+            "per_response_bytes": settings.gdc_per_response_bytes,
+            "max_case_ids": 250,
+            "max_gene_ids": 100,
+            "reason": "Application caps enforced by GDCTransport; not provider guarantees.",
+        },
+        "cursor": {"present": False, "reason": "Phase 2 bounded sweeps are self-contained and use no cross-run discovery cursor."},
+        "cache": {
+            "entries": cache_entries, "bytes": cache_bytes,
+            "jev_entries": jev_cache_entries,
+            "reason": None,
+        },
     }
 
 
@@ -104,6 +124,47 @@ def candidates(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1,
 @router.get("/api/runs/{run_id}/states")
 def states(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None, disposition: str | None = None):
     return child_list("statistical_states", run_id, request, limit, cursor, {"disposition": disposition})
+
+
+@router.get("/api/states/{state_id}")
+def state_detail(state_id: UUID, request: Request):
+    repository, artifacts = services(request)
+    row = repository.get_state(str(state_id))
+    if not row:
+        raise HTTPException(404, detail="state not found")
+    metadata = repository.artifact(row["artifact_id"])
+    if not metadata:
+        raise HTTPException(503, detail="state artifact metadata missing")
+    try:
+        content = artifacts.read(metadata["relative_path"], metadata["sha256"])
+    except (OSError, ValueError) as exc:
+        raise HTTPException(503, detail="state artifact unavailable or corrupt") from exc
+    headers = {"ETag": f'"{metadata["sha256"]}"', "X-Artifact-Id": metadata["artifact_id"], "X-Artifact-SHA256": metadata["sha256"]}
+    return JSONResponse(json.loads(content), headers=headers)
+
+
+@router.get("/api/runs/{run_id}/projections")
+def projections(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None):
+    return child_list("jev_projections", run_id, request, limit, cursor, {})
+
+
+@router.get("/api/runs/{run_id}/rankings")
+def rankings(run_id: UUID, request: Request):
+    repository, artifacts = services(request)
+    if not repository.get_run(str(run_id)):
+        raise HTTPException(404, detail="run not found")
+    result: dict[str, object] = {"baseline": None, "jev": None}
+    with repository.database.read() as connection:
+        rows = connection.execute(
+            "SELECT * FROM artifacts WHERE run_id=? AND purpose='wide-ranking'", (str(run_id),),
+        ).fetchall()
+    for row in rows:
+        key = "baseline" if row["relative_path"].endswith("baseline_ranking.json") else "jev"
+        try:
+            result[key] = json.loads(artifacts.read(row["relative_path"], row["sha256"]))
+        except (OSError, ValueError):
+            result[key] = None
+    return result
 
 
 @router.get("/api/runs/{run_id}/evaluations")

@@ -1,0 +1,46 @@
+{
+  "authentication_headers_sent": [],
+  "body_bytes_read": 453,
+  "body_sha256": "cce04dc92261744a4c0a8be3e15077c6b0e1b325e3ae3ae96dfdfadd39d0011f",
+  "completeness": "COMPLETE",
+  "endpoint": "/analysis/top_mutated_cases_by_gene",
+  "error": null,
+  "http_status": 200,
+  "latency_ms": 1414,
+  "method": "GET",
+  "normalized_body": null,
+  "normalized_params": {
+    "fields": "case_id,submitter_id",
+    "gene_ids": "ENSG00000141510",
+    "size": "3"
+  },
+  "parser_version": "research-probe-1",
+  "per_response_cap": 524288,
+  "probe_name": "top_mutated_cases_by_gene_tp53",
+  "request_headers_sent": {
+    "Accept": "application/json",
+    "Accept-Encoding": "identity",
+    "User-Agent": "CancerJEV-contract-probe/0.1 (research; anonymous)"
+  },
+  "response_headers": {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "Content-Disposition",
+    "connection": "close",
+    "content-length": "453",
+    "content-type": "application/json",
+    "date": "Tue, 22 Sep 2026 08:29:08 GMT",
+    "server": "Apache",
+    "strict-transport-security": "max-age=63072001; includeSubdomains; preload",
+    "vary": "Accept-Encoding",
+    "x-frame-options": "SAMEORIGIN",
+    "x-gdc-commit": "8f7c2a51ab0084b216ad1b62a3fae8b945439c53",
+    "x-gdc-data_release": "Data Release 46.0 - August 10, 2026",
+    "x-gdc-data_release_version": "{'major': 46, 'minor': 0, 'release_date': '2026-08-10'}",
+    "x-gdc-status": "OK",
+    "x-gdc-tag": "8.5.0",
+    "x-gdc-version": "1"
+  },
+  "response_truncated_by_probe_cap": false,
+  "retrieved_at": "2026-09-22T08:29:07.218020Z",
+  "url": "https://api.gdc.cancer.gov/analysis/top_mutated_cases_by_gene?gene_ids=ENSG00000141510&size=3&fields=case_id%2Csubmitter_id"
+}

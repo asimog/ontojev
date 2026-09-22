@@ -1,0 +1,83 @@
+{
+  "authentication_headers_sent": [],
+  "body_bytes_read": 131,
+  "body_sha256": "90fea5e2e92721d716a3074ee7cba4530cdf68dca423512ef00940f810c70b1e",
+  "completeness": "COMPLETE",
+  "endpoint": "/analysis/survival",
+  "error": null,
+  "http_status": 200,
+  "latency_ms": 1112,
+  "method": "POST",
+  "normalized_body": {
+    "filters": [
+      {
+        "content": [
+          {
+            "content": {
+              "field": "case.project.project_id",
+              "value": [
+                "TCGA-BRCA"
+              ]
+            },
+            "op": "in"
+          },
+          {
+            "content": {
+              "field": "case.ssm.consequence.transcript.gene.symbol",
+              "value": [
+                "TP53"
+              ]
+            },
+            "op": "in"
+          }
+        ],
+        "op": "and"
+      },
+      {
+        "content": [
+          {
+            "content": {
+              "field": "case.project.project_id",
+              "value": [
+                "TCGA-BRCA"
+              ]
+            },
+            "op": "in"
+          }
+        ],
+        "op": "and"
+      }
+    ]
+  },
+  "normalized_params": null,
+  "parser_version": "research-probe-1",
+  "per_response_cap": 524288,
+  "probe_name": "survival_two_groups",
+  "request_headers_sent": {
+    "Accept": "application/json",
+    "Accept-Encoding": "identity",
+    "Content-Type": "application/json",
+    "User-Agent": "CancerJEV-contract-probe/0.1 (research; anonymous)"
+  },
+  "response_headers": {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "Content-Disposition",
+    "connection": "close",
+    "content-length": "131",
+    "content-type": "application/json",
+    "date": "Tue, 22 Sep 2026 08:30:52 GMT",
+    "server": "Apache",
+    "strict-transport-security": "max-age=63072001; includeSubdomains; preload",
+    "vary": "Accept-Encoding",
+    "x-frame-options": "SAMEORIGIN",
+    "x-gdc-commit": "8f7c2a51ab0084b216ad1b62a3fae8b945439c53",
+    "x-gdc-data_release": "Data Release 46.0 - August 10, 2026",
+    "x-gdc-data_release_version": "{'major': 46, 'minor': 0, 'release_date': '2026-08-10'}",
+    "x-gdc-status": "OK",
+    "x-gdc-tag": "8.5.0",
+    "x-gdc-version": "1"
+  },
+  "response_truncated_by_probe_cap": false,
+  "retrieved_at": "2026-09-22T08:30:51.355088Z",
+  "url": "https://api.gdc.cancer.gov/analysis/survival"
+}

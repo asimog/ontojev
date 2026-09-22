@@ -1,0 +1,45 @@
+{
+  "authentication_headers_sent": [],
+  "body_bytes_read": 355,
+  "body_sha256": "9785419666e5e20c78a781c6dcab0fd18fcfebf101148df2452501509e1aac1d",
+  "completeness": "COMPLETE",
+  "endpoint": "/genes",
+  "error": null,
+  "http_status": 200,
+  "latency_ms": 1156,
+  "method": "GET",
+  "normalized_body": null,
+  "normalized_params": {
+    "fields": "gene_id,symbol,name,biotype,chromosome,start,end,is_cancer_gene_census",
+    "filters": "{\"op\": \"in\", \"content\": {\"field\": \"symbol\", \"value\": [\"TP53\"]}}"
+  },
+  "parser_version": "research-probe-1",
+  "per_response_cap": 524288,
+  "probe_name": "genes_tp53",
+  "request_headers_sent": {
+    "Accept": "application/json",
+    "Accept-Encoding": "identity",
+    "User-Agent": "CancerJEV-contract-probe/0.1 (research; anonymous)"
+  },
+  "response_headers": {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "Content-Disposition",
+    "connection": "close",
+    "content-length": "355",
+    "content-type": "application/json",
+    "date": "Tue, 22 Sep 2026 08:26:11 GMT",
+    "server": "Apache",
+    "strict-transport-security": "max-age=63072001; includeSubdomains; preload",
+    "vary": "Accept-Encoding",
+    "x-frame-options": "SAMEORIGIN",
+    "x-gdc-commit": "8f7c2a51ab0084b216ad1b62a3fae8b945439c53",
+    "x-gdc-data_release": "Data Release 46.0 - August 10, 2026",
+    "x-gdc-data_release_version": "{'major': 46, 'minor': 0, 'release_date': '2026-08-10'}",
+    "x-gdc-status": "OK",
+    "x-gdc-tag": "8.5.0",
+    "x-gdc-version": "1"
+  },
+  "response_truncated_by_probe_cap": false,
+  "retrieved_at": "2026-09-22T08:26:10.265958Z",
+  "url": "https://api.gdc.cancer.gov/genes?filters=%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22symbol%22%2C+%22value%22%3A+%5B%22TP53%22%5D%7D%7D&fields=gene_id%2Csymbol%2Cname%2Cbiotype%2Cchromosome%2Cstart%2Cend%2Cis_cancer_gene_census"
+}

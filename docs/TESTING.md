@@ -1,6 +1,10 @@
 # Verification strategy
 
-This is a test plan, not a report of executed application tests. Phase 0 has no application runtime. Use focused tests first, then the full relevant offline checks once a phase is implemented. No default test, build or CI command contacts GDC, TypeSafe or an LLM. Executed Phase 1 results (including the independent audit that failed the prior revision and the repair verification) live in IMPLEMENTATION_STATUS.md and PHASE_1_VERIFICATION.md.
+This is the test plan for the implemented phases. Phase 1 (offline fixture slice), Phase 2 (real open GDC evidence) and Phase 3 (real Jev wide evaluation) are implemented; Phase 4+ remains a plan. Use focused tests first, then the full relevant offline checks. No default test, build or CI command contacts GDC, TypeSafe or an LLM. Executed results live in IMPLEMENTATION_STATUS.md.
+
+## Default offline boundary
+
+The autouse test guard denies every outbound socket connection whose host is not loopback. Loopback is permitted only so transport tests can run adversarial local HTTP servers; GDC's host is never reachable from the default suite. Tests marked `live_gdc` or `live_jev` are opt-in, disabled by default, and each has explicit per-test budgets. Fixture mode must not construct a live provider even if credentials happen to be present in the environment.
 
 ## Phase 1 gates
 
@@ -16,9 +20,33 @@ This is a test plan, not a report of executed application tests. Phase 0 has no 
 | CLI/UI consistency | Compare event IDs/sequences from committed store, captured CLI JSON rendering, and API; both renderers consume identical records |
 | Offline boundary | Deny outbound provider/network calls in tests; fixture mode cannot construct a live provider even if credentials happen to be in environment |
 
-Acceptance requires all twelve Phase 1 criteria from the master specification, including worker-restart integrity and no Postgres/Redis/Docker dependency. Browser smoke is essential, not replaced by typecheck. Terminal status and dossier links must be tested under polling races.
+## Phase 2 gates (real GDC)
 
-Small CI after implementation: Python install, Ruff, offline pytest; frontend npm ci, TypeScript typecheck, production build. Browser test can run against local API/web fixtures; no provider credentials. Cache setup dependencies, not results that could hide missing integration. No live calls in ordinary CI.
+| Layer | Required proof |
+|---|---|
+| Transport | Host and endpoint allowlists; GET/POST method allowlist; no redirect following; per-response cap at cap−1/cap/cap+1; run byte cap under concurrent reservations; request cap at limit and limit+1; page cap; case/gene ID caps; attempt ledger charges every retry and body failure; cache hit performs no network I/O; no larger-cap retry after a limit breach |
+| Open access | No `Authorization`, no `X-Auth-Token`, no token env var read, no credential loader, no `/data` route, `access=controlled` result rejected and never admitted, 401/403 become `UNAVAILABLE_ACCESS` with no credential lookup or retry |
+| Adversarial server | Misleading/missing `Content-Length`, chunked body over cap, huge chunk declaration, partial JSON, compressed response despite identity request, abrupt disconnect, redirect, 401/403, 429 accounting, slow trickle; instrument real read behavior, never mock away read-ahead |
+| Parsers | Real captured response fixtures (from `data/gdc-contract-captures-2026-09-22/`, copied into `tests/contracts/fixtures/` with provenance); unknown/missing fields; changed schema; duplicate IDs; missing cases; nonfinite values; `warnings.fields` surfaced; aggregation completeness fields preserved; absent bucket stays `NOT_OBSERVED` |
+| Science | Duplicate-case handling; matched numerator/denominator rules (never divide unmatched); units; missingness; partial populations; eligibility; estimator definitions; same scientific input → same state hash; changed input/membership/unit/version → changed hash; row permutation invariance |
+| Orchestration | Deterministic scope selection; bounded lane request sequence; real StatisticalStates from the live loop against a replay transport; partial response never treated as complete; budget exhaustion stops admission with a typed event |
+| API/UI | State list and full-state route expose v2 fields with explicit availability; `NOT_OBSERVED` never rendered as zero; zero Jev and zero LLM calls in a Phase 2 run |
+
+## Phase 3 gates (real Jev)
+
+| Layer | Required proof |
+|---|---|
+| Projection | Deterministic bytes from a fixed state; projection hash stable; version and included-field contract persisted; no field recomputed from raw responses |
+| Questions | Definition hash covers wording/criteria/roster; question IDs never sent; applicability computed deterministically; excluded questions absent |
+| Contracts | Noul probability range; Choice chosen value in roster; Choice/Score probability keys match roster/levels and sum to 1; Score level within declared range; confidence range; NaN/Infinity rejected; missing answer, unknown ID, wrong primitive and malformed provider payload all fail closed |
+| Adapter | Provider wire/SDK confined to the adapter; owned contracts everywhere else; requested vs resolved model persisted; usage and latency recorded; provider errors/timeouts preserved without fabricated defaults |
+| Cache | Identity binds projection bytes + question bytes + resolved model + adapter version; policy version excluded; cache hit creates an evaluation with `cache_source_evaluation_id` and zero usage; `FAKE` and `LIVE` caches disjoint |
+| Ranking | Baseline and Jev rankings persisted for the same states; policy deterministic for identical stored evaluations; raw dimensions preserved; promotion bounded; a Jev error defers the state rather than scoring it |
+| UI | Deterministic facts and Jev judgments visibly separated; judgment vectors render full probabilities; no LLM content exists anywhere in the run |
+
+CI after implementation: Python install, Ruff, offline pytest; frontend npm ci, TypeScript typecheck, production build. Browser smoke against a local API with fixture runs; no provider credentials. Cache setup dependencies, not results that could hide missing integration. No live calls in ordinary CI. Never weaken scientific tests to obtain a pass; document any scientific method change and exclusion.
+
+Live tests stay separate behind explicit `live_gdc` and `live_jev` opt-in markers with real resource ceilings: `live_gdc` performs the small bounded contract probe (≤30 requests, ≤8 MiB); `live_jev` evaluates at most a handful of real states with the pinned model and records usage. `live_llm` is reserved for Phase 6 and is not implemented.
 
 ## Later budget/contract tests
 

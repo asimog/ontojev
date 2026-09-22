@@ -19,13 +19,27 @@ correction family and adjustment, missingness handling,
 failure/unsupported states, limitations, provenance requirements
 ```
 
-Initial proposed methods, introduced only after Phase 1:
+Phase 2 registered methods (implemented, `cancerjev/science/methods.py`). Each is descriptive; none computes a p-value, q-value, effect size, or biological direction.
 
-| Method | Minimal scientific contract |
-|---|---|
-| MUTATION_RECURRENCE_V1 | Unique observed affected cases; fraction only with a matched known denominator, N>0. Descriptive first; no invented null, p, or q. Unknown assay callability prevents wild-type interpretation. |
-| EXPRESSION_VARIABILITY_V1 | Valid nonnegative UQFPKM; local log2(x+1); sample SD requires >=2 finite values and is descriptive. Retain source SD separately when estimator convention is unknown. Rank only within explicit examined universe. |
-| STRATIFY_BY_PROJECT_V1 | Recompute per-project contributions, dominant-project share and leave-one-project-out recurrence from held observations; requires >=2 comparable projects. New result/state can support or weaken a dominance hypothesis. Descriptive, no fake p-value. |
+| Method | Purpose | Estimator | Registered? |
+|---|---|---|---|
+| `MUTATION_AFFECTED_CASE_COUNT_V1` | Gene-specific per-project count of cases with an SSM | Provider aggregation bucket count | yes |
+| `PROJECT_SSM_COVERAGE_V1` | Per-project mutation-data availability context | `case_with_ssm` count and project case count retained separately | yes |
+| `EXPRESSION_LOG2_SUMMARY_V1` | Exact-case-set expression location/dispersion | median (n≥1), sample SD (n≥2), min/max of `log2(UQFPKM+1)` | yes |
+| `EXPRESSION_PROVIDER_SUMMARY_V1` | Retain provider expression summary verbatim | provider `log2_uqfpkm_median` / `log2_uqfpkm_stddev`, estimator convention unverified | yes |
+| `PROJECT_DOMINANCE_V1` | Descriptive concentration of affected cases | `max(affected)/sum(affected)` over observed projects | yes |
+| `MUTATION_RECURRENCE_V1` | Fraction with matched denominator | **not registered** | no — no matched denominator exists in open data |
+| `STRATIFY_BY_PROJECT_V1` | Leave-one-project-out recomputation | Phase 4 | no (documented) |
+
+`MUTATION_AFFECTED_CASE_COUNT_V1` — unit `cases`; analysis unit is the case; population is all project cases in the provider’s mutation-indexed universe; duplicate rule is the provider’s unique-case bucket count (locally re-derivable only from occurrence rows, which Phase 2 does not acquire — declared limitation); eligibility is a present aggregation bucket for the project; an absent bucket is `NOT_OBSERVED`, never zero; no sampling (complete provider aggregation over the queried gene set); provenance is the retained response artifact hash, request hash, parser version and `/status` release identity.
+
+`PROJECT_SSM_COVERAGE_V1` — retains `case_with_ssm` and the project’s total case count as separate quantities and never divides them into a callability claim; `case_with_ssm = 0` is a real observed zero for that project’s SSM pipeline availability; a project absent from the response is `NOT_OBSERVED`.
+
+`EXPRESSION_LOG2_SUMMARY_V1` — input is the `/gene_expression/values` TSV with `tsv_units=uqfpkm`; transformation is `log2(x+1)`; median requires ≥1 finite value; sample SD (n−1 denominator) requires ≥2 finite values and is `INSUFFICIENT` otherwise; min/max reported; missing columns are counted, never imputed; non-finite values are excluded before eligibility; no test, interval, null hypothesis or correction family is defined because the method is descriptive; same input bytes and parameters produce the same output hash.
+
+`EXPRESSION_PROVIDER_SUMMARY_V1` — retains provider values unchanged with `source = GENE_SELECTION` and `estimator_note = INFERRED_POPULATION_SD_UNVERIFIED` (live two-case capture: reported 0.29998 matches a population denominator, not sample). The provider summary is corroborating context only and never drives eligibility, thresholds or policy.
+
+`PROJECT_DOMINANCE_V1` — eligibility: ≥2 observed projects and positive total; output is a share in `[0,1]`; `NOT_APPLICABLE` otherwise; descriptive only, with the explicit warning that dominance can be produced by coverage imbalance and does not imply a biological mechanism.
 
 Minimum n above is a computational eligibility condition, not a claim of biological adequacy. Later inferential methods need prospectively specified sample/power limitations. A mutation/expression comparison may use a justified Welch test and Welch-compatible interval; do not copy the old normal `1.96*SE` interval merely because the p-value uses Welch. Continuous CNV/Pearson requires an actual comparable continuous CNV quantity and paired samples; categorical API CNV requires a different declared method.
 

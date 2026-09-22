@@ -58,34 +58,63 @@ A candidate row is created only when selected for deep admission; its NEW → WI
 
 ## StatisticalState
 
+Phase 2 implements **schema version 2** (real GDC). The Phase 0 planning shape above is superseded; CNV fields and any recurrence fraction are deliberately absent because no valid open-access measure exists yet.
+
 ```text
-StatisticalState
-  state_id, schema_version, state_hash, created_at, run_id
-  entity: {gene_id, gene_symbol?, genome_build?}
-  scope: {programs[], projects[], modalities[], workflows[], sample_types[],
-          comparability_groups[]}
-  generation: {lane_ids[], lane_versions[], rank_in_lane?, selection_scope,
-               diversity_stratum, source_hit_refs[]}
+StatisticalState v2 (mode LIVE)
+  state_id, schema_version: 2, state_hash, created_at, run_id
+  entity: {gene_id, gene_symbol, biotype, is_cancer_gene_census, genome_build|null}
+  scope: {programs[], projects[], modalities: ["mutation_counts", "expression_summary"],
+          workflows[], sample_types[], examined_case_frame, comparability_groups[]}
+  generation: {lane_ids[], lane_versions[], discovery: {method_id, examined_genes_n,
+               selection_bias}, rank_in_lane, source_hit_refs[]}
   populations: Population[]
-  mutation: {availability, project_results: MutationSummary[], recurrence}
-  expression: {availability, project_results: ExpressionSummary[], coverage}
-  cnv: {availability, project_results: CNVSummary[]}
-  cross_project: {compared_groups[], recurrence, direction_consistency,
-                  exceptions[], noncomparable_groups[], coverage}
-  quality: {invalid_projects[], insufficient_projects[], missingness[],
-            warnings[], duplicate_checks, finite_checks}
-  tested_context: {examined_genes_ref, examined_genes_hash, lanes[],
-                   hypotheses_tested_ref?, selection_bias, coverage, truncation}
-  provenance: {sources: SourceRef[], methods: MethodRef[], environment_hash}
+  mutation: {availability, project_results: MutationSummary[],
+             coverage: {case_with_ssm: Metric, project_case_count: Metric}}
+  expression: {availability, project_results: ExpressionSummary[],
+               coverage: {cases_with_expression: Metric, examined_cases: Metric}}
+  cross_project: {projects_with_mutation_observation, projects_with_expression_observation,
+                  affected_case_total: Metric, top_project_share: Metric,
+                  expression_median_min: Metric, expression_median_max: Metric,
+                  coverage_imbalance: bool, direction: "NOT_EXAMINED",
+                  noncomparable_groups[], notes[]}
+  quality: {api_warnings[], missingness[], duplicate_checks, finite_checks,
+            truncation, completeness}
+  tested_context: {examined_genes_ref, examined_genes_hash, discovery_method,
+                   selection_bias, coverage}
+  provenance: {gdc_release, sources: SourceRef[], methods: MethodRef[], environment_hash}
 ```
 
-`MutationSummary = {project_id, population_id, mutation_case_count: Metric, mutation_data_denominator: Metric, observed_fraction: Metric, consequence_filter, unique_case_rule, provider_rank_score: Metric|null}`. A provider ranking score is explicitly tagged as ranking metadata and cannot fill a count, p-value, or effect field. Frequencies require matched numerator and denominator filters.
+`MutationSummary = {project_id, population_id, affected_case_count: Metric(unit "cases"), project_case_with_ssm: Metric, project_case_count: Metric, provider_discovery_rank: {rank, score, lane_id}|null}`. A provider ranking score is explicitly tagged as selection metadata and cannot fill a count, fraction, p-value or effect field. An absent project bucket is `NOT_OBSERVED`, never zero. No recurrence fraction is stored because no matched denominator exists (see SCIENTIFIC_INVARIANTS).
 
-`ExpressionSummary = {project_id, population_id, unit, transformation, stddev: Metric, median: Metric, rank: Metric, rank_universe_hash, percentile: Metric, selection_threshold, mapping_status}`. A top-k list cannot supply a genome-wide percentile without the full ranked universe. GDC-returned standard deviation is retained as a provider statistic; its exact estimator convention is UNVERIFIED unless documented.
+`ExpressionSummary = {project_id, population_id, unit: "log2(UQFPKM+1)", transformation: "log2(x+1)", local: {median, sample_sd, minimum, maximum, n_finite, n_missing: Metric, method_id}, provider: {median, stddev: Metric, source: "GENE_SELECTION", estimator_note}, coverage: {cases_with_expression: Metric, examined_cases: Metric}}`. The local summary is the primary evidence; the provider summary is retained verbatim as corroborating context with its estimator convention marked unverified; per-project coverage metrics make expression missingness first-class state.
 
-`CNVSummary = {project_id, population_id, category_definition, amplification_count: Metric, deletion_count: Metric, denominator: Metric, categories_observed[], missing_n, ambiguous_mapping_n}`. Gain is not automatically amplification. Category-to-label mappings are explicit method policy.
+Cross-project direction is `NOT_EXAMINED`: mutation counts and expression dispersion carry no signed, comparable up/down effect. CNV summaries and recurrence fractions are Phase 4+ targets requiring their own methods; the Phase 0 planning shape is preserved only in this paragraph as intent.
 
-Cross-project direction requires an actual signed, comparable measure. Mutation recurrence or expression variance alone has no up/down effect direction. Store NOT_EXAMINED instead of manufacturing a reversal feature.
+Phase 4+ target shapes (documented, not implemented): `CNVSummary = {project_id, population_id, category_definition, amplification_count: Metric, deletion_count: Metric, denominator: Metric, categories_observed[], missing_n, ambiguous_mapping_n}` — Gain is not automatically amplification and category-to-label mappings are explicit method policy; `MutationSummary` gains a matched `observed_fraction` only if a denominator with identical source/filter semantics is established.
+
+## JevStateProjection (Phase 3)
+
+```text
+JevStateProjection
+  projection_id, projection_version: "jev-state-projection-v1", run_id, state_id
+  source_state_hash, projection_hash, artifact_id, included_fields[]
+  payload: {entity, scope, project_observations[], cross_project, missingness[],
+            limitations[], eligible_followups[]}
+```
+
+`project_observations[] = {project_id, cases_examined, cases_with_ssm, cases_with_expression, affected_cases|null, expression_local|null, expression_provider|null}`. Every field derives from deterministic StatisticalState fields; nothing is recomputed from raw responses at projection time. `eligible_followups` is empty until Phase 4 registers executable actions. The projection hash covers the canonical payload bytes and is the cache identity component for inference; routing-policy version is excluded.
+
+## Wide ranking records (Phase 3)
+
+```text
+WideRanking (artifact + event)
+  ranking_id, run_id, policy_version, kind: "BASELINE"|"JEV"
+  entries: [{state_id, state_hash, rank, dimensions{}, admission}]
+  admitted_candidate_ids[], baseline_ranking_ref?, created_at
+```
+
+The baseline ranking is always computed from deterministic dimensions; the Jev ranking is computed from persisted raw judgment vectors. Both are retained so Phase 3 can compare baseline vs baseline+Jev on the same states. Jev never replaces the baseline.
 
 ## EvidenceState
 
@@ -132,7 +161,7 @@ EvidenceState has no writable Jev answer or hypothesis fields. A Jev request env
 
 Content hashes exclude operational UUIDs/timestamps but include schema, scientific inputs, membership, units, context, method/parameters, correction universe and outputs. Keep timestamps separately. Canonical JSON sorts object keys and set-valued IDs, preserves meaningful array order, uses a versioned finite-number encoding, and rejects NaN/Infinity. Byte hashes additionally preserve exact source responses. Identical scientific state can be recognized across runs without conflating differently selected populations.
 
-Phase 1 implements this rule with two explicit identity projections in `cancerjev/domain/identity.py`: `statistical_state_identity_payload` (entity, scope/projects, pattern measurement and unit, quality/missingness, tested context, provenance/methods) and `evidence_state_identity_payload` (entity, source-state content hash, puzzle, observations without operational result ids, project membership, missingness, method/version, limitations, revision). Operational `run_id`/`state_id`/`candidate_id`/`evidence_state_id`/`previous_evidence_state_id` and timestamps are excluded. Artifact byte SHA-256 is separate and always hashes the exact serialized artifact bytes.
+Phase 1 implements this rule with two explicit identity projections in `cancerjev/domain/identity.py`: `statistical_state_identity_payload` (entity, scope/projects, pattern measurement and unit, quality/missingness, tested context, provenance/methods) and `evidence_state_identity_payload` (entity, source-state content hash, puzzle, observations without operational result ids, project membership, missingness, method/version, limitations, revision). Phase 2 extends `statistical_state_identity_payload` to the v2 real-GDC fields (entity identity, project frame, examined populations, mutation counts and coverage, local/provider expression summaries, cross-project descriptives, missingness, discovery/selection context, method versions, source hashes) with the same exclusion rule. Operational `run_id`/`state_id`/`candidate_id`/`evidence_state_id`/`previous_evidence_state_id`, timestamps and provider selection scores are excluded. Artifact byte SHA-256 is separate and always hashes the exact serialized artifact bytes.
 
 
 ## Authoritative dossier sections

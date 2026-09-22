@@ -1,89 +1,108 @@
-# Phase 1 implementation status
+# Implementation status
 
-**DONE:** Phase 0 design, Phase 1 offline synthetic vertical slice, independent audit, and the Phase 1 repair pass. **CURRENT:** locally verified Phase 1 baseline (persistence schema v2). **NEXT:** nothing without explicit Phase 2 approval.
+**DONE:** Phase 0 design, Phase 1 offline synthetic vertical slice (verified), the GDC × Jev fit analysis (`docs/GDC_JEV_FIT_ANALYSIS.md`), Phase 2 real open-access GDC evidence with deterministic StatisticalStates, and Phase 3 real Jev wide evaluation over those states. **CURRENT:** locally verified Phase 2 and Phase 3 against the live public GDC API and the live TypeSafe API. **NEXT:** nothing without explicit approval; Phase 4+ is documented only.
 
-## What exists
+Phase 1 remains available and separate: `run --fixture demo` still produces the 71-event synthetic dossier run with zero provider calls, and fixture and live records are never mixed.
 
-- One Python research process with an OS-held cross-platform exclusive lock.
-- Typed local configuration and idempotent SQLite bootstrap using WAL, foreign keys, a 5-second busy timeout, FULL synchronous research writes, a single `UNIQUE` schema-version row, and explicit `BEFORE UPDATE`/`BEFORE DELETE` triggers for the eight immutable tables.
-- One authoritative `append_event` path: registered-type and schema-version validation, contiguous sequence allocation, idempotency, event insert, projection reduction and commit occur in one short transaction. An unknown event type or version is rejected before a sequence is allocated.
-- Immutable artifacts published through temporary file, flush/fsync, SHA-256 and atomic rename before database registration, with deterministic artifact identity (`uuid5` of path + hash) so retries and crash recovery cannot invent a duplicate identity.
-- Explicit scientific identity projections (`statistical_state_identity_payload`, `evidence_state_identity_payload`) so equivalent fixture science hashes identically across runs; artifact byte SHA-256 remains a separate exact-bytes hash.
-- A deterministic `demo` fixture with 12 synthetic StatisticalStates, varied patterns, contract-valid Noul/Choice/Score shapes (Choice options from the question roster; Score on the 0..4 rubric with legend and expected value), two candidate branches, deep evidence, two competing hypotheses, independent reviews, one registered follow-up and a 25-section dossier.
-- CLI `run --fixture demo`, `worker --fixture demo`, and `show <run_id> [--events]` commands; the summary is machine-readable JSON.
-- Read-only FastAPI routes with incremental bounded event pages, opaque keyset cursors for runs, dossiers and child lists (with `disposition`, `candidate_id`, `purpose` filters), one error envelope for handler and request-validation failures, `Cache-Control: no-store` on `/health` and `/api/*`, CORS-exposed provenance headers, and explicit `input_ref_kind`/`input_ref_id` on evaluations.
-- Next.js 16 App Router routes `/`, `/runs`, `/runs/[runId]`, `/dossiers`, `/dossiers/[dossierId]`, and `/system`, with single-flight polling, bounded backoff, hidden-tab pause, stale-data retention, explicit outage state, budget/usage summaries, typed bounded event details with unknown markers, candidate/iteration event filters, run-scoped state remount on route change, cursor "load more" for runs and dossiers, grouped dossier views with provenance and JSON/Markdown downloads, and durable history.
-- Offline Python tests including CLI/API/store event identity, registered-vocabulary enforcement, scientific-hash stability and sensitivity, immutability triggers, bootstrap concurrency, artifact republish/idempotency, cross-process ownership, interrupted-run reconciliation, and Playwright browser acceptance with a deterministic live-progress design.
+## What exists (Phase 2 additions)
 
-## Repair history (2026-09-22)
+- **One GDC transport** (`cancerjev/gdc/transport.py`): fixed host `api.gdc.cancer.gov`, endpoint/method allowlist, no authentication by construction (no credential parameter, no token loader, no `Authorization`/`X-Auth-Token` path), no redirect following, `Accept-Encoding: identity` with compressed responses rejected, streamed reads with per-response (8 MiB), per-run byte (64 MiB), request (150), page (10/query), case-ID (250) and gene-ID (100) caps, bounded retries for safe GETs only, a persisted attempt ledger, raw-response publication with SHA-256, and a normalized request cache.
+- **Strict parsers** (`cancerjev/gdc/parsers.py`) for the eleven admitted endpoints: required fields and types enforced, `warnings.fields` surfaced, aggregation completeness fields preserved, duplicates and unexpected identifiers rejected, NaN/Infinity rejected, TSV joined by returned labels.
+- **Deterministic methods** (`cancerjev/science/methods.py`): `MUTATION_AFFECTED_CASE_COUNT_V1`, `PROJECT_SSM_COVERAGE_V1`, `EXPRESSION_LOG2_SUMMARY_V1`, `EXPRESSION_PROVIDER_SUMMARY_V1`, `PROJECT_DOMINANCE_V1`, each with the full declaration set (population, duplicate rule, estimator, missingness, limitations, provenance). No p-values, no effect sizes, no recurrence fraction, no biological direction.
+- **Real StatisticalStates**: one per gene, covering per-project affected-case counts, SSM coverage, local `log2(UQFPKM+1)` summaries, provider summaries retained separately, per-project coverage metrics, cross-project descriptives, missingness, and full source provenance with scientific identity hashing.
+- **Live orchestrator** (`cancerjev/research/live.py`): deterministic project scope (8 projects with 50–250 cases), mutation discovery and count lanes, expression availability/provider/local lanes with a no-values guard, state generation, bounded budgets, and typed failure/coverage reporting.
+- **Contract-capture command** (`python -m cancerjev probe`) using the same transport, writing run-scoped capture directories with request metadata, hashes and an index.
+- Persistence schema **3**: `gdc_attempts` (operational ledger), `gdc_cache`, `jev_projections`, `jev_cache`; earlier schema directories fail with an actionable error instead of migrating.
+- New registered events for the GDC lifecycle, scope selection, projections, rankings and evaluation failures; the reducer maintains real GDC request/byte/cache-hit and Jev token usage.
 
-The committed revision `8a3149c` was independently audited and **failed** Phase 1 verification: 1 blocker, 5 major, 13 minor findings (`docs/PHASE_1_VERIFICATION.md` records that audit; it is preserved, not rewritten). The repair pass fixed every actionable finding:
+## What exists (Phase 3 additions)
 
-- **B1** browser acceptance was timing-racy (it waited on the 8-second `/runs` feed while the fixture finished in ~7.5 s). The test now discovers the run through the API, asserts the autonomous card separately, opens the detail page while active with a 2.5 s stage delay, and additionally checks auto-follow, refresh-during-run, and terminal drain.
-- **M1** the artifact path-confinement test was Windows-specific; it now uses platform-neutral traversal/absolute cases plus Windows-only drive/UNC cases and passes on Linux.
-- **M2/N9** dossier provenance headers were invisible to browser JavaScript; CORS now exposes `ETag`, `X-Artifact-Id` and `X-Artifact-SHA256`, and the browser test asserts a real 64-hex digest matching the served response instead of the word "sha256".
-- **M3** unknown RunEvent types/schema versions are now rejected by `REGISTERED_EVENT_TYPES` and a `schema_version` validator before any sequence is consumed.
-- **M4** content hashes no longer include operational UUIDs; equivalent fixture content hashes identically across runs and changes when scientific inputs, units, membership, methods or limitations change.
-- **N1–N13** validation errors use the documented envelope; `/health` is `no-store`; the heartbeat keeps a stable process worker ID instead of a run ID; fixture Jev vectors satisfy their own Choice/Score contracts; CLI `show` emits JSON; the dossier-archive cursor chain stays exhausted; the run feed paginates; run-scoped state resets on route change; SQLite immutability triggers exist; bootstrap closes its connection and cannot duplicate the schema row; artifact republish is idempotent; `jev_evaluations` uses explicit input reference kind/id.
-- **O1–O4** were resolved explicitly: bounded Python ranges without a lockfile are accepted Phase 1 policy; the committed Next.js `AGENTS.md`/`CLAUDE.md` pointers are intentional; `/api/runs/{run_id}` legitimately embeds candidate rows and API_CONTRACT now says so; React StrictMode development duplicate polls are accepted (production is single-flight).
+- **Owned Jev contracts** (`cancerjev/jev/contracts.py`): normalized Noul/Choice/Score answers with fail-closed validation (missing/unknown questions, wrong primitive, out-of-range or non-finite probabilities, roster/distribution mismatch, invalid confidence/legend, non-summing distributions). No defaults are fabricated.
+- **Versioned question set** (`wide-v2`, six questions): warrants, mutation exception, expression exception, coverage explanation, fragility (Noul) and pattern type (Choice, closed six-option roster); deterministic applicability rules; hash over canonical definitions. `multimodal_convergence`, `direction_reversal` and `followup_value` are deliberately excluded because the real state cannot ground them.
+- **Projection** (`jev-state-projection-v1`): compact deterministic JSON built only from state fields, with included-field contract, hard byte cap, and a projection hash used as the inference identity.
+- **One adapter** (`cancerjev/jev/typesafe_adapter.py`): the only module that imports the TypeSafe SDK; converts provider objects to plain data immediately; records requested/resolved model, request id, usage and latency.
+- **JevService** (`cancerjev/jev/service.py`): projection registration, cache identity (`projection hash + question hash + pinned model + adapter version`, policy version excluded), provider call, validation, persistence, and events; cache hits create a new evaluation with `cache_source_evaluation_id` and zero usage.
+- **Deterministic ranking** (`cancerjev/research/ranking.py`): baseline policy (`baseline-wide-v1`) and Jev policy (`wide-policy-v1`) over persisted raw dimensions; both rankings are retained for the same states; bounded promotion (top 3) as `WIDE_EVALUATED` candidates; no deep analysis, hypotheses, follow-ups or LLM.
+- **UI separation**: `DeterministicStatePanel` (measured facts with explicit availability, never a zero for `NOT_OBSERVED`), `WideRankingPanel` (baseline vs Jev side by side), `WideJudgment` (full judgment vectors with applicability, labeled “not a measurement”), plus GDC lifecycle events in the feed.
 
-The stale local `data/cancerjev.db` from the pre-repair revision (schema 1) was deleted; schema 2 intentionally does not migrate older Phase 1 data directories.
+## Documentation pass (2026-09-22)
 
-## Verification record — 2026-09-22 (repair)
+| Source | Revision examined | Use |
+|---|---|---|
+| Live GDC API (anonymous captures) | Data Release 46.0, API tag 8.5.0, commit `8f7c2a51…` | Deployed contract, 30 research captures + probe captures |
+| `NCI-GDC/gdc-docs` | `157cef9dac084ce30720f0ad507cd54017263be7` | Published endpoint/field/pipeline contracts |
+| `NCI-GDC/gdcdatamodel2` | `9c6a046b96c130ea131d2ce2c9160381edd2fcc1` (tag 4.0.3) | Current model design; README replacement statement |
+| `NCI-GDC/gdcdictionary` | `88d66b0fe361aa638977850c180bd9130d705924` (tag 4.0.3 parent) | Targeted schema semantics; confirms `gene`/`ssm`/`cnv` are API-layer entities |
+| `docs.typesafe.ai` (live docs) + installed `typesafe-sdk` 0.7.1 | fetched 2026-09-22 | Current primitives, HTTP/SDK contracts, models, limits |
+| Official pipeline docs (expression, CNV, MAF) | fetched 2026-09-22 | FPKM-UQ definition, impact categories, pipeline semantics |
 
-Commands executed from the repository root unless noted. Results are from the repaired working tree.
+The fit analysis records every endpoint’s open-access review, live contract check and scientific-semantics review, and lists rejected/deferred sources with reasons (`docs/GDC_JEV_FIT_ANALYSIS.md`).
+
+## Phase 2 acceptance record (2026-09-22)
+
+Acceptance run `51a1828f-33d8-47d9-baa3-583fec577b75` — **COMPLETED**, coverage `COMPLETE_FOR_SCOPE`:
+
+- 8 projects selected deterministically (`CDDP_EAGLE-1`, `TCGA-CHOL`, `MP2PRT-WT`, `BEATAML1.0-CRENOLANIB`, `TCGA-UCS`, `RC-PTCL`, `TCGA-DLBC`, `MATCH-I`), release identity `Data Release 46.0 - August 10, 2026`.
+- 49 ledger entries: 21 real network requests (87,353 bytes) + 28 cache hits from the earlier partial sweep; zero 401/403 outcomes.
+- 10 real StatisticalStates (TP53, ARID1A, PRF3, BTG2, SPTA1, …) with per-project counts, `NOT_OBSERVED` preserved for absent buckets, provider ranking quarantined as `provider_discovery_rank`, coverage imbalance flagged, and explicit missingness.
+- Zero Jev calls, zero LLM calls; state identity deterministic (two replay runs produced identical state hashes).
+
+Failure-path evidence: an earlier run failed closed on a provider HTTP 400 (`gene_selection` when no examined case had expression values); the error body was captured, the guard was implemented, and a replay test proves the lane is skipped with `expression NOT_OBSERVED`.
+
+## Phase 3 acceptance record (2026-09-22)
+
+Acceptance run `36e09880-bd72-4a15-af2a-eb3abe6ef266` — **COMPLETED**:
+
+- 10 projections (`jev-state-projection-v1`), 10 real Jev evaluations with model `jev-1.13.0`, question set `wide-v2`, 28,294 input / 2,020 output tokens, ~0.9–1.2 s per call, all six answers validated and all applicability flags recorded.
+- Jev judgments were semantically coherent with the evidence: high `likely_fragile` (0.74–0.78) and `coverage_explains_apparent_difference` (0.79–0.85), `pattern_type = DATA_QUALITY_CONCERN` for all ten states — consistent with the actual coverage imbalance and provider-ranked selection.
+- Both rankings persisted (10 baseline + 10 Jev entries); 3 candidates promoted (`TP53`, `PRPF3`, `TPTE`); zero LLM calls; zero deep analysis.
+- Cache verification run `ea2067d8-48aa-40f0-ba5b-a8eb6da29999`: 0 GDC requests (49 cache hits), 0 Jev provider calls (10 cached evaluations with `cache_source_evaluation_id`), identical promotions.
+
+## Verification record — 2026-09-22
 
 | Gate | Command | Result |
 |---|---|---|
-| Python lint (Windows) | `python -m ruff check cancerjev apps tests` | All checks passed |
-| Python tests (Windows, Python 3.14.3) | `CANCERJEV_FIXTURE_STAGE_DELAY_MS=0 python -m pytest` | 43 passed, 0 failed, 0 errors, 0 skipped (19.8 s; junit XML) |
-| Python lint (Linux) | `python -m ruff check cancerjev apps tests` | All checks passed |
-| Python tests (WSL Ubuntu, Python 3.11.15) | `CANCERJEV_FIXTURE_STAGE_DELAY_MS=0 python -m pytest` | 43 passed, 0 failed, 0 errors, 0 skipped (10.8 s; junit XML) |
-| Frontend install | `npm ci` (in `apps/web`) | 0 vulnerabilities |
+| Python lint | `.venv\Scripts\python -m ruff check cancerjev apps tests` | All checks passed |
+| Offline suite | `python -m pytest` (live markers excluded by default) | **154 passed**, 0 failed, 0 skipped |
+| Live markers | `pytest -m live_gdc` / `-m live_jev` | opt-in; the GDC probe passed in a manual run (14 captures, all 200); the Jev live test skips without a key |
 | Frontend typecheck | `npm run typecheck` | Passed |
-| Frontend build | `npm run build` | Passed; all application routes built |
-| Browser acceptance | `npm run test:e2e` (API `127.0.0.1:8100`, web `127.0.0.1:3100`) | 4 passed on four consecutive runs: 45.3 s, 44.9 s, 45.0 s, and 48.1 s after reinstalling `node_modules` |
-| Browser pagination probe | `/runs` and `/dossiers` with 23 runs/dossiers | 20 cards → "Load more" → 23 unique cards, control removed and not resurrected after a poll cycle |
-| CORS provenance probe | `fetch` from the web origin | `X-Artifact-Id` UUID, 64-hex `X-Artifact-SHA256` and `ETag` readable in the browser |
+| Frontend build | `npm run build` | Passed (all routes) |
+| Browser acceptance | `npm run test:e2e` (API 8010, web 3010) | 4 passed (1.2 m) |
+| Live browser inspection | live run detail in the integrated browser | Deterministic panel, candidate admission, baseline vs Jev ranking, 10 judgment panels; 0 console errors |
+| Phase 2 live run | `python -m cancerjev run --live` | COMPLETED, 10 real states, 0 Jev/LLM |
+| Phase 3 live run | `python -m cancerjev run --live --jev` | COMPLETED, 10 real Jev calls, 3 promotions |
+| Cache verification | second `run --live --jev` | 0 provider calls, identical rankings/promotions |
+| Contract probe | `python -m cancerjev probe` | 14 captures, all HTTP 200, anonymous |
 
-Verified browser observations during the acceptance run: the autonomous run card appears in `/runs`; the detail page is opened while active and observes at least two nonterminal stages (`JEV_WIDE`, `FOLLOWUP`); events append incrementally; scrolling up is not force-scrolled and the new-events control appears; a mid-run refresh reconstructs history and resumes polling; the terminal summary drains to all 71 events; the dossier shows the synthetic framing, a real artifact id and digest; the CLI `show --events` event IDs equal the API-served IDs.
+## Provider-use record (cumulative, 2026-09-22)
 
-Not executed locally: the hosted GitHub Actions run (no runner available in this environment) and the exact Python 3.12 / Node 22 combination of the CI jobs. The same commands passed locally on Python 3.14.3 (Windows), Python 3.11.15 (Linux) and Node 24.13.1. **UNVERIFIED:** hosted CI status.
+- **GDC:** 84 real anonymous network attempts (735,207 bytes ≈ 718 KiB) plus 158 cache hits; all open-access metadata/analysis endpoints; zero file downloads; zero controlled records admitted; zero authentication headers.
+- **Jev / TypeSafe:** 10 real provider calls (one Phase 3 run), model `jev-1.13.0`, 28,294 input + 2,020 output tokens, no cost field available (unknown).
+- **LLM / OpenRouter:** 0.
+- No GDC credential exists anywhere in the codebase or environment; the TypeSafe key is read only from `TYPESAFE_API_KEY` at call time and is never persisted or logged.
 
-## Provider-use record
+## Open-access and safety record
 
-- GDC = 0
-- Jev / TypeSafe = 0
-- LLM / OpenRouter = 0
-
-Normal project dependencies were downloaded. No provider credential was read or required. Fixture mode remains offline even if provider-like environment variables exist. Application code contains no provider SDK, provider URL or HTTP client.
-
-## Intentional exclusions
-
-No real GDC client, cache, request-attempt ledger, file download, Jev adapter, LLM adapter, scientific production method, correction-family execution, discovery cursor traversal, deployment integration, queue, lease, fencing, replay, WebSocket, SSE, account system, PostgreSQL, Redis or Docker support exists.
+- Adversarial tests prove: no `Authorization`/`X-Auth-Token` literal in any non-docstring string; no GDC credential environment read; `/data`, `/manifest`, `/slicing` are not routable; file metadata requests always carry `access=open`; a returned `access=controlled` record fails closed; 401/403 become `UNAVAILABLE_ACCESS` with no retry and no credential lookup; a forged endpoint spec is rejected by the transport; loopback-only test hosts with the production host fixed.
+- Live evidence: every captured request recorded `authentication_headers_sent: []`; no run produced a 401/403; the sweep scope contained only open-access projects.
 
 ## Known limitations
 
-- Phase 1 is an execution/observability proof, not a scientific result or provider integration test.
-- Worker scheduling is a simple sleep loop; there is no calendar scheduling or catch-up.
-- SQLite and filesystem publication are ordered, not atomically unified; an orphan file after database failure is acceptable and invisible.
-- Read API authentication is intentionally absent because the process binds locally.
-- Browser acceptance uses synthetic timing with no scientific meaning. Its run-scoped-state test forces an in-app transition with the Next.js development client router, so it requires the dev server; the same invariant is additionally guaranteed structurally by remounting the run detail component per routed run.
-- Persistence schema 2 does not migrate schema 1 Phase 1 data directories; they must be moved or deleted.
-- Local verification used Python 3.14.3 and Node.js 24.13.1 plus a Linux cross-check on Python 3.11.15; CI pins supported Python 3.12 and Node.js 22 and was not executed locally.
+- Mutation evidence is **count-only**: `case_with_ssm` is not a callable-negative denominator, so no recurrence fraction is computed; absent buckets are `NOT_OBSERVED`.
+- Provider expression `median`/`stddev` estimator conventions are undocumented; a live two-case capture is consistent with a population denominator and is recorded as `INFERRED_POPULATION_SD_UNVERIFIED`. Provider summaries never drive policy.
+- The examined gene set is selection-biased (provider top-mutated ranking with a recurrence + round-robin rule); the state records the bias and does not claim a genome-wide scan.
+- Case-to-sample resolution for expression values is **UNVERIFIED**; no sample-matched cross-modal claim is made.
+- GDC release atomicity across requests is **UNVERIFIED**; reproducibility means replay from retained responses and hashes.
+- No seed/temperature control exists for Jev; repeated calls may differ. Cache identity binds projection bytes, question bytes, model and adapter version; policy version is excluded so policy experiments do not rerun inference.
+- The TypeSafe price page is documentation, not a contract; cost stays `null`/unknown because the API exposes no cost field.
+- Schema 3 does not migrate schema 1/2 data directories; they must be moved or deleted (the pre-Phase-2 schema-2 database was preserved as `data/cancerjev.schema2.db.bak`).
+- Hosted CI was not executed locally; the local runs used Python 3.14.3 and Node 24.13.1 while CI pins Python 3.12 and Node 22. **UNVERIFIED:** hosted CI status.
 
-## Deviations and corrections from Phase 0
+## Phase 4–7: documented only, not implemented
 
-- The singular `/api/runs/{run_id}/dossier` design typo was corrected to plural `/dossiers`, as approved.
-- Only the required Phase 1 subset of broader domain models/tables is implemented. Future GDC/scientific fields remain contracts, not fake runtime complexity.
-- Simulated Jev evaluations are counted independently from provider usage so the UI shows fixture judgment activity while truthfully reporting zero Jev calls.
-- Child-list cursor/filter parameters and `/api/system` configuration fields from API_CONTRACT are implemented. Phase 2-only values (live budget caps, discovery cursor, GDC cache) are reported as explicit null/absent with reasons rather than invented data.
-- Provider usage carries nullable token/cost fields; fixture mode leaves them null so cost renders as “unknown”, never a fabricated zero.
-- Dossier JSON and Markdown responses expose the artifact ID and SHA-256 in headers; CORS exposes those headers and the web dossier view renders the served digest as provenance (verified in the browser).
-- The exact Phase 1 detail-event vocabulary is recorded in RUN_EVENTS.md and enforced by `REGISTERED_EVENT_TYPES`.
-- Next.js 16.3 generated a nested `apps/web/AGENTS.md` pointer to bundled version-matched documentation during the verified dev run; it does not alter runtime architecture.
-- The `workers: 1` Playwright setting keeps the acceptance suite deterministic because the tests spawn real research processes against one shared data directory.
+- **Phase 4 — deep deterministic evidence**: `EvidenceState` revisions, registered deterministic follow-ups (`STRATIFY_BY_PROJECT_V1`, `LEAVE_ONE_PROJECT_OUT_V1`, `CHECK_MISSINGNESS_V1`, `OUTLIER_SENSITIVITY_V1`, `COMPARE_MODALITIES_V1`), and a reduced `deep-v2` Jev battery (`docs/JEV_QUESTIONS.md`). No follow-up executes until its scientific contract exists; Jev may rank eligible actions but never invent them.
+- **Phase 5 — dossiers for live candidates**: structured JSON + derived Markdown from real evidence revisions.
+- **Phase 6 — generative hypotheses**: competing hypotheses may only be generated after deterministic evidence and Jev judgments exist; Jev critiques them; an LLM never writes a measured field. `hypothesis-v2` is documented.
+- **Phase 7 — offline autoresearch**: labelled historical states, LLM-proposed candidate questions, Jev evaluation, classical usefulness tests, pruning and human review to version the production question set.
 
-## Phase 2 boundary and recommendation
-
-Do not begin Phase 2 without explicit approval. If approved later, first implement bounded public GDC transport and its attempt/budget ledger with live captures and transport-cap tests. Real Jev/LLM integration and production scientific methods should remain subsequent separately gated work.
+**Confirmation: no LLM hypothesis implementation, no generative model call, and no deep/follow-up execution exists in the codebase.** The only provider calls are the bounded anonymous GDC requests and the Phase 3 Jev evaluations recorded above.

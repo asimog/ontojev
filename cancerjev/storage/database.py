@@ -6,11 +6,12 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 IMMUTABLE_TABLES = (
     "run_events", "artifacts", "statistical_states", "evidence_states",
     "jev_evaluations", "hypotheses", "followup_executions", "dossiers",
+    "jev_projections", "jev_cache", "gdc_cache",
 )
 
 SCHEMA = """
@@ -81,6 +82,32 @@ CREATE INDEX IF NOT EXISTS idx_dossiers_created ON dossiers(created_at DESC,doss
 CREATE TABLE IF NOT EXISTS worker_status(
  singleton INTEGER PRIMARY KEY CHECK(singleton=1), owner_id TEXT, heartbeat_at TEXT, version TEXT
 );
+CREATE TABLE IF NOT EXISTS gdc_attempts(
+ request_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, logical_query_id TEXT NOT NULL,
+ attempt_no INTEGER NOT NULL, method TEXT NOT NULL, endpoint TEXT NOT NULL,
+ request_hash TEXT NOT NULL, status TEXT NOT NULL, reserved_bytes INTEGER NOT NULL DEFAULT 0,
+ bytes_read INTEGER NOT NULL DEFAULT 0, http_status INTEGER, response_artifact_id TEXT,
+ response_hash TEXT, completeness TEXT, error TEXT, started_at TEXT NOT NULL, finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_gdc_attempts_run ON gdc_attempts(run_id,started_at);
+CREATE INDEX IF NOT EXISTS idx_gdc_attempts_hash ON gdc_attempts(request_hash);
+CREATE TABLE IF NOT EXISTS gdc_cache(
+ request_hash TEXT PRIMARY KEY, method TEXT NOT NULL, endpoint TEXT NOT NULL,
+ response_artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id),
+ response_hash TEXT NOT NULL, size_bytes INTEGER NOT NULL, completeness TEXT NOT NULL,
+ contract_version TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS jev_projections(
+ projection_id TEXT PRIMARY KEY, run_id TEXT NOT NULL,
+ state_id TEXT NOT NULL REFERENCES statistical_states(state_id),
+ projection_version TEXT NOT NULL, source_state_hash TEXT NOT NULL,
+ projection_hash TEXT NOT NULL, artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id),
+ fields_json TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(state_id,projection_version)
+);
+CREATE INDEX IF NOT EXISTS idx_jev_projections_run ON jev_projections(run_id,created_at);
+CREATE TABLE IF NOT EXISTS jev_cache(
+ cache_key TEXT PRIMARY KEY, evaluation_id TEXT NOT NULL, created_at TEXT NOT NULL
+);
 """ + "".join(
     f"CREATE TRIGGER IF NOT EXISTS {table}_no_update BEFORE UPDATE ON {table} "
     f"BEGIN SELECT RAISE(ABORT, '{table} is immutable'); END;\n"
@@ -135,7 +162,7 @@ class Database:
             elif row["version"] != SCHEMA_VERSION:
                 raise RuntimeError(
                     f"unsupported database schema {row['version']}; this build expects schema {SCHEMA_VERSION}. "
-                    "Phase 1 fixture data is not migrated: move or delete the existing data directory."
+                    "Earlier-phase data is not migrated: move or delete the existing data directory."
                 )
             connection.commit()
         except Exception:

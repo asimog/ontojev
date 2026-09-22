@@ -1,0 +1,44 @@
+{
+  "authentication_headers_sent": [],
+  "body_bytes_read": 10825,
+  "body_sha256": "40cafb547b465525432fb8fe2b3d1ac77225a692f42336be865984ea08f47e98",
+  "completeness": "COMPLETE",
+  "endpoint": "/analysis/mutated_cases_count_by_project",
+  "error": null,
+  "http_status": 200,
+  "latency_ms": 1020,
+  "method": "GET",
+  "normalized_body": null,
+  "normalized_params": {
+    "size": "0"
+  },
+  "parser_version": "research-probe-1",
+  "per_response_cap": 524288,
+  "probe_name": "mutated_cases_count_all",
+  "request_headers_sent": {
+    "Accept": "application/json",
+    "Accept-Encoding": "identity",
+    "User-Agent": "CancerJEV-contract-probe/0.1 (research; anonymous)"
+  },
+  "response_headers": {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "Content-Disposition",
+    "connection": "close",
+    "content-length": "10825",
+    "content-type": "application/json",
+    "date": "Tue, 22 Sep 2026 08:29:09 GMT",
+    "server": "Apache",
+    "strict-transport-security": "max-age=63072001; includeSubdomains; preload",
+    "vary": "Accept-Encoding",
+    "x-frame-options": "SAMEORIGIN",
+    "x-gdc-commit": "8f7c2a51ab0084b216ad1b62a3fae8b945439c53",
+    "x-gdc-data_release": "Data Release 46.0 - August 10, 2026",
+    "x-gdc-data_release_version": "{'major': 46, 'minor': 0, 'release_date': '2026-08-10'}",
+    "x-gdc-status": "OK",
+    "x-gdc-tag": "8.5.0",
+    "x-gdc-version": "1"
+  },
+  "response_truncated_by_probe_cap": false,
+  "retrieved_at": "2026-09-22T08:29:08.649632Z",
+  "url": "https://api.gdc.cancer.gov/analysis/mutated_cases_count_by_project?size=0"
+}

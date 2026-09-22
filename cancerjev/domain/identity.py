@@ -10,8 +10,47 @@ def statistical_state_identity_payload(state: dict[str, Any]) -> dict[str, Any]:
     """Scientific identity of a StatisticalState.
 
     Operational identity (state_id, run_id) and timestamps are excluded so the
-    same scientific fixture content receives the same content hash in any run.
+    same scientific content receives the same content hash in any run. Source
+    refs are projected to their scientific components: request/response hashes,
+    endpoint, parser version, completeness and release, without retrieval times
+    or artifact ids.
     """
+    if state.get("schema_version") == 2:
+        provenance = state["provenance"]
+        generation = dict(state["generation"])
+        discovery = {key: value for key, value in generation.get("discovery", {}).items()
+                     if key != "examined_genes_ref"}
+        generation["discovery"] = discovery
+        tested_context = {key: value for key, value in state["tested_context"].items()
+                          if key != "examined_genes_ref"}
+        return {
+            "schema_version": 2,
+            "entity": state["entity"],
+            "scope": state["scope"],
+            "generation": generation,
+            "populations": state["populations"],
+            "mutation": state["mutation"],
+            "expression": state["expression"],
+            "cross_project": state["cross_project"],
+            "quality": state["quality"],
+            "tested_context": tested_context,
+            "provenance": {
+                "gdc_release": provenance["gdc_release"],
+                "sources": [
+                    {
+                        "endpoint": source["endpoint"],
+                        "request_hash": source["normalized_request_hash"],
+                        "response_sha256": source["response_sha256"],
+                        "parser_version": source["parser_version"],
+                        "completeness": source["completeness"],
+                        "source_release": source["source_release"],
+                    }
+                    for source in provenance["sources"]
+                ],
+                "methods": provenance["methods"],
+                "environment_hash": provenance["environment_hash"],
+            },
+        }
     return {
         "schema_version": state["schema_version"],
         "fixture_notice": state["fixture_notice"],

@@ -25,10 +25,12 @@ export function SystemStatusPanel() {
       {data && <>
         <p className="muted">{workerLabel(data.worker)}</p>
         <div className="metrics secondary">
-          {Object.entries(data.providers).map(([name, enabled]) => <div key={name}><strong>{enabled ? "enabled" : "0 calls"}</strong><span>{name.toUpperCase()}</span></div>)}
+          {Object.entries(data.providers).map(([name, enabled]) => <div key={name}><strong>{enabled ? "enabled" : "off"}</strong><span>{name.toUpperCase()}</span></div>)}
           <div><strong>{data.data.directory}</strong><span>Data directory</span></div>
           <div><strong>{formatBytes(data.data.database_bytes)}</strong><span>Database</span></div>
           <div><strong>{data.data.artifact_files}</strong><span>Artifacts</span></div>
+          <div><strong>{data.cache.entries}</strong><span>GDC cache entries</span></div>
+          <div><strong>{data.cache.jev_entries ?? 0}</strong><span>Jev cache entries</span></div>
         </div>
       </>}
     </section>

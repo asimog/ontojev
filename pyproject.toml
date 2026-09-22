@@ -4,13 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cancerjev"
-version = "0.1.0"
-description = "Offline Phase 1 CancerJEV execution architecture"
+version = "0.2.0"
+description = "Open-access GDC research architecture with deterministic evidence and Jev semantic judgment"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.116,<1",
   "portalocker>=3.2,<4",
   "pydantic>=2.11,<3",
+  "typesafe-sdk>=0.7.1,<0.8",
   "uvicorn>=0.35,<1",
 ]
 
@@ -22,7 +23,12 @@ packages = ["cancerjev", "apps"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = '-q -m "not live and not live_gdc and not live_jev"'
+markers = [
+  "live: opt-in live provider tests (disabled by default)",
+  "live_gdc: opt-in bounded live GDC contract probe",
+  "live_jev: opt-in live TypeSafe/Jev evaluation",
+]
 
 [tool.ruff]
 target-version = "py312"

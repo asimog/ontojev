@@ -1,0 +1,47 @@
+{
+  "authentication_headers_sent": [],
+  "body_bytes_read": 15189,
+  "body_sha256": "0c6d22778d8966e0e43b1fcff6cfc9e023600d0d49c3c290a7fe3be2d0fb0149",
+  "completeness": "COMPLETE",
+  "endpoint": "/cases",
+  "error": null,
+  "http_status": 200,
+  "latency_ms": 1417,
+  "method": "GET",
+  "normalized_body": null,
+  "normalized_params": {
+    "fields": "case_id,submitter_id,project.project_id,samples.sample_type",
+    "filters": "{\"op\": \"in\", \"content\": {\"field\": \"project.project_id\", \"value\": [\"TCGA-CHOL\"]}}",
+    "size": "250",
+    "sort": "case_id"
+  },
+  "parser_version": "research-probe-1",
+  "per_response_cap": 524288,
+  "probe_name": "cases_250_sorted",
+  "request_headers_sent": {
+    "Accept": "application/json",
+    "Accept-Encoding": "identity",
+    "User-Agent": "CancerJEV-contract-probe/0.1 (research; anonymous)"
+  },
+  "response_headers": {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "Content-Disposition",
+    "connection": "close",
+    "content-length": "15189",
+    "content-type": "application/json",
+    "date": "Tue, 22 Sep 2026 08:34:22 GMT",
+    "server": "Apache",
+    "strict-transport-security": "max-age=63072001; includeSubdomains; preload",
+    "vary": "Accept-Encoding",
+    "x-frame-options": "SAMEORIGIN",
+    "x-gdc-commit": "8f7c2a51ab0084b216ad1b62a3fae8b945439c53",
+    "x-gdc-data_release": "Data Release 46.0 - August 10, 2026",
+    "x-gdc-data_release_version": "{'major': 46, 'minor': 0, 'release_date': '2026-08-10'}",
+    "x-gdc-status": "OK",
+    "x-gdc-tag": "8.5.0",
+    "x-gdc-version": "1"
+  },
+  "response_truncated_by_probe_cap": false,
+  "retrieved_at": "2026-09-22T08:34:21.106128Z",
+  "url": "https://api.gdc.cancer.gov/cases?size=250&sort=case_id&filters=%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22project.project_id%22%2C+%22value%22%3A+%5B%22TCGA-CHOL%22%5D%7D%7D&fields=case_id%2Csubmitter_id%2Cproject.project_id%2Csamples.sample_type"
+}

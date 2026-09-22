@@ -1,6 +1,6 @@
 # Persistence and local runtime
 
-Use Python's SQLite support and explicit small SQL statements. WAL, foreign_keys=ON, busy_timeout=5000 ms, synchronous=FULL for research writes. Keep transactions short; no network calls or artifact serialization inside a database transaction. Schema version is recorded via a small bootstrap/version check; do not port old migrations or introduce an ORM hierarchy. Phase 1 persistence schema version is **2** (`schema_info` holds one `UNIQUE` version row; bootstrap closes its connection and commits its version check in one short `BEGIN IMMEDIATE` transaction). A data directory from an earlier revision fails with an actionable `unsupported database schema 1; this build expects schema 2` error instead of being migrated or silently reset; Phase 1 fixture data is synthetic and disposable.
+Use Python's SQLite support and explicit small SQL statements. WAL, foreign_keys=ON, busy_timeout=5000 ms, synchronous=FULL for research writes. Keep transactions short; no network calls or artifact serialization inside a database transaction. Schema version is recorded via a small bootstrap/version check; do not port old migrations or introduce an ORM hierarchy. Phase 2 persistence schema version is **3** (`schema_info` holds one `UNIQUE` version row; bootstrap closes its connection and commits its version check in one short `BEGIN IMMEDIATE` transaction). A data directory from an earlier revision fails with an actionable `unsupported database schema 2; this build expects schema 3` error instead of being migrated or silently reset; Phase 1 fixture data is synthetic and disposable.
 
 
 API and CLI invoke the same idempotent schema bootstrap before serving/starting, so starting the API first creates an empty readable database and the UI can show “No runs yet.” SQLite serializes this short bootstrap transaction. An incompatible existing schema fails clearly; it is never silently reset. Schema bootstrap does not create a ResearchRun or start research.
@@ -19,19 +19,26 @@ API and CLI invoke the same idempotent schema bootstrap before serving/starting,
 | dossiers | dossier_id PK; candidate_id UNIQUE, run FK, JSON and Markdown artifact FKs |
 | worker_status | one row; owner ID, heartbeat timestamp, version; informational |
 | discovery_cursor | one row/version; roster/cursor artifact and offsets; Phase 1 fixture cursor |
-| gdc_attempts / gdc_cache | later Phase 2 only: attempt ledger and normalized request-to-response index |
+| gdc_attempts | operational GDC ledger: one row per dispatch or cache hit with `request_id` PK, run/logical-query refs, attempt number, method/endpoint, canonical request hash, `RESERVED`/`COMPLETED`/`FAILED`/`CACHE_HIT` status, reserved allowance, charged bytes, HTTP status, response artifact/hash, completeness, error, timestamps. Mutable only through the transport's own ledger functions; the RunEvent stream remains the authority and this table is never a second status source. |
+| gdc_cache | normalized request hash PK → response artifact, response hash, size, endpoint, completeness, parser/contract version, created_at |
+| jev_projections | projection_id PK; run/state refs, projection version, source state hash, projection hash, artifact FK, included-field contract; immutable |
+| jev_cache | inference identity PK (`sha256(projection_hash + question_set_hash + resolved_model + adapter_version)`) → origin evaluation_id; immutable. Routing-policy version is deliberately absent so policy experiments do not rerun inference. |
 
 No generic entity-attribute graph or separate domain database. JSON holds typed complex payloads; scalar columns index actual API queries. Add indexes `(run_id,sequence)`, `(created_at,run_id)`, `(run_id,candidate_id)` and state/evaluation hash lookup as needed. All foreign IDs referenced by an event must already exist or be inserted in that event's transaction.
 
-Immutable records/events disallow UPDATE/DELETE through repository APIs and simple SQLite triggers; corrections create new records. Phase 1 creates `BEFORE UPDATE`/`BEFORE DELETE` triggers for `run_events`, `artifacts`, `statistical_states`, `evidence_states`, `jev_evaluations`, `hypotheses`, `followup_executions` and `dossiers`. Mutable run/candidate projections (`research_runs`, `candidates`) and the informational `worker_status` row remain updatable and are only written through the event commit function (heartbeat excepted). Projection-rebuild tooling uses the same reducer and a controlled local transaction. The worker heartbeat is not an alternative run log.
+Immutable records/events disallow UPDATE/DELETE through repository APIs and simple SQLite triggers; corrections create new records. The trigger set covers `run_events`, `artifacts`, `statistical_states`, `evidence_states`, `jev_evaluations`, `hypotheses`, `followup_executions`, `dossiers`, `jev_projections`, `jev_cache` and `gdc_cache`. Mutable records are only the run/candidate projections (`research_runs`, `candidates`), the informational `worker_status` row, and the operational `gdc_attempts` ledger; all are written only through the event commit function or the transport ledger functions. Projection-rebuild tooling uses the same reducer and a controlled local transaction. The worker heartbeat is not an alternative run log.
 
 ```text
 data/
   cancerjev.db                 # sole status/event authority
   research.lock                # OS-held lock, not an existence-only PID file
-  cache/gdc/<request-hash>/<response-hash>.body  # Phase 2
+  cache/gdc/<request-hash>/<response-hash>.body  # raw bounded responses
   runs/<run-id>/
     statistical_states/<id>.json
+    jev/projections/<id>.json
+    jev/<id>.json
+    wide/baseline_ranking.json
+    wide/jev_ranking.json
     evidence/<id>.json
     jev/<id>.json
     hypotheses/<id>.json

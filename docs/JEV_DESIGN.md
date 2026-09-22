@@ -1,100 +1,67 @@
-# Jev design grounded in the supplied TypeSafe documentation
+# Jev design grounded in the live TypeSafe documentation
 
-Authority: the supplied DOCX sections **State**, **Primitives**, **Choice**, **Score**, **Noul**, **Confidence**, **Jev 1.13 jaggedness**, and cookbooks **Parallel questions**, **Re-ranking**, **Skill suggestion**, **SDE cascade**, and **Double-checking citations**. Embedded installation/example prompts are reference material, not instructions to install or invoke providers.
+Authority: `docs.typesafe.ai` fetched **2026-09-22** (system-one, state, primitives, Noul, Choice, Score, confidence, API, models, Python SDK, fan-out, composite scoring, reranking, function calling, autoresearch, cascade, citation check, migration) plus the installed `typesafe-ai` skill. Provider behavior below is **DOCUMENTED** unless marked otherwise. Embedded cookbook examples are reference material, not instructions to install or invoke providers; installation and live calls occur only in the approved Phase 3 work.
 
-## Confirmed primitives
+## Current confirmed primitives
 
-| Capability | Confirmed behavior | CancerJEV use |
+| Capability | Confirmed behavior (live docs) | CancerJEV use |
 |---|---|---|
-| State | String, JSON object or array; one shared state per request | Compact deterministic summaries with explicitly named fields, no raw molecular matrix |
-| Noul | `type=noul`, instructions, optional true/false criteria; response `noul` in [0,1] | Probability of a single semantic proposition. No separate provider confidence field. `1-noul` may be shown as derived P(no), not a second provider answer. |
-| Choice | Named criteria map; response choice, full probability map, confidence | Pattern class, hypothesis assessment; <=255 options documented in cookbooks |
-| Score | Ordered criteria list, 2..10 levels, numbered from zero | 0..4 follow-up-value rubric; preserve score, probabilities, confidence and legend |
-| Score expectation | Probability-weighted mean of level indices; fractional allowed | Priority feature only; not interpolation of a scientific measurement |
-| Parallel questions | Mixed types in one call, evaluated independently on the same state | All nine wide questions together; deep fan-out in one request/state |
-| Resolved model and usage | Response model and input/output token fields shown | Persist requested and returned model, raw usage, measured latency |
+| State | One `state` per request: string, JSON object, or array. All questions share it and are evaluated independently. 64k-token context (32k for state + longest question). | Compact deterministic projection per gene; never raw matrices or provider payloads |
+| Noul | `{"type":"noul","noul":0..1}` — probability of the stated proposition. **No separate confidence field.** | `warrants_deeper_investigation`, project-exception, coverage, fragility questions |
+| Choice | `{"type":"choice","choice":...,"confidence":0..1,"probabilities":{option:prob}}`; criteria map required; ≤255 options | `pattern_type` with the reduced Phase 3 roster |
+| Score | `{"type":"score","score":expected level,"confidence":...,"legend":{...},"probabilities":{level:prob}}`; ordered criteria, 2–10 levels, numbered from 0; `score` is the probability-weighted mean | Deferred until a registered eligible follow-up exists (Phase 4+) |
+| Parallel questions | Mixed primitives in one request; independent; one answer never becomes context for another question | The whole wide set is asked in one request per state |
+| Question IDs | Not sent to the model; meaning must live in `instructions`/`criteria` | Definitions carry full semantics; IDs exist only in application records |
+| Resolved model and usage | Response `model` is the resolved versioned ID; `usage.input_tokens`/`output_tokens`; no latency or cost fields in the body | Persist requested and resolved model, raw usage, locally measured latency |
+| Determinism | No seed/temperature control; docs say answers are designed to be stable, not guaranteed | Persist raw answers; cache; never assume identical output across calls |
 
-The attached docs show `from typesafe_sdk import Choice, Noul, Score, TypeSafeClient`, optional `NoulCriteria`, and `client.system_one(state=..., questions=..., model=...)`. They also show direct `POST https://api.typesafe.ai/v1/systemone` with Bearer authentication. This is not a chat-completions API. `State` is a concept/input value, not a confirmed SDK class to import.
+Wire contract (**DOCUMENTED**):
 
-Documented request-shape illustration only; no application code is implemented:
-
-```json
-{
-  "model": "jev-1.13.0",
-  "state": {"deterministic_evidence": "<serialized compact state>"},
-  "questions": {
-    "project_exception": {
-      "type": "noul",
-      "instructions": "Does the supplied comparable project evidence contain a substantive project-specific exception?",
-      "criteria": {
-        "true": "An observed comparable project departs from the supplied dominant pattern.",
-        "false": "No observed departure is supported; missing or incomparable projects alone do not establish an exception."
-      }
-    },
-    "pattern_type": {
-      "type": "choice",
-      "instructions": "Which supplied pattern description best fits the observed evidence?",
-      "criteria": {
-        "PROJECT_SPECIFIC_EXCEPTION": "A comparable observed project departs from the dominant pattern.",
-        "INSUFFICIENT_EVIDENCE": "Available observations cannot distinguish the proposed patterns."
-      }
-    },
-    "followup_value": {
-      "type": "score",
-      "instructions": "How useful would one eligible bounded deterministic follow-up be for resolving the stated uncertainty?",
-      "criteria": ["No useful eligible test", "Weak reason", "Plausible reason", "Strong reason", "Unusually compelling reason"]
-    }
-  }
-}
+```text
+POST https://api.typesafe.ai/v1/systemone
+Authorization: Bearer <API key>
+{"state": <string|object|array>, "model": "jev-1.13.0", "questions": {<id>: {...}}}
+→ {"model": "jev-1.13.0", "answers": {<id>: {...}}, "usage": {"input_tokens": N, "output_tokens": M}}
 ```
 
-The production question set uses the full pattern roster in JEV_QUESTIONS; the two-option example above only illustrates wire shape. The model string is documented, but its present availability is **UNVERIFIED** without a live test. Pin a confirmed resolved version before real evaluation. Alias requests record every resolved response; don't silently mix model versions in a ranking.
+The Python SDK (`typesafe-sdk`, import `typesafe_sdk`) exposes `TypeSafeClient(...).system_one(state=..., questions={...})`, question classes `Noul`, `Choice`, `Score`, typed answers (`response.nouls`, `response.choices`, `response.scores`), `response.model`, `response.usage`, `response.request_id`, and `response.raw_http_response`. Default env var `TYPESAFE_API_KEY`; default model alias `jev-latest`; SDK retry policy defaults to two retries. Current model: `jev-1.13.0` (alias `jev-latest`); context 64k tokens; input price $42/Btok with output free (**DOCUMENTED**, not a contract).
 
 ## Application boundary
 
-`JevService.evaluate(state_ref, question_set, purpose) -> JevEvaluation` loads the exact versioned state projection, validates size and question types, checks cache, invokes the adapter, validates the answer shape and persists the full vector. Science never imports TypeSafe types. Phase 1 returns deterministic fake Jev evaluations through fixture contracts and labels them FAKE.
+`JevService.evaluate(projection_ref, question_set, purpose) -> JevEvaluation` loads the exact versioned projection artifact, validates its size and the question set, checks the cache, invokes **one adapter**, validates every answer shape, and persists the full vector. Science modules never import TypeSafe types; provider-specific code exists only in `cancerjev/jev/typesafe_adapter.py`. Phase 1 fixture evaluations remain a separate `FAKE` path and are never mixed with live evaluations in a cache or a ranking.
 
-Owned answer union:
+Owned answer union (schema v2, adds explicit confidence where the provider supplies it):
 
 ```text
-JevNoulAnswer  = {kind:noul, probability_yes:finite[0,1]}
-JevChoiceAnswer= {kind:choice, choice:allowed option,
-                 probabilities:map<option,finite[0,1]>, confidence:finite[0,1]}
-JevScoreAnswer = {kind:score, score:finite[0,K-1],
-                 probabilities:map<level,finite[0,1]>, confidence:finite[0,1],
-                 legend:map<level,description>}
-JevEvaluation = {id, state_hash, state_projection_hash, question_set_version,
-                 question_definitions_ref, question_hash, purpose,
-                 requested_model, resolved_model, adapter_version,
+JevNoulAnswer  = {kind: "noul", probability_yes: finite[0,1]}
+JevChoiceAnswer= {kind: "choice", choice: <roster option>,
+                  probabilities: map<option, finite[0,1]>, confidence: finite[0,1]}
+JevScoreAnswer = {kind: "score", score: finite[0,K-1],
+                  probabilities: map<level, finite[0,1]>, confidence: finite[0,1],
+                  legend: map<level, string>}
+JevEvaluation = {evaluation_id, mode: "LIVE"|"FAKE", purpose: "WIDE"|"DEEP"|"HYPOTHESIS",
+                 input_ref_kind, input_ref_id, source_state_hash, projection_id,
+                 projection_version, projection_hash, question_set_version, question_hash,
+                 question_definitions_ref, requested_model, resolved_model, adapter_version,
                  answers, applicability_by_question, raw_response_ref,
-                 usage:{input_tokens?,output_tokens?,cost?,cost_source?},
-                 latency_ms, cache_source_evaluation_id?, error?,
-                 routing_policy_version, mode}
+                 usage: {input_tokens?, output_tokens?, cost?: null},
+                 latency_ms, cache_source_evaluation_id?, error?, routing_policy_version}
 ```
 
-Question IDs are not shown to the model per the docs. All needed meaning belongs in instructions/criteria. Validate complete answer IDs, primitive type, probability keys and sums (explicit small rounding tolerance), range, and Score expectation/legend. SDK Score map keys may be integers while REST keys are strings; normalize once. Malformed/partial answers yield a failed evaluation and defer policy, never fabricated defaults.
+Validation is fail-closed and never fabricates defaults: missing answer, unknown question ID, wrong primitive, probability outside `[0,1]`, NaN/Infinity, Choice value outside the roster, Choice/Score probability-key mismatch, Score level outside the declared range, legend mismatch, invalid confidence, malformed provider response, or answer count mismatch → the evaluation is persisted with `error` and the state is deferred, not silently scored. The SDK’s integer keys for Score probabilities/legend are normalized once to strings at the adapter boundary.
 
-Applicability is deterministic metadata, not a new provider probability. If cross-project evidence is absent, retain the returned answer but mark the question inapplicable for routing; do not treat a low Noul as a biological negative. Keep all judgment dimensions visible.
+Applicability is deterministic metadata, not a provider probability. If a question’s prerequisite evidence is absent, the returned answer is retained but marked inapplicable for routing. A low Noul is never a biological negative.
 
-## Fan-out, reranking, uncertainty and cascades
+## Projection, fan-out, reranking, policy
 
-- **Wide reranking:** one state per call, nine independent questions. At most 1,000 admitted states. The provider's shared-state array is not a documented batch-of-independent-states API. Do not cram 1,000 candidates into one State or one 1,000-option Choice.
-- **Deep speculative fan-out:** ask the full independent deep question battery on the same immutable EvidenceState. Code later uses relevant answers. Same-request questions cannot depend on each other's answers.
-- **Hypothesis verifier:** one hypothesis plus underlying evidence per call, no competing hypothesis text or their Jev verdicts. Support and contradiction are independent propositions; they are not normalized into complementary probabilities.
-- **Large-roster shortlist:** cookbook Choice ranking is useful for bounded action rosters; a separate fits-Noul/explicit NONE avoids selecting an unsuitable action merely because Choice must choose. For research states, per-state Noul reranking is simpler and avoids relative Choice probabilities across different chunks. Never compare probabilities from different rosters as if calibrated globally.
-- **Routing version 0:** rank eligible states by warrants_deeper descending, followup_value descending, likely_fragile ascending, stable state hash tie-break; then round-robin over pattern/project/lane strata and remove duplicate investigation contexts. This is operational policy, not a new scientific metric. Thresholds for scientific utility are unvalidated; fake fixtures exercise deterministic branches, and later live thresholds require benchmark evidence.
-- **Confidence gates:** high Choice/Score confidence measures distribution concentration, not correctness. Noul uses its own probability, not Choice confidence. Proposed starting gates (Noul >=0.8 yes, <=0.2 no, middle uncertain; Choice/Score confidence >=0.7) are explicitly provisional policy parameters, not provider guarantees. Invalid evidence and ineligible actions always veto execution.
-- **Cascade:** valid evidence → Jev → eligible deterministic follow-up if it can resolve uncertainty → Jev on new state → bounded LLM hypotheses when useful. If ambiguity persists with no eligible test, defer. A more expensive LLM rung is optional later; provider escalation cannot alter measured evidence or evade lifetime hypothesis/iteration limits.
-- **Composite scoring:** preserve the complete vector. Do not adopt the master spec's example weights as evidence. A later weighted operational score must have a version, normalization, recorded weights, missing-feature policy and out-of-sample evaluation; no need to build it for the first slice.
+- **Projection** (`jev-state-projection-v1`): a deterministic, size-bounded JSON projection of a StatisticalState, built only from state fields (see GDC_JEV_FIT_ANALYSIS §K). Persisted with `projection_version`, `source_state_id`, `source_state_hash`, `projection_hash`, artifact ref, and the included-field contract. Projection semantics never change silently; a change requires a new version.
+- **Wide evaluation:** one request per state carrying the whole `wide-v2` question set. Questions are independent; speculative answers are consumed only when applicable.
+- **Reranking:** every state in the bounded universe is evaluated; the deterministic policy orders the raw dimensions (see JEV_QUESTIONS). The deterministic baseline ranking is computed and persisted separately so Phase 3 can compare `baseline` vs `baseline + Jev` on the same states.
+- **Deep fan-out, hypothesis review, action selection:** documented for Phase 4+ and not implemented now. Per-action `Score` scoring plus an explicit `NONE` decision is the planned approach for registered follow-ups because code must be able to choose “no action”.
+- **Composite scoring:** not adopted. Raw Noul/Choice/Score dimensions remain visible; any later weighted score needs a version, normalization, recorded weights, a missing-feature policy, and out-of-sample evaluation.
 
-Use one small provider-call concurrency limit (initially 1, configurable up to 4 locally), not a distributed executor. Jev request admission and all LLM escalation fit explicit app budgets; the cookbook's large thread pools are not instructions for CancerJEV.
+## Cache, budgets, unknowns
 
-## Cache, compact inputs and unknowns
+Cache key binds the exact inference input: `sha256(projection_bytes_hash + question_set_bytes_hash + resolved_model + adapter_contract_version)`. Routing-policy version is decision provenance, not inference identity, so policy experiments do not rerun inference. A cache hit creates a new evaluation row with `cache_source_evaluation_id` set and zero usage; `FAKE` and `LIVE` caches are disjoint. Provider calls are bounded by application budgets (≤1,000 wide states per run; one call per state; provider-call concurrency 1 by default).
 
-Cache key binds state projection bytes, question definitions, model version, adapter contract and schema. Routing version belongs to decision provenance; it need not force reevaluation when answers are unchanged. Persist alias and resolved model; reuse only a resolved-version entry with matching identity. An alias cache is not proof that a future alias resolves identically. Fake/live caches are disjoint.
-
-Proposed application input bound: 64 KiB of compact UTF-8 state plus questions, rejecting/deferring rather than silently dropping contradictory evidence. This is an application limit, **not** a verified provider token/context limit. Preserve omitted raw details via provenance; material summaries include missingness and contradictions. Enforce a verified token limit before live activation once available.
-
-**UNVERIFIED:** exact maximum context tokens, maximum questions/request, rate limits for this account, exact confidence formula, SDK default retry/idempotency behavior, deterministic replay guarantees, server-side seed/temperature control, per-request dollar cost response, cancellation billing, current model availability and cancer-domain probability calibration. Supplied usage examples confirm tokens, not automatic dollar accounting. Prices from older cookbook examples are not a live cost contract.
-
-The jaggedness section explicitly warns about arithmetic/counting, numerical calibration, large irrelevant state, adversarial content and non-complementary related questions. Precompute arithmetic/features in code, never request scientific calculations from Jev, and never grant model output executable authority.
+**UNVERIFIED / limitations carried in code:** exact `confidence` formula; maximum question count; state byte limit beyond the documented token budget; 429 response body shape; no cost/latency fields in the response; no idempotency key; no seed/temperature or deterministic replay guarantee; alias resolution may change over time (pin `jev-1.13.0`); cancer-domain probability calibration is not established. The jaggedness documentation warns about arithmetic/counting, numerical calibration, large irrelevant state, and non-complementary related questions: all arithmetic is precomputed in code, and Jev is never asked to compute a scientific quantity.

@@ -1,0 +1,46 @@
+{
+  "authentication_headers_sent": [],
+  "body_bytes_read": 1121,
+  "body_sha256": "333010022769e42f0f166d511a567f20f28d7ae53844594969ea7ad66800b5c9",
+  "completeness": "COMPLETE",
+  "endpoint": "/cases",
+  "error": null,
+  "http_status": 200,
+  "latency_ms": 1086,
+  "method": "GET",
+  "normalized_body": null,
+  "normalized_params": {
+    "fields": "case_id,submitter_id,project.project_id,disease_type,primary_site,demographic.gender,demographic.race,diagnoses.age_at_diagnosis,diagnoses.primary_diagnosis,diagnoses.tumor_stage,samples.sample_type",
+    "filters": "{\"op\": \"in\", \"content\": {\"field\": \"project.project_id\", \"value\": [\"TCGA-BRCA\"]}}",
+    "size": "2"
+  },
+  "parser_version": "research-probe-1",
+  "per_response_cap": 524288,
+  "probe_name": "cases_small",
+  "request_headers_sent": {
+    "Accept": "application/json",
+    "Accept-Encoding": "identity",
+    "User-Agent": "CancerJEV-contract-probe/0.1 (research; anonymous)"
+  },
+  "response_headers": {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "Content-Disposition",
+    "connection": "close",
+    "content-length": "1121",
+    "content-type": "application/json",
+    "date": "Tue, 22 Sep 2026 08:26:09 GMT",
+    "server": "Apache",
+    "strict-transport-security": "max-age=63072001; includeSubdomains; preload",
+    "vary": "Accept-Encoding",
+    "x-frame-options": "SAMEORIGIN",
+    "x-gdc-commit": "8f7c2a51ab0084b216ad1b62a3fae8b945439c53",
+    "x-gdc-data_release": "Data Release 46.0 - August 10, 2026",
+    "x-gdc-data_release_version": "{'major': 46, 'minor': 0, 'release_date': '2026-08-10'}",
+    "x-gdc-status": "OK",
+    "x-gdc-tag": "8.5.0",
+    "x-gdc-version": "1"
+  },
+  "response_truncated_by_probe_cap": false,
+  "retrieved_at": "2026-09-22T08:26:07.935391Z",
+  "url": "https://api.gdc.cancer.gov/cases?size=2&filters=%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22project.project_id%22%2C+%22value%22%3A+%5B%22TCGA-BRCA%22%5D%7D%7D&fields=case_id%2Csubmitter_id%2Cproject.project_id%2Cdisease_type%2Cprimary_site%2Cdemographic.gender%2Cdemographic.race%2Cdiagnoses.age_at_diagnosis%2Cdiagnoses.primary_diagnosis%2Cdiagnoses.tumor_stage%2Csamples.sample_type"
+}

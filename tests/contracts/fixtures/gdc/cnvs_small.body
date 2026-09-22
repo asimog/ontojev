@@ -1,0 +1,1 @@
+{"data": {"hits": [{"id": "79a7499c-4af2-5e8a-a8f7-f92acbf8e326", "consequence": [{"gene": {"symbol": "GFI1"}}], "gene_level_cn": true, "cnv_change": "Gain", "cnv_id": "79a7499c-4af2-5e8a-a8f7-f92acbf8e326", "cnv_change_5_category": "Amplification"}], "pagination": {"count": 1, "total": 75451, "size": 1, "from": 0, "sort": "", "page": 1, "pages": 75451}}, "warnings": {}}

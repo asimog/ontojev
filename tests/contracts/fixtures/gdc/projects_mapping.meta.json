@@ -1,0 +1,36 @@
+{
+  "authentication_headers_sent": [],
+  "body_bytes_read": 5036,
+  "body_sha256": "abf2586e87e851eadd51a2f3f02fca529b8038b8dd49e90324b070622485f9f4",
+  "completeness": "COMPLETE",
+  "endpoint": "/projects/_mapping",
+  "error": null,
+  "http_status": 200,
+  "latency_ms": 1017,
+  "method": "GET",
+  "normalized_body": null,
+  "normalized_params": null,
+  "parser_version": "research-probe-1",
+  "per_response_cap": 524288,
+  "probe_name": "projects_mapping",
+  "request_headers_sent": {
+    "Accept": "application/json",
+    "Accept-Encoding": "identity",
+    "User-Agent": "CancerJEV-contract-probe/0.1 (research; anonymous)"
+  },
+  "response_headers": {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "Content-Disposition",
+    "connection": "close",
+    "content-length": "5036",
+    "content-type": "application/json",
+    "date": "Tue, 22 Sep 2026 08:46:01 GMT",
+    "server": "Apache",
+    "strict-transport-security": "max-age=63072001; includeSubdomains; preload",
+    "vary": "Accept-Encoding",
+    "x-frame-options": "SAMEORIGIN"
+  },
+  "response_truncated_by_probe_cap": false,
+  "retrieved_at": "2026-09-22T08:46:00.749928Z",
+  "url": "https://api.gdc.cancer.gov/projects/_mapping"
+}

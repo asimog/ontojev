@@ -1,0 +1,36 @@
+{
+  "authentication_headers_sent": [],
+  "body_bytes_read": 221,
+  "body_sha256": "a8b1c69f9cfc678486e1c897aee6d878f47fab9cb4c60eb6818598bbe30a7139",
+  "completeness": "COMPLETE",
+  "endpoint": "/status",
+  "error": null,
+  "http_status": 200,
+  "latency_ms": 1455,
+  "method": "GET",
+  "normalized_body": null,
+  "normalized_params": null,
+  "parser_version": "research-probe-1",
+  "per_response_cap": 524288,
+  "probe_name": "status",
+  "request_headers_sent": {
+    "Accept": "application/json",
+    "Accept-Encoding": "identity",
+    "User-Agent": "CancerJEV-contract-probe/0.1 (research; anonymous)"
+  },
+  "response_headers": {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "Content-Disposition",
+    "connection": "close",
+    "content-length": "221",
+    "content-type": "application/json",
+    "date": "Tue, 22 Sep 2026 08:26:06 GMT",
+    "server": "Apache",
+    "strict-transport-security": "max-age=63072001; includeSubdomains; preload",
+    "vary": "Accept-Encoding",
+    "x-frame-options": "SAMEORIGIN"
+  },
+  "response_truncated_by_probe_cap": false,
+  "retrieved_at": "2026-09-22T08:26:05.411514Z",
+  "url": "https://api.gdc.cancer.gov/status"
+}

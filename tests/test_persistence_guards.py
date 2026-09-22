@@ -64,7 +64,7 @@ def test_bootstrap_is_idempotent_and_closes_its_connection(tmp_path):
         Database(path).bootstrap()
     with Database(path).read() as connection:
         assert connection.execute("SELECT COUNT(*) FROM schema_info").fetchone()[0] == 1
-        assert connection.execute("SELECT version FROM schema_info").fetchone()[0] == 2
+        assert connection.execute("SELECT version FROM schema_info").fetchone()[0] == 3
     path.unlink()  # fails on Windows if bootstrap leaked an open handle
 
 

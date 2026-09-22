@@ -19,7 +19,7 @@ EMPTY_COUNTERS = {
     "jev_evaluations": 0,
 }
 ZERO_USAGE = {
-    "gdc_requests": 0, "gdc_bytes": 0, "jev_calls": 0, "llm_calls": 0,
+    "gdc_requests": 0, "gdc_bytes": 0, "gdc_cache_hits": 0, "jev_calls": 0, "llm_calls": 0,
     "jev_input_tokens": None, "jev_output_tokens": None, "jev_cost": None,
     "llm_input_tokens": None, "llm_output_tokens": None, "llm_cost": None,
 }
@@ -28,6 +28,7 @@ CHILD_TABLES = {
     "candidates": "candidate_id",
     "statistical_states": "state_id",
     "jev_evaluations": "evaluation_id",
+    "jev_projections": "projection_id",
     "hypotheses": "hypothesis_id",
     "followup_executions": "execution_id",
     "dossiers": "dossier_id",
@@ -36,6 +37,7 @@ CHILD_FILTERS = {
     "candidates": frozenset(),
     "statistical_states": frozenset({"disposition"}),
     "jev_evaluations": frozenset({"candidate_id", "purpose"}),
+    "jev_projections": frozenset(),
     "hypotheses": frozenset({"candidate_id"}),
     "followup_executions": frozenset({"status"}),
     "dossiers": frozenset(),
@@ -46,13 +48,20 @@ class Repository:
     def __init__(self, database: Database):
         self.database = database
 
-    def create_run(self, worker_id: str) -> str:
+    def create_run(self, worker_id: str, *, mode: str = "FAKE", fixture_id: str | None = "demo",
+                   fixture_version: str | None = "1", scope: dict[str, Any] | None = None) -> str:
         run_id = str(uuid4())
+        default_scope = (
+            {"selected_project_ids": ["SYNTHETIC-DEMO-A", "SYNTHETIC-DEMO-B"]}
+            if mode == "FAKE" else {"selected_project_ids": []}
+        )
+        effective_scope = dict(scope) if scope is not None else default_scope
+        effective_scope.setdefault("selected_project_ids", [])
         with self.database.connect(write=True) as connection:
             connection.execute(
                 "INSERT INTO research_runs(run_id,mode,fixture_id,fixture_version,status,created_at,worker_id,counters_json,usage_json,scope_json) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (run_id, "FAKE", "demo", "1", "PENDING", utc_now(), worker_id,
-                 _json(EMPTY_COUNTERS), _json(ZERO_USAGE), _json({"selected_project_ids": ["SYNTHETIC-DEMO-A", "SYNTHETIC-DEMO-B"]})),
+                (run_id, mode, fixture_id, fixture_version, "PENDING", utc_now(), worker_id,
+                 _json(EMPTY_COUNTERS), _json(ZERO_USAGE), _json(effective_scope)),
             )
         return run_id
 
@@ -90,10 +99,11 @@ class Repository:
                 (str(event.event_id), run_id, event.sequence, idempotency_key, event_json),
             )
             connection.execute(
-                "UPDATE research_runs SET status=?,current_stage=?,last_sequence=?,started_at=?,ended_at=?,outcome_reason=?,coverage=?,counters_json=?,stages_json=? WHERE run_id=?",
+                "UPDATE research_runs SET status=?,current_stage=?,last_sequence=?,started_at=?,ended_at=?,outcome_reason=?,coverage=?,counters_json=?,stages_json=?,usage_json=?,scope_json=? WHERE run_id=?",
                 (projection["status"], projection["current_stage"], event.sequence,
                  projection["started_at"], projection["ended_at"], projection["outcome_reason"],
-                 projection["coverage"], projection["counters_json"], projection["stages_json"], run_id),
+                 projection["coverage"], projection["counters_json"], projection["stages_json"],
+                 projection["usage_json"], projection["scope_json"], run_id),
             )
             connection.commit()
             return json.loads(event_json)
@@ -132,6 +142,7 @@ class Repository:
             "FOLLOWUP_STARTED": "followups_started", "DOSSIER_CREATED": "dossiers_created",
             "CANDIDATE_DEFERRED": "candidates_deferred", "CANDIDATE_FAILED": "candidates_failed",
             "JEV_DEEP_COMPLETED": "jev_evaluations", "HYPOTHESIS_EVALUATED": "jev_evaluations",
+            "JEV_EVALUATION_FAILED": "jev_evaluations",
         }
         key = increments.get(event["type"])
         if key:
@@ -145,6 +156,31 @@ class Repository:
             counters["states_valid"] = event["data"].get("valid_count", counters["states_valid"])
             counters["states_selected"] = event["data"].get("selected_count", counters["states_selected"])
         run["counters_json"] = _json(counters)
+        usage = json.loads(run["usage_json"])
+        if event["type"] == "GDC_REQUEST_COMPLETED":
+            usage["gdc_requests"] += 1
+            usage["gdc_bytes"] += int(event["data"].get("bytes_read", 0))
+        elif event["type"] == "GDC_CACHE_HIT":
+            usage["gdc_cache_hits"] += 1
+        elif event["type"] in {"JEV_WIDE_STATE_EVALUATED", "JEV_DEEP_COMPLETED", "JEV_EVALUATION_FAILED"}:
+            data = event["data"]
+            if data.get("provider_attempted") is True and not data.get("cache"):
+                usage["jev_calls"] += 1
+                provider_usage = data.get("usage") or {}
+                for token_key in ("input_tokens", "output_tokens"):
+                    value = provider_usage.get(token_key)
+                    if value is not None:
+                        target = f"jev_{token_key}"
+                        usage[target] = (usage[target] or 0) + int(value)
+        run["usage_json"] = _json(usage)
+        if event["type"] == "PROJECT_SCOPE_SELECTED":
+            scope = json.loads(run["scope_json"])
+            scope["selected_project_ids"] = event["data"].get("selected_project_ids", [])
+            if event["data"].get("scope_hash"):
+                scope["scope_hash"] = event["data"]["scope_hash"]
+            if event["data"].get("gdc_release"):
+                scope["gdc_release"] = event["data"]["gdc_release"]
+            run["scope_json"] = _json(scope)
         return run
 
     def artifact_registration(self, artifact: PublishedArtifact, run_id: str) -> tuple[str, tuple[Any, ...]]:
@@ -152,6 +188,99 @@ class Repository:
             "INSERT INTO artifacts(artifact_id,run_id,relative_path,sha256,size_bytes,media_type,purpose,schema_version) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(artifact_id) DO NOTHING",
             (artifact.artifact_id, run_id, artifact.relative_path, artifact.sha256, artifact.size_bytes, artifact.media_type, artifact.purpose, artifact.schema_version),
         )
+
+    def register_artifact(self, artifact: PublishedArtifact, run_id: str) -> None:
+        """Register an operational artifact outside the event transaction.
+
+        Used by the GDC transport so a published response is referenceable by
+        the attempt ledger and cache even if the emitting callback is a no-op.
+        """
+        statement, parameters = self.artifact_registration(artifact, run_id)
+        with self.database.connect(write=True) as connection:
+            connection.execute(statement, parameters)
+
+    # ------------------------------------------------------- GDC operational ledger
+
+    def gdc_attempt_start(self, *, request_id: str, run_id: str, logical_query_id: str, attempt_no: int,
+                          method: str, endpoint: str, request_hash: str, reserved_bytes: int,
+                          started_at: str) -> None:
+        with self.database.connect(write=True) as connection:
+            connection.execute(
+                "INSERT INTO gdc_attempts(request_id,run_id,logical_query_id,attempt_no,method,endpoint,request_hash,status,reserved_bytes,bytes_read,started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (request_id, run_id, logical_query_id, attempt_no, method, endpoint, request_hash,
+                 "RESERVED", reserved_bytes, 0, started_at),
+            )
+
+    def gdc_attempt_finish(self, *, request_id: str, status: str, bytes_read: int, http_status: int | None,
+                           response_artifact_id: str | None, response_hash: str | None,
+                           completeness: str | None, error: str | None, finished_at: str) -> None:
+        with self.database.connect(write=True) as connection:
+            connection.execute(
+                "UPDATE gdc_attempts SET status=?,bytes_read=?,http_status=?,response_artifact_id=?,response_hash=?,completeness=?,error=?,finished_at=? WHERE request_id=?",
+                (status, bytes_read, http_status, response_artifact_id, response_hash,
+                 completeness, error, finished_at, request_id),
+            )
+
+    def gdc_cache_get(self, request_hash: str) -> dict[str, Any] | None:
+        with self.database.read() as connection:
+            row = connection.execute("SELECT * FROM gdc_cache WHERE request_hash=?", (request_hash,)).fetchone()
+            return dict(row) if row else None
+
+    def gdc_cache_put(self, *, request_hash: str, method: str, endpoint: str, response_artifact_id: str,
+                      response_hash: str, size_bytes: int, completeness: str, contract_version: str,
+                      created_at: str) -> None:
+        with self.database.connect(write=True) as connection:
+            connection.execute(
+                "INSERT INTO gdc_cache(request_hash,method,endpoint,response_artifact_id,response_hash,size_bytes,completeness,contract_version,created_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(request_hash) DO NOTHING",
+                (request_hash, method, endpoint, response_artifact_id, response_hash, size_bytes,
+                 completeness, contract_version, created_at),
+            )
+
+    def gdc_run_totals(self, run_id: str) -> dict[str, int]:
+        with self.database.read() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS attempts, COALESCE(SUM(bytes_read),0) AS bytes, "
+                "COALESCE(SUM(CASE WHEN status='CACHE_HIT' THEN 1 ELSE 0 END),0) AS cache_hits "
+                "FROM gdc_attempts WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+        return {"attempts": row["attempts"], "bytes": row["bytes"], "cache_hits": row["cache_hits"]}
+
+    # ------------------------------------------------------- Jev projections and cache
+
+    def projection_registration(self, *, projection_id: str, run_id: str, state_id: str,
+                                projection_version: str, source_state_hash: str, projection_hash: str,
+                                artifact_id: str, fields_json: str, created_at: str) -> tuple[str, tuple[Any, ...]]:
+        return (
+            "INSERT INTO jev_projections(projection_id,run_id,state_id,projection_version,source_state_hash,projection_hash,artifact_id,fields_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            (projection_id, run_id, state_id, projection_version, source_state_hash,
+             projection_hash, artifact_id, fields_json, created_at),
+        )
+
+    def jev_cache_get(self, cache_key: str) -> str | None:
+        with self.database.read() as connection:
+            row = connection.execute("SELECT evaluation_id FROM jev_cache WHERE cache_key=?", (cache_key,)).fetchone()
+        return row["evaluation_id"] if row else None
+
+    def jev_cache_put(self, cache_key: str, evaluation_id: str, created_at: str) -> None:
+        with self.database.connect(write=True) as connection:
+            connection.execute(
+                "INSERT INTO jev_cache(cache_key,evaluation_id,created_at) VALUES(?,?,?) ON CONFLICT(cache_key) DO NOTHING",
+                (cache_key, evaluation_id, created_at),
+            )
+
+    def get_evaluation(self, evaluation_id: str) -> dict[str, Any] | None:
+        with self.database.read() as connection:
+            row = connection.execute("SELECT * FROM jev_evaluations WHERE evaluation_id=?", (evaluation_id,)).fetchone()
+        return _decode_row(row) if row else None
+
+    def get_state(self, state_id: str) -> dict[str, Any] | None:
+        with self.database.read() as connection:
+            row = connection.execute("SELECT * FROM statistical_states WHERE state_id=?", (state_id,)).fetchone()
+        return _decode_row(row) if row else None
+
+    def page_projections(self, run_id: str, limit: int, cursor: str | None) -> dict[str, Any]:
+        return self.page_child("jev_projections", run_id, limit, cursor, {})
 
     def recover_interrupted(self) -> list[str]:
         with self.database.read() as connection:
