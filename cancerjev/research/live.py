@@ -19,6 +19,7 @@ from cancerjev.config import Settings
 from cancerjev.domain.events import canonical_json, utc_now
 from cancerjev.gdc.endpoints import (
     cases_request,
+    cohort_project_request,
     expression_availability_request,
     expression_gene_selection_request,
     expression_values_request,
@@ -26,7 +27,6 @@ from cancerjev.gdc.endpoints import (
     gene_case_counts_request,
     genes_request,
     mutated_cases_count_request,
-    projects_request,
     status_request,
     top_mutated_genes_request,
 )
@@ -59,20 +59,21 @@ from cancerjev.science.methods import ProjectFrame, ScienceError, build_statisti
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
 
-SCOPE_MIN_CASES = 50
-SCOPE_MAX_CASES = 250
-SCOPE_PROJECT_LIMIT = 8
+DOMAIN = "lung cancer"
+COHORT_PROJECT_ID = "TCGA-LUAD"
+COHORT_SELECTION_RULE = (
+    "single explicit cohort: domain=lung cancer, cohort=TCGA-LUAD; the cohort is selected by exact "
+    "project_id from the open GDC project inventory; no case-count window, no cross-project pooling, "
+    "and no configurable multi-cancer framework"
+)
+GENE_SELECTION_RULE = (
+    "genes discovered from the provider top-mutated ranking for TCGA-LUAD (size 20); selection takes the "
+    "top 10 genes by provider rank, skipping duplicates; _score is provider selection metadata and is "
+    "never a mutation count or effect size"
+)
 DISCOVERY_GENES_PER_PROJECT = 20
 COUNT_GENE_LIMIT = 100
 CANDIDATE_GENE_LIMIT = 10
-RECURRENT_GENE_LIMIT = 6
-SELECTION_RULE = (
-    "projects with 50<=summary.case_count<=250 ordered by (case_count, project_id), first 8; "
-    "genes discovered from the provider top-mutated ranking per project (size 20); selection takes up to "
-    "6 recurrent genes (appearing in >=2 projects) ordered by (appearance count desc, observed affected-case "
-    "total desc, gene_id asc), then fills round-robin by provider rank across projects in scope order, "
-    "skipping duplicates, to 10 genes total"
-)
 WIDE_SCAN_RULE = (
     "states_valid = states generated; states_selected = states admitted by the active ranking policy"
 )
@@ -194,7 +195,8 @@ class LiveOrchestrator:
         budget = RunBudget(caps=caps)
         run_id = self.repository.create_run(
             self.worker_id, mode="LIVE", fixture_id=None, fixture_version=None,
-            scope={"purpose": "LIVE_SWEEP", "selection_rule": SELECTION_RULE},
+            scope={"purpose": "LIVE_SWEEP", "domain": DOMAIN, "cohort": COHORT_PROJECT_ID,
+                   "selection_rule": COHORT_SELECTION_RULE},
         )
 
         def emit(event_type: str, key: str, message: str, **kwargs: Any) -> Any:
@@ -266,49 +268,48 @@ class LiveOrchestrator:
         status_response = transport.request(status_request())
         status = parse_status(status_response.body, self._meta(status_response, None))
         release = status.data_release
-        projects_response = transport.request(projects_request())
-        projects = parse_projects(projects_response.body, self._meta(projects_response, release))
-        eligible = [
-            project for project in projects
-            if project.case_count is not None and SCOPE_MIN_CASES <= project.case_count <= SCOPE_MAX_CASES
-        ]
-        eligible.sort(key=lambda project: (project.case_count or 0, project.project_id))
-        selected = eligible[:SCOPE_PROJECT_LIMIT]
+        project_response = transport.request(cohort_project_request(COHORT_PROJECT_ID))
+        projects = parse_projects(project_response.body, self._meta(project_response, release))
+        selected = [project for project in projects if project.project_id == COHORT_PROJECT_ID]
         if not selected:
-            raise LiveRunError("NO_ELIGIBLE_PROJECTS", f"no projects with {SCOPE_MIN_CASES}..{SCOPE_MAX_CASES} cases")
+            raise LiveRunError(
+                "COHORT_PROJECT_NOT_FOUND",
+                f"cohort project {COHORT_PROJECT_ID} not present in the open GDC project inventory",
+            )
         scope_hash = hashlib.sha256(canonical_json({
-            "rule": SELECTION_RULE, "projects": [project.project_id for project in selected],
-            "case_counts": {project.project_id: project.case_count for project in selected},
+            "rule": COHORT_SELECTION_RULE, "domain": DOMAIN, "cohort": COHORT_PROJECT_ID,
+            "project_id": selected[0].project_id, "case_count": selected[0].case_count,
         })).hexdigest()
         inventory_payload = {
             "release": release, "release_commit": status.commit, "release_tag": status.tag,
-            "projects_total": len(projects), "eligible_total": len(eligible),
+            "domain": DOMAIN, "cohort": COHORT_PROJECT_ID, "projects_total": len(projects),
             "selected": [
                 {"project_id": project.project_id, "case_count": project.case_count,
                  "program": project.program_name, "primary_site": project.primary_site,
                  "disease_type": project.disease_type, "data_categories": project.data_categories}
                 for project in selected
             ],
-            "selection_rule": SELECTION_RULE, "scope_hash": scope_hash,
+            "selection_rule": COHORT_SELECTION_RULE, "scope_hash": scope_hash,
         }
         artifact = self._publish_json(run_id, f"runs/{run_id}/inventory/projects.json", inventory_payload, "gdc-inventory")
         sources = [
             self._source(status_response, locator="/status", release=release),
-            self._source(projects_response, locator="/projects", release=release),
+            self._source(project_response, locator="/projects", release=release),
         ]
-        warnings = status.warnings + response_warnings(projects_response.body, self._meta(projects_response, release))
+        warnings = status.warnings + response_warnings(project_response.body, self._meta(project_response, release))
         self._event(
             run_id, "PROJECT_SCOPE_SELECTED", "inventory:scope",
-            f"Selected {len(selected)} of {len(eligible)} eligible projects.",
+            f"Selected cohort {COHORT_PROJECT_ID} ({DOMAIN}); {len(projects)} project record(s) examined.",
             stage="INVENTORY",
-            data={"selected_project_ids": [project.project_id for project in selected],
+            data={"domain": DOMAIN, "cohort": COHORT_PROJECT_ID,
+                  "selected_project_ids": [project.project_id for project in selected],
                   "scope_hash": scope_hash, "gdc_release": release,
-                  "eligible_total": len(eligible), "inventory_artifact_id": artifact.artifact_id},
+                  "projects_examined": len(projects), "inventory_artifact_id": artifact.artifact_id},
             artifact_refs=[artifact.ref()],
         )
         self._event(
             run_id, "INVENTORY_COMPLETED", "inventory:completed",
-            f"Inventory completed; {len(selected)} projects selected.",
+            f"Inventory completed; cohort {COHORT_PROJECT_ID} selected.",
             stage="INVENTORY", data={"projects": len(selected), "projects_total": len(projects)},
             artifact_refs=[artifact.ref()],
         )
@@ -324,19 +325,17 @@ class LiveOrchestrator:
         sources = list(inventory.sources)
         warnings = list(inventory.warnings)
         discovery_by_project: dict[str, dict[str, Any]] = {}
-        appearances: dict[str, int] = {}
+        ranked_genes: list[str] = []
         for project in inventory.selected:
             response = transport.request(top_mutated_genes_request(project.project_id, DISCOVERY_GENES_PER_PROJECT))
             hits = parse_top_mutated_genes(response.body, self._meta(response, inventory.release))
             discovery_by_project[project.project_id] = {hit.gene_id: hit for hit in hits}
-            for hit in hits:
-                appearances[hit.gene_id] = appearances.get(hit.gene_id, 0) + 1
+            ranked_genes = [hit.gene_id for hit in sorted(hits, key=lambda hit: hit.rank)]
             sources.append(self._source(response, locator=f"/analysis/top_mutated_genes_by_project[{project.project_id}]",
                                         release=inventory.release))
-        union = sorted(appearances, key=lambda gene_id: (-appearances[gene_id], gene_id))
-        count_genes = union[:COUNT_GENE_LIMIT]
+        count_genes = ranked_genes[:COUNT_GENE_LIMIT]
         if not count_genes:
-            raise LiveRunError("NO_DISCOVERED_GENES", "provider discovery returned no genes for the selected projects")
+            raise LiveRunError("NO_DISCOVERED_GENES", f"provider discovery returned no genes for {COHORT_PROJECT_ID}")
         counts_response = transport.request(gene_case_counts_request(count_genes))
         counts = parse_gene_case_counts(counts_response.body, self._meta(counts_response, inventory.release))
         sources.append(self._source(counts_response, locator="/analysis/top_cases_counts_by_genes",
@@ -352,31 +351,7 @@ class LiveOrchestrator:
             gene_id: sum(counts.projects.get(project_id, {}).get(gene_id, 0) for project_id in scope_ids)
             for gene_id in count_genes
         }
-        recurrent = sorted(
-            (gene_id for gene_id in union if appearances[gene_id] >= 2),
-            key=lambda gene_id: (-appearances[gene_id], -totals[gene_id], gene_id),
-        )[:RECURRENT_GENE_LIMIT]
-        rank_lists = {
-            project_id: [hit.gene_id for _, hit in sorted(hits.items(), key=lambda item: item[1].rank)]
-            for project_id, hits in discovery_by_project.items()
-        }
-        selected: list[str] = list(recurrent)
-        round_robin: list[str] = []
-        for rank in range(DISCOVERY_GENES_PER_PROJECT):
-            for project_id in scope_ids:
-                genes_at_rank = rank_lists.get(project_id, [])
-                if rank >= len(genes_at_rank):
-                    continue
-                candidate = genes_at_rank[rank]
-                if candidate in selected:
-                    continue
-                selected.append(candidate)
-                round_robin.append(candidate)
-                if len(selected) >= CANDIDATE_GENE_LIMIT:
-                    break
-            if len(selected) >= CANDIDATE_GENE_LIMIT:
-                break
-        selected_gene_ids = selected[:CANDIDATE_GENE_LIMIT]
+        selected_gene_ids = ranked_genes[:CANDIDATE_GENE_LIMIT]
         if not selected_gene_ids:
             raise LiveRunError("NO_DISCOVERED_GENES", "gene selection produced an empty set")
         genes_response = transport.request(genes_request(selected_gene_ids))
@@ -387,12 +362,12 @@ class LiveOrchestrator:
                                f"requested {len(selected_gene_ids)} genes, received {len(gene_records)}")
         genes = {record.gene_id: record for record in gene_records}
         selection_payload = {
-            "selection_rule": SELECTION_RULE,
-            "discovered_genes": {gene_id: appearances[gene_id] for gene_id in union},
+            "selection_rule": GENE_SELECTION_RULE,
+            "domain": DOMAIN,
+            "cohort": COHORT_PROJECT_ID,
+            "provider_ranked_genes": ranked_genes,
             "counted_genes": count_genes,
             "affected_totals_in_scope": totals,
-            "recurrent_genes": recurrent,
-            "round_robin_genes": round_robin,
             "selected_gene_ids": selected_gene_ids,
             "provider_ranking_note": (
                 "Discovery uses the provider top-mutated ranking; _score is provider-internal selection "
@@ -410,79 +385,99 @@ class LiveOrchestrator:
 
     # ---------------------------------------------------------- state generation
 
+    def _acquire_project_frame(self, run_id: str, transport: GDCTransport, inventory: Inventory,
+                               selection: Selection, project: ProjectRecord,
+                               ) -> tuple[ProjectFrame, list[dict[str, Any]], list[str]]:
+        """Acquire one cohort case frame plus its expression lanes.
+
+        Returns the frame together with the sources and warnings it produced so the
+        caller keeps a single provenance list. The frame carries the parser's
+        ``missing_case_ids`` untouched; deterministic science decides how missing
+        examined cases are counted.
+        """
+        sources: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        gene_ids = selection.selected_gene_ids
+        cases_response = transport.request(cases_request(project.project_id, 250))
+        page = parse_cases(cases_response.body, self._meta(cases_response, inventory.release))
+        if not page.complete:
+            raise LiveRunError(
+                "CASE_FRAME_INCOMPLETE",
+                f"{project.project_id}: frame returned {page.count} of {page.total} cases in one page",
+            )
+        case_ids = [case.case_id for case in page.cases]
+        frame_hash = hashlib.sha256(canonical_json(sorted(case_ids))).hexdigest()
+        sources.append(self._source(cases_response, locator=f"/cases[{project.project_id}]",
+                                    release=inventory.release))
+        warnings += page.warnings
+        files_response = transport.request(files_expression_request(project.project_id, 5))
+        provenance = parse_files_provenance(files_response.body, self._meta(files_response, inventory.release))
+        sources.append(self._source(files_response, locator=f"/files[{project.project_id}]",
+                                    release=inventory.release))
+        warnings += provenance.warnings
+        if provenance.non_open_records:
+            raise LiveRunError("CONTROLLED_RECORD_RETURNED",
+                               f"{project.project_id}: {provenance.non_open_records} non-open file records")
+        availability: ExpressionAvailability | None = None
+        provider: ProviderSelection | None = None
+        values: ExpressionValues | None = None
+        if case_ids:
+            availability_response = transport.request(expression_availability_request(case_ids, gene_ids))
+            availability = parse_expression_availability(
+                availability_response.body, self._meta(availability_response, inventory.release),
+                expected_cases=case_ids, expected_genes=gene_ids,
+            )
+            sources.append(self._source(availability_response,
+                                        locator=f"/gene_expression/availability[{project.project_id}]",
+                                        release=inventory.release))
+            warnings += availability.warnings
+            cases_with_values = [
+                case.case_id for case in page.cases
+                if availability.cases.get(case.case_id) is True
+            ]
+            if cases_with_values:
+                selection_response = transport.request(expression_gene_selection_request(case_ids, gene_ids))
+                provider = parse_gene_selection(
+                    selection_response.body, self._meta(selection_response, inventory.release),
+                    expected_genes=gene_ids,
+                )
+                sources.append(self._source(selection_response,
+                                            locator=f"/gene_expression/gene_selection[{project.project_id}]",
+                                            release=inventory.release))
+                warnings += provider.warnings
+                values_response = transport.request(expression_values_request(case_ids, gene_ids))
+                values = parse_expression_values(
+                    values_response.body, self._meta(values_response, inventory.release),
+                    expected_cases=case_ids, expected_genes=gene_ids,
+                )
+                sources.append(self._source(values_response,
+                                            locator=f"/gene_expression/values[{project.project_id}]",
+                                            release=inventory.release))
+            else:
+                warnings.append(
+                    f"{project.project_id}: no examined case has gene expression values; "
+                    "provider selection and local values lanes skipped (expression NOT_OBSERVED)"
+                )
+        frame = ProjectFrame(
+            project_id=project.project_id, project_record=project, cases=page.cases,
+            frame_hash=frame_hash, expression_coverage=availability, provider_selection=provider,
+            expression_values=values, workflows=provenance.workflows, strategies=provenance.strategies,
+            discovery_hits=selection.discovery_by_project.get(project.project_id, {}),
+        )
+        return frame, sources, warnings
+
     def _generate_states(self, run_id: str, transport: GDCTransport, inventory: Inventory,
                          selection: Selection) -> list[dict[str, Any]]:
         frames: list[ProjectFrame] = []
         sources = list(selection.sources)
         warnings = list(selection.warnings)
-        gene_ids = selection.selected_gene_ids
         for project in inventory.selected:
-            cases_response = transport.request(cases_request(project.project_id, 250))
-            page = parse_cases(cases_response.body, self._meta(cases_response, inventory.release))
-            if not page.complete:
-                raise LiveRunError(
-                    "CASE_FRAME_INCOMPLETE",
-                    f"{project.project_id}: frame returned {page.count} of {page.total} cases in one page",
-                )
-            case_ids = [case.case_id for case in page.cases]
-            frame_hash = hashlib.sha256(canonical_json(sorted(case_ids))).hexdigest()
-            sources.append(self._source(cases_response, locator=f"/cases[{project.project_id}]",
-                                        release=inventory.release))
-            warnings += page.warnings
-            files_response = transport.request(files_expression_request(project.project_id, 5))
-            provenance = parse_files_provenance(files_response.body, self._meta(files_response, inventory.release))
-            sources.append(self._source(files_response, locator=f"/files[{project.project_id}]",
-                                        release=inventory.release))
-            warnings += provenance.warnings
-            if provenance.non_open_records:
-                raise LiveRunError("CONTROLLED_RECORD_RETURNED",
-                                   f"{project.project_id}: {provenance.non_open_records} non-open file records")
-            availability: ExpressionAvailability | None = None
-            provider: ProviderSelection | None = None
-            values: ExpressionValues | None = None
-            if case_ids:
-                availability_response = transport.request(expression_availability_request(case_ids, gene_ids))
-                availability = parse_expression_availability(
-                    availability_response.body, self._meta(availability_response, inventory.release),
-                    expected_cases=case_ids, expected_genes=gene_ids,
-                )
-                sources.append(self._source(availability_response,
-                                            locator=f"/gene_expression/availability[{project.project_id}]",
-                                            release=inventory.release))
-                warnings += availability.warnings
-                cases_with_values = [
-                    case.case_id for case in page.cases
-                    if availability.cases.get(case.case_id) is True
-                ]
-                if cases_with_values:
-                    selection_response = transport.request(expression_gene_selection_request(case_ids, gene_ids))
-                    provider = parse_gene_selection(
-                        selection_response.body, self._meta(selection_response, inventory.release),
-                        expected_genes=gene_ids,
-                    )
-                    sources.append(self._source(selection_response,
-                                                locator=f"/gene_expression/gene_selection[{project.project_id}]",
-                                                release=inventory.release))
-                    warnings += provider.warnings
-                    values_response = transport.request(expression_values_request(case_ids, gene_ids))
-                    values = parse_expression_values(
-                        values_response.body, self._meta(values_response, inventory.release),
-                        expected_cases=case_ids, expected_genes=gene_ids,
-                    )
-                    sources.append(self._source(values_response,
-                                                locator=f"/gene_expression/values[{project.project_id}]",
-                                                release=inventory.release))
-                else:
-                    warnings.append(
-                        f"{project.project_id}: no examined case has gene expression values; "
-                        "provider selection and local values lanes skipped (expression NOT_OBSERVED)"
-                    )
-            frames.append(ProjectFrame(
-                project_id=project.project_id, project_record=project, cases=page.cases,
-                frame_hash=frame_hash, expression_coverage=availability, provider_selection=provider,
-                expression_values=values, workflows=provenance.workflows, strategies=provenance.strategies,
-                discovery_hits=selection.discovery_by_project.get(project.project_id, {}),
-            ))
+            frame, frame_sources, frame_warnings = self._acquire_project_frame(
+                run_id, transport, inventory, selection, project,
+            )
+            sources.extend(frame_sources)
+            warnings.extend(frame_warnings)
+            frames.append(frame)
         states: list[dict[str, Any]] = []
         for rank, gene_id in enumerate(selection.selected_gene_ids, start=1):
             gene = selection.genes[gene_id]
@@ -493,15 +488,15 @@ class LiveOrchestrator:
                 "examined_genes_hash": selection.examined_genes_hash,
                 "examined_genes_n": len(selection.selected_gene_ids),
                 "rank_in_lane": rank,
-                "appearances": sum(1 for frame in frames
-                                   if gene_id in frame.discovery_hits),
-                "ranking_rule": SELECTION_RULE,
+                "observed_in_project_count": sum(1 for frame in frames if gene_id in frame.discovery_hits),
+                "ranking_rule": GENE_SELECTION_RULE,
             }
             state = build_statistical_state(
                 run_id=run_id, state_id=state_id, created_at=utc_now(), gene=gene, frames=frames,
                 counts=selection.counts, coverage=selection.coverage, sources=sources, warnings=warnings,
                 scope_meta={"gdc_release": inventory.release, "examined_case_frame": "ALL_CASES_SINGLE_PAGE",
-                            "scope_hash": inventory.scope_hash},
+                            "scope_hash": inventory.scope_hash, "domain": DOMAIN,
+                            "cohort": COHORT_PROJECT_ID},
                 discovery_meta=discovery_meta,
             )
             artifact = self._publish_json(

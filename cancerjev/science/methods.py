@@ -37,6 +37,34 @@ COVERAGE_IMBALANCE_DEFINITION = (
     "per-project expression coverage fractions (cases_with_expression / examined_cases) exceeds 0.2, "
     "or any project has zero expression values observed"
 )
+MUTATION_ABSENCE_SEMANTICS = (
+    "An absent project/gene aggregation bucket is NOT_OBSERVED. It is not zero mutation prevalence, "
+    "not wildtype, and not a callable negative; no recurrence fraction is computed without a valid "
+    "gene-specific denominator."
+)
+ACQUISITION_COMPLETENESS_DEFINITION = (
+    "COMPLETE when every requested provider response for the requested scope was acquired in full; "
+    "PARTIAL when any requested aggregation or page was incomplete. This is an acquisition property only."
+)
+SCIENTIFIC_SUFFICIENCY_DEFINITION = (
+    "SUFFICIENT only when acquisition of the requested scope completed and every examined project has an "
+    "observed mutation bucket and a fully valid expression measurement set with no missing measurements; "
+    "PARTIAL when some requested evidence is missing, unavailable or incomplete; INSUFFICIENT when no "
+    "examined project has any observed measurement. Acquisition completeness does not imply sufficiency."
+)
+COMPARABILITY_STATUSES = ("VERIFIED", "PARTIAL", "UNVERIFIED", "INCOMPATIBLE", "NOT_APPLICABLE")
+WITHIN_COHORT_COMPARABILITY = {
+    "status": "UNVERIFIED",
+    "reason": (
+        "GDC harmonization, shared project membership and an empty incompatibility list do not establish "
+        "scientific comparability; no cross-workflow or cross-sample comparability has been verified in "
+        "this phase."
+    ),
+}
+CROSS_PROJECT_COMPARABILITY = {
+    "status": "NOT_APPLICABLE",
+    "reason": "A single cohort is examined; no cross-project comparison is made.",
+}
 
 
 class ScienceError(Exception):
@@ -94,7 +122,9 @@ METHODS: dict[str, MethodDefinition] = {
         sampling_rule="Complete provider aggregation over the queried gene set; no sampling.",
         estimator="Provider bucket doc_count for the gene within the project.",
         effect_definition=None, interval_method=None, null_hypothesis=None, correction_family=None,
-        missingness_handling="An absent project or gene bucket is NOT_OBSERVED, never zero.",
+        missingness_handling=(
+            "An absent project or gene bucket is NOT_OBSERVED, never zero, wildtype or a callable negative."
+        ),
         unsupported_states=("PARTIAL", "NOT_OBSERVED"),
         limitations=(
             "No matched denominator; no recurrence fraction.",
@@ -133,7 +163,10 @@ METHODS: dict[str, MethodDefinition] = {
         sampling_rule="All cases of the examined frame for the project; no subsampling.",
         estimator="median, sample standard deviation (n-1), minimum and maximum of log2(UQFPKM+1).",
         effect_definition=None, interval_method=None, null_hypothesis=None, correction_family=None,
-        missingness_handling="Missing or non-finite cells are excluded from n_finite and counted in n_missing.",
+        missingness_handling=(
+            "Missing or non-finite cells are excluded from n_finite and counted in n_missing; examined case "
+            "columns that the provider did not return are also counted in n_missing and never become zero."
+        ),
         unsupported_states=("NOT_OBSERVED", "NOT_ACQUIRED", "INSUFFICIENT"),
         limitations=(
             "Case-level values may reflect a provider-chosen sample per case; sample resolution is UNVERIFIED.",
@@ -205,27 +238,56 @@ class Log2Summary:
     maximum: float | None
     n_finite: int
     n_missing: int
+    n_returned: int
     availability: str
 
 
-def expression_log2_summary(row: dict[str, float | None]) -> Log2Summary:
+def expression_log2_summary(row: dict[str, float | None], *, missing_case_columns: int = 0) -> Log2Summary:
+    """Summarize one gene row over the examined case set.
+
+    ``row`` holds only the case columns the provider returned. ``missing_case_columns``
+    counts examined cases whose column was not returned at all; those remain visible in
+    ``n_missing`` so a fully valid returned subset can never report zero missingness.
+    """
     finite: list[float] = []
-    missing = 0
+    missing_cells = 0
     for value in row.values():
         if value is None:
-            missing += 1
+            missing_cells += 1
             continue
         if value < 0:
             raise ScienceError("NEGATIVE_EXPRESSION", f"UQFPKM must be nonnegative, saw {value!r}")
         finite.append(math.log2(value + 1.0))
+    missing = missing_cells + max(0, missing_case_columns)
     if not finite:
-        return Log2Summary(None, None, None, None, 0, missing, "INSUFFICIENT")
+        return Log2Summary(None, None, None, None, 0, missing, len(row), "INSUFFICIENT")
     median = statistics.median(finite)
     sample_sd = statistics.stdev(finite) if len(finite) >= 2 else None
-    availability = "OBSERVED" if missing == 0 and len(finite) >= 2 else "PARTIAL"
-    if len(finite) == 1:
+    if len(finite) < 2:
         availability = "INSUFFICIENT"
-    return Log2Summary(median, sample_sd, min(finite), max(finite), len(finite), missing, availability)
+    elif missing:
+        availability = "PARTIAL"
+    else:
+        availability = "OBSERVED"
+    return Log2Summary(median, sample_sd, min(finite), max(finite), len(finite), missing,
+                       len(row), availability)
+
+
+def scientific_sufficiency(rows: list[dict[str, Any]], acquisition_complete: bool) -> str:
+    """See SCIENTIFIC_SUFFICIENCY_DEFINITION. Acquisition is a separate property."""
+    if not rows:
+        return "INSUFFICIENT"
+    if not any(row["mutation_observed"] or row["expression_observed"] for row in rows):
+        return "INSUFFICIENT"
+    if not acquisition_complete:
+        return "PARTIAL"
+    if any((row["missing_measurements"] or 0) > 0 for row in rows):
+        return "PARTIAL"
+    if not all(row["mutation_observed"] for row in rows):
+        return "PARTIAL"
+    if not all(row["expression_observed"] for row in rows):
+        return "PARTIAL"
+    return "SUFFICIENT"
 
 
 def project_dominance(counts: dict[str, int]) -> tuple[float | None, str]:
@@ -306,6 +368,7 @@ def build_statistical_state(
     mutation_results: list[dict[str, Any]] = []
     expression_results: list[dict[str, Any]] = []
     imbalance_rows: list[dict[str, Any]] = []
+    sufficiency_rows: list[dict[str, Any]] = []
     missingness: list[str] = []
     observed_affected: dict[str, int] = {}
 
@@ -322,8 +385,7 @@ def build_statistical_state(
             "workflow": ",".join(frame.workflows) if frame.workflows else None,
             "pipeline_version": None,
             "eligible_n": frame.project_record.case_count,
-            "selected_n": examined,
-            "observed_n": examined,
+            "examined_n": examined,
             "excluded_counts_by_reason": {},
             "case_set_artifact": None,
             "case_set_hash": frame.frame_hash,
@@ -332,7 +394,9 @@ def build_statistical_state(
             "selection_version": "1",
             "sweep_offset": None,
             "completeness": "COMPLETE",
-            "comparability_key": f"{frame.project_id}|{','.join(frame.workflows) or 'UNKNOWN_WORKFLOW'}|UQFPKM",
+            "harmonization_context": (
+                f"{frame.project_id}|{','.join(frame.workflows) or 'UNKNOWN_WORKFLOW'}|UQFPKM"
+            ),
         })
 
         project_counts = counts.projects.get(frame.project_id)
@@ -353,6 +417,7 @@ def build_statistical_state(
         mutation_results.append({
             "project_id": frame.project_id,
             "population_id": population_id,
+            "examined_cases": metric("examined_cases", examined, "cases"),
             "affected_case_count": metric(
                 "affected_case_count", affected, "cases", availability=mutation_availability,
                 reason_code=mutation_reason,
@@ -385,14 +450,24 @@ def build_statistical_state(
 
         local_record: dict[str, Any] | None = None
         local_availability = "NOT_ACQUIRED"
+        returned_case_columns: int | None = None
+        valid_measurements: int | None = None
+        missing_measurements: int | None = None
         if frame.expression_values is not None:
+            missing_case_columns = list(frame.expression_values.missing_case_ids)
             row = frame.expression_values.values.get(gene.gene_id)
             if row is None:
                 local_availability = "NOT_OBSERVED"
+                returned_case_columns = 0
+                valid_measurements = 0
+                missing_measurements = examined
                 missingness.append(f"{frame.project_id}: gene {gene.gene_id} absent from expression values")
             else:
-                summary = expression_log2_summary(row)
+                summary = expression_log2_summary(row, missing_case_columns=len(missing_case_columns))
                 local_availability = summary.availability
+                returned_case_columns = summary.n_returned
+                valid_measurements = summary.n_finite
+                missing_measurements = summary.n_missing
                 local_record = {
                     "median": metric("expression_log2_median", summary.median, EXPRESSION_UNIT,
                                      availability="OBSERVED" if summary.median is not None else "INSUFFICIENT",
@@ -406,13 +481,19 @@ def build_statistical_state(
                                       availability="OBSERVED" if summary.maximum is not None else "INSUFFICIENT"),
                     "n_finite": metric("expression_n_finite", summary.n_finite, "count"),
                     "n_missing": metric("expression_n_missing", summary.n_missing, "count"),
+                    "n_returned": metric("expression_n_returned", summary.n_returned, "count"),
+                    "n_missing_case_columns": metric("expression_n_missing_case_columns",
+                                                     len(missing_case_columns), "count"),
+                    "missing_case_ids": missing_case_columns,
                     "method_id": "EXPRESSION_LOG2_SUMMARY_V1",
                     "unit": EXPRESSION_UNIT,
                     "transformation": EXPRESSION_TRANSFORMATION,
                 }
                 if summary.n_missing:
+                    absent_columns = len(missing_case_columns)
                     missingness.append(
-                        f"{frame.project_id}: {summary.n_missing} of {len(row)} examined cases have no expression value"
+                        f"{frame.project_id}: {summary.n_missing} of {examined} examined cases have no "
+                        f"expression value ({absent_columns} case column(s) not returned by the provider)"
                     )
         provider_record: dict[str, Any] | None = None
         provider_gene = None
@@ -444,12 +525,32 @@ def build_statistical_state(
             "local": local_record,
             "provider": provider_record,
             "coverage": {
+                "examined_cases": metric("examined_cases", examined, "cases"),
+                "assay_available_cases": metric(
+                    "assay_available_cases", cases_with_expression, "cases",
+                    availability="OBSERVED" if cases_with_expression is not None else "NOT_OBSERVED",
+                    reason_code=None if cases_with_expression is not None else "AVAILABILITY_NOT_ACQUIRED",
+                ),
                 "cases_with_expression": metric(
                     "cases_with_expression", cases_with_expression, "cases",
                     availability="OBSERVED" if cases_with_expression is not None else "NOT_OBSERVED",
                     reason_code=None if cases_with_expression is not None else "AVAILABILITY_NOT_ACQUIRED",
                 ),
-                "examined_cases": metric("examined_cases", examined, "cases"),
+                "returned_case_columns": metric(
+                    "returned_case_columns", returned_case_columns, "cases",
+                    availability="OBSERVED" if returned_case_columns is not None else "NOT_OBSERVED",
+                    reason_code=None if returned_case_columns is not None else "VALUES_NOT_ACQUIRED",
+                ),
+                "valid_measurements": metric(
+                    "valid_measurements", valid_measurements, "cases",
+                    availability="OBSERVED" if valid_measurements is not None else "NOT_OBSERVED",
+                    reason_code=None if valid_measurements is not None else "VALUES_NOT_ACQUIRED",
+                ),
+                "missing_measurements": metric(
+                    "missing_measurements", missing_measurements, "cases",
+                    availability="OBSERVED" if missing_measurements is not None else "NOT_OBSERVED",
+                    reason_code=None if missing_measurements is not None else "VALUES_NOT_ACQUIRED",
+                ),
             },
         })
         imbalance_rows.append({
@@ -458,8 +559,16 @@ def build_statistical_state(
             "examined_cases": examined,
             "cases_with_expression": cases_with_expression,
         })
+        sufficiency_rows.append({
+            "project_id": frame.project_id,
+            "mutation_observed": mutation_availability == "OBSERVED",
+            "expression_observed": expression_availability == "OBSERVED",
+            "missing_measurements": missing_measurements,
+        })
 
     dominance, dominance_availability = project_dominance(observed_affected)
+    acquisition_complete = counts.complete and coverage.complete
+    sufficiency = scientific_sufficiency(sufficiency_rows, acquisition_complete)
     medians = [
         result["local"]["median"]["value"]
         for result in expression_results
@@ -490,6 +599,8 @@ def build_statistical_state(
             "genome_build_note": "not observed in admitted endpoints",
         },
         "scope": {
+            "domain": scope_meta.get("domain"),
+            "cohort": scope_meta.get("cohort"),
             "programs": sorted({frame.project_record.program_name for frame in ordered
                                 if frame.project_record.program_name}),
             "projects": [frame.project_id for frame in ordered],
@@ -501,7 +612,11 @@ def build_statistical_state(
                 frame.project_id: _sample_type_counts(frame.cases) for frame in ordered
             },
             "examined_case_frame": scope_meta.get("examined_case_frame", "ALL_CASES_SINGLE_PAGE"),
-            "comparability_groups": sorted({population["comparability_key"] for population in populations}),
+            "comparability": {
+                "statuses": list(COMPARABILITY_STATUSES),
+                "within_cohort": dict(WITHIN_COHORT_COMPARABILITY),
+                "cross_project": dict(CROSS_PROJECT_COMPARABILITY),
+            },
         },
         "generation": {
             "lane_ids": [
@@ -520,6 +635,7 @@ def build_statistical_state(
                 "OBSERVED" if projects_with_mutation == len(ordered)
                 else ("PARTIAL" if projects_with_mutation else "INSUFFICIENT")
             ),
+            "absence_semantics": MUTATION_ABSENCE_SEMANTICS,
             "project_results": mutation_results,
             "coverage": {
                 "case_with_ssm": metric(
@@ -552,7 +668,7 @@ def build_statistical_state(
             "projects_with_mutation_observation": projects_with_mutation,
             "projects_with_expression_observation": projects_with_expression,
             "affected_case_total": metric(
-                "affected_case_total", sum(observed_affected.values()), "cases",
+                "affected_case_total", sum(observed_affected.values()) if observed_affected else None, "cases",
                 availability="OBSERVED" if observed_affected else "NOT_OBSERVED",
                 reason_code=None if observed_affected else "NO_OBSERVED_PROJECTS",
             ),
@@ -572,7 +688,7 @@ def build_statistical_state(
             "coverage_imbalance_definition": COVERAGE_IMBALANCE_DEFINITION,
             "dominance_definition": DOMINANCE_SHARE_DEFINITION,
             "direction": "NOT_EXAMINED",
-            "noncomparable_groups": [],
+            "comparability_status": "NOT_APPLICABLE",
             "notes": [],
         },
         "quality": {
@@ -581,16 +697,20 @@ def build_statistical_state(
             "duplicate_checks": "PASS",
             "finite_checks": "PASS",
             "truncation": "NONE",
-            "completeness": "COMPLETE" if counts.complete and coverage.complete else "PARTIAL",
+            "completeness": "COMPLETE" if acquisition_complete else "PARTIAL",
+            "acquisition_completeness": "COMPLETE" if acquisition_complete else "PARTIAL",
+            "acquisition_completeness_definition": ACQUISITION_COMPLETENESS_DEFINITION,
+            "scientific_sufficiency": sufficiency,
+            "scientific_sufficiency_definition": SCIENTIFIC_SUFFICIENCY_DEFINITION,
         },
         "tested_context": {
             "examined_genes_ref": discovery_meta.get("examined_genes_ref"),
             "examined_genes_hash": discovery_meta.get("examined_genes_hash"),
             "discovery_method": "MUTATION_DISCOVERY_V1",
             "selection_bias": (
-                "Genes are discovered from the provider top-mutated ranking per project, then ranked by "
-                "appearance count and observed affected-case total; this is selection-biased and does not "
-                "represent an unbiased genome-wide scan."
+                "Genes are discovered from the provider top-mutated ranking for the single examined cohort "
+                "and selected by provider rank; this is selection-biased and does not represent an unbiased "
+                "genome-wide scan."
             ),
             "coverage": {"examined_genes_n": discovery_meta.get("examined_genes_n")},
         },

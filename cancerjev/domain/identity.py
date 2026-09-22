@@ -17,10 +17,15 @@ def statistical_state_identity_payload(state: dict[str, Any]) -> dict[str, Any]:
     """
     if state.get("schema_version") == 2:
         provenance = state["provenance"]
-        generation = dict(state["generation"])
-        discovery = {key: value for key, value in generation.get("discovery", {}).items()
-                     if key != "examined_genes_ref"}
-        generation["discovery"] = discovery
+        generation = {
+            key: value for key, value in state["generation"].items()
+            if key not in {"discovery", "rank_in_lane"}
+        }
+        mutation = dict(state["mutation"])
+        mutation["project_results"] = [
+            {key: value for key, value in result.items() if key != "provider_discovery_rank"}
+            for result in state["mutation"]["project_results"]
+        ]
         tested_context = {key: value for key, value in state["tested_context"].items()
                           if key != "examined_genes_ref"}
         return {
@@ -29,7 +34,7 @@ def statistical_state_identity_payload(state: dict[str, Any]) -> dict[str, Any]:
             "scope": state["scope"],
             "generation": generation,
             "populations": state["populations"],
-            "mutation": state["mutation"],
+            "mutation": mutation,
             "expression": state["expression"],
             "cross_project": state["cross_project"],
             "quality": state["quality"],

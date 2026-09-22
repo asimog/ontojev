@@ -96,7 +96,7 @@ def build_projection(state: dict[str, Any]) -> dict[str, Any]:
         population = populations.get(project_id, {})
         observations.append({
             "project_id": project_id,
-            "cases_examined": population.get("selected_n"),
+            "cases_examined": population.get("examined_n"),
             "cases_with_ssm": _metric_value(mutation["project_case_with_ssm"]),
             "cases_with_expression": _metric_value(coverage.get("cases_with_expression")),
             "affected_cases": _metric_value(mutation["affected_case_count"]),

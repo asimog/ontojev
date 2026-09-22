@@ -110,8 +110,8 @@ def test_live_replay_produces_real_states_without_jev(runtime, monkeypatch):
     assert run["status"] == "COMPLETED"
     assert run["mode"] == "LIVE"
     assert run["coverage"] == "COMPLETE_FOR_SCOPE"
-    assert run["selected_project_ids"] == ["TEST-B", "TEST-A"] or set(run["selected_project_ids"]) == {"TEST-A", "TEST-B"}
-    assert "TEST-C" not in run["selected_project_ids"], "project below the case floor is excluded"
+    assert run["selected_project_ids"] == ["TCGA-LUAD"], "only the explicit LUAD cohort may be selected"
+    assert "TCGA-LUSC" not in run["selected_project_ids"], "LUAD and LUSC are never pooled"
     assert run["counts"]["states_generated"] == 2
     assert run["provider_usage"]["jev_calls"] == 0
     assert run["provider_usage"]["llm_calls"] == 0
@@ -121,9 +121,10 @@ def test_live_replay_produces_real_states_without_jev(runtime, monkeypatch):
     assert all(row["disposition"] == "GENERATED" for row in states)
     summaries = {row["summary"]["entity"]["gene_id"]: row["summary"] for row in states}
     gene_one = summaries[GENES[0]]
-    assert gene_one["affected_case_total"]["value"] == 32
-    assert gene_one["top_project_share"]["value"] == 0.625
-    assert gene_one["projects_with_mutation_observation"] == 2
+    assert gene_one["affected_case_total"]["value"] == 20
+    assert gene_one["top_project_share"]["availability"] == "NOT_APPLICABLE"
+    assert gene_one["top_project_share"]["value"] is None
+    assert gene_one["projects_with_mutation_observation"] == 1
     gene_two = summaries[GENES[1]]
     assert gene_two["affected_case_total"]["value"] == 5
     assert gene_two["projects_with_mutation_observation"] == 1
@@ -137,10 +138,18 @@ def test_live_replay_produces_real_states_without_jev(runtime, monkeypatch):
     body = detail.json()
     assert body["schema_version"] == 2
     assert body["mode"] == "LIVE"
+    assert body["scope"]["domain"] == "lung cancer"
+    assert body["scope"]["cohort"] == "TCGA-LUAD"
+    assert body["scope"]["projects"] == ["TCGA-LUAD"]
+    assert body["scope"]["comparability"]["within_cohort"]["status"] == "UNVERIFIED"
+    assert body["scope"]["comparability"]["cross_project"]["status"] == "NOT_APPLICABLE"
     assert body["cross_project"]["direction"] == "NOT_EXAMINED"
+    assert body["cross_project"]["comparability_status"] == "NOT_APPLICABLE"
     assert body["provenance"]["gdc_release"] == "Data Release TEST - 2026-01-01"
     assert len(body["provenance"]["methods"]) == len(METHODS)
     assert body["quality"]["duplicate_checks"] == "PASS"
+    assert body["quality"]["acquisition_completeness"] == "COMPLETE"
+    assert body["quality"]["scientific_sufficiency"] in {"PARTIAL", "SUFFICIENT"}
     rankings = client.get(f"/api/runs/{run_id}/rankings").json()
     assert rankings == {"baseline": None, "jev": None}
     projections = client.get(f"/api/runs/{run_id}/projections").json()["items"]
@@ -155,26 +164,49 @@ def test_live_replay_produces_real_states_without_jev(runtime, monkeypatch):
 
     transport = holder["transport"]
     names = [request.endpoint.name for request in transport.requests]
-    assert names.count("cases") == 2
-    assert names.count("gene_expression_values") == 2
+    assert names.count("cases") == 1
+    assert names.count("gene_expression_values") == 1
     assert len(names) <= 20, "replay sweep must stay bounded"
+
+
+def test_missing_value_columns_stay_visible_in_state(runtime, monkeypatch):
+    orchestrator, _, repository = _orchestrator(runtime, monkeypatch, drop_value_columns=2)
+    run_id = orchestrator.run()
+    assert repository.get_run(run_id)["status"] == "COMPLETED"
+    states = repository.list_table("statistical_states", run_id)
+    summaries = {row["summary"]["entity"]["gene_id"]: row["summary"] for row in states}
+    assert summaries[GENES[0]]["expression_availability"] == "OBSERVED"
+
+    client = TestClient(create_app())
+    state = client.get(f"/api/states/{states[0]['state_id']}").json()
+    expression = {row["project_id"]: row for row in state["expression"]["project_results"]}["TCGA-LUAD"]
+    assert expression["availability"] == "PARTIAL", "two missing case columns must keep the lane PARTIAL"
+    assert expression["local"]["n_missing"]["value"] == 2
+    assert expression["local"]["n_returned"]["value"] == 98
+    assert expression["coverage"]["returned_case_columns"]["value"] == 98
+    assert expression["coverage"]["valid_measurements"]["value"] == 98
+    assert expression["coverage"]["missing_measurements"]["value"] == 2
+    assert len(expression["local"]["missing_case_ids"]) == 2
+    assert state["quality"]["acquisition_completeness"] == "COMPLETE"
+    assert state["quality"]["scientific_sufficiency"] == "PARTIAL"
+    assert any("not returned" in entry for entry in state["quality"]["missingness"])
 
 
 def test_project_without_expression_values_skips_expression_calls(runtime, monkeypatch):
     orchestrator, holder, repository = _orchestrator(runtime, monkeypatch,
-                                                     empty_expression_projects={"TEST-B"})
+                                                     empty_expression_projects={"TCGA-LUAD"})
     run_id = orchestrator.run()
     run = repository.get_run(run_id)
     assert run["status"] == "COMPLETED"
     assert run["coverage"] == "COMPLETE_FOR_SCOPE", "an observed absence of expression data is not a partial retrieval"
     states = repository.list_table("statistical_states", run_id)
     summaries = {row["summary"]["entity"]["gene_id"]: row["summary"] for row in states}
-    assert summaries[GENES[0]]["expression_availability"] == "PARTIAL"
-    assert summaries[GENES[0]]["coverage_imbalance"] is True
+    assert summaries[GENES[0]]["expression_availability"] == "INSUFFICIENT"
+    assert summaries[GENES[0]]["coverage_imbalance"] is True, "zero expression values for the cohort is flagged"
     names = [request.endpoint.name for request in holder["transport"].requests]
-    assert names.count("gene_expression_availability") == 2
-    assert names.count("gene_expression_gene_selection") == 1
-    assert names.count("gene_expression_values") == 1
+    assert names.count("gene_expression_availability") == 1
+    assert names.count("gene_expression_gene_selection") == 0
+    assert names.count("gene_expression_values") == 0
 
 
 def test_controlled_file_record_fails_closed(runtime, monkeypatch):

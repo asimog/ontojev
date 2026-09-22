@@ -12,7 +12,7 @@ Proposed version `1`. These are application-owned schemas, not claims about prov
 
 `SourceRef = {request_id, response_artifact_id, response_sha256, endpoint, normalized_request_hash, retrieved_at, source_release: string|null, release_status: KNOWN|UNVERIFIED, parser_version, json_pointer_or_table_locator, completeness}`.
 
-`Population = {population_id, definition, program, project, modality, sample_type, workflow, pipeline_version, eligible_n: int|null, selected_n, observed_n, excluded_counts_by_reason, case_set_artifact, case_set_hash, sample_mapping_artifact|null, selection_method, selection_version, sweep_offset, completeness, comparability_key}`. Unknown eligible population sizes stay null. Mapping absent from an API response is not inferred from a gene name or case match.
+`Population = {population_id, definition, program, project, modality, sample_type, workflow, pipeline_version, eligible_n: int|null, examined_n, excluded_counts_by_reason, case_set_artifact, case_set_hash, sample_mapping_artifact|null, selection_method, selection_version, sweep_offset, completeness, harmonization_context}`. `eligible_n` is the cohort case count, `examined_n` is the case frame actually returned; they are distinct. Per-modality counts (assay-available, returned, valid, missing) live on the modality result, not on one generic population count. Unknown eligible population sizes stay null. Mapping absent from an API response is not inferred from a gene name or case match.
 
 ## ResearchRun
 
@@ -64,12 +64,15 @@ Phase 2 implements **schema version 2** (real GDC). The Phase 0 planning shape a
 StatisticalState v2 (mode LIVE)
   state_id, schema_version: 2, state_hash, created_at, run_id
   entity: {gene_id, gene_symbol, biotype, is_cancer_gene_census, genome_build|null}
-  scope: {programs[], projects[], modalities: ["mutation_counts", "expression_summary"],
-          workflows[], sample_types[], examined_case_frame, comparability_groups[]}
+  scope: {domain, cohort, programs[], projects[],
+          modalities: ["mutation_counts", "expression_summary"],
+          workflows[], sample_types[], examined_case_frame,
+          comparability: {statuses[], within_cohort: {status, reason},
+                          cross_project: {status, reason}}}
   generation: {lane_ids[], lane_versions[], discovery: {method_id, examined_genes_n,
                selection_bias}, rank_in_lane, source_hit_refs[]}
   populations: Population[]
-  mutation: {availability, project_results: MutationSummary[],
+  mutation: {availability, absence_semantics, project_results: MutationSummary[],
              coverage: {case_with_ssm: Metric, project_case_count: Metric}}
   expression: {availability, project_results: ExpressionSummary[],
                coverage: {cases_with_expression: Metric, examined_cases: Metric}}
@@ -77,17 +80,21 @@ StatisticalState v2 (mode LIVE)
                   affected_case_total: Metric, top_project_share: Metric,
                   expression_median_min: Metric, expression_median_max: Metric,
                   coverage_imbalance: bool, direction: "NOT_EXAMINED",
-                  noncomparable_groups[], notes[]}
+                  comparability_status: "NOT_APPLICABLE", notes[]}
   quality: {api_warnings[], missingness[], duplicate_checks, finite_checks,
-            truncation, completeness}
+            truncation, completeness, acquisition_completeness,
+            scientific_sufficiency, acquisition_completeness_definition,
+            scientific_sufficiency_definition}
   tested_context: {examined_genes_ref, examined_genes_hash, discovery_method,
                    selection_bias, coverage}
   provenance: {gdc_release, sources: SourceRef[], methods: MethodRef[], environment_hash}
 ```
 
-`MutationSummary = {project_id, population_id, affected_case_count: Metric(unit "cases"), project_case_with_ssm: Metric, project_case_count: Metric, provider_discovery_rank: {rank, score, lane_id}|null}`. A provider ranking score is explicitly tagged as selection metadata and cannot fill a count, fraction, p-value or effect field. An absent project bucket is `NOT_OBSERVED`, never zero. No recurrence fraction is stored because no matched denominator exists (see SCIENTIFIC_INVARIANTS).
+`domain`/`cohort` name the single explicitly examined cohort (Phase 2: `lung cancer` / `TCGA-LUAD`). `comparability` carries explicit statuses; GDC harmonization, common project membership and an empty incompatibility list do **not** establish comparability, so `within_cohort` stays `UNVERIFIED` and `cross_project` is `NOT_APPLICABLE` for one cohort. `acquisition_completeness` describes only whether requested provider responses were acquired in full; `scientific_sufficiency` separately describes whether the acquired evidence is sufficient (`SUFFICIENT`/`PARTIAL`/`INSUFFICIENT`).
 
-`ExpressionSummary = {project_id, population_id, unit: "log2(UQFPKM+1)", transformation: "log2(x+1)", local: {median, sample_sd, minimum, maximum, n_finite, n_missing: Metric, method_id}, provider: {median, stddev: Metric, source: "GENE_SELECTION", estimator_note}, coverage: {cases_with_expression: Metric, examined_cases: Metric}}`. The local summary is the primary evidence; the provider summary is retained verbatim as corroborating context with its estimator convention marked unverified; per-project coverage metrics make expression missingness first-class state.
+`MutationSummary = {project_id, population_id, examined_cases: Metric, affected_case_count: Metric(unit "cases"), project_case_with_ssm: Metric, project_case_count: Metric, provider_discovery_rank: {rank, score, lane_id}|null}`. A provider ranking score is explicitly tagged as selection metadata, is excluded from scientific identity, and cannot fill a count, fraction, p-value or effect field. An absent project bucket is `NOT_OBSERVED`, never zero, wildtype or a callable negative. No recurrence fraction is stored because no matched denominator exists (see SCIENTIFIC_INVARIANTS).
+
+`ExpressionSummary = {project_id, population_id, unit: "log2(UQFPKM+1)", transformation: "log2(x+1)", local: {median, sample_sd, minimum, maximum, n_finite, n_missing, n_returned, n_missing_case_columns: Metric, missing_case_ids[], method_id}, provider: {median, stddev: Metric, source: "GENE_SELECTION", estimator_note}, coverage: {examined_cases, assay_available_cases, cases_with_expression, returned_case_columns, valid_measurements, missing_measurements: Metric}}`. The local summary is the primary evidence; `n_missing` includes examined case columns the provider did not return, so a fully valid returned subset never reports zero missingness. The provider summary is retained verbatim as corroborating context with its estimator convention marked unverified.
 
 Cross-project direction is `NOT_EXAMINED`: mutation counts and expression dispersion carry no signed, comparable up/down effect. CNV summaries and recurrence fractions are Phase 4+ targets requiring their own methods; the Phase 0 planning shape is preserved only in this paragraph as intent.
 

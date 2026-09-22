@@ -15,10 +15,10 @@ from cancerjev.gdc.endpoints import GDCRequest
 from cancerjev.gdc.transport import GDCResponse
 from cancerjev.storage.artifacts import ArtifactStore
 
-PROJECTS = {"TEST-A": 100, "TEST-B": 80, "TEST-C": 10}
+PROJECTS = {"TCGA-LUAD": 100, "TCGA-LUSC": 80, "TEST-C": 10}
 GENES = ["ENSG00000000001", "ENSG00000000002"]
-COUNTS = {"TEST-A": {GENES[0]: 20, GENES[1]: 5}, "TEST-B": {GENES[0]: 12}}
-COVERAGE = {"TEST-A": 95, "TEST-B": 70}
+COUNTS = {"TCGA-LUAD": {GENES[0]: 20, GENES[1]: 5}}
+COVERAGE = {"TCGA-LUAD": 95}
 
 
 def _json(payload: Any) -> bytes:
@@ -136,10 +136,11 @@ def gene_selection_body(case_ids_requested: list[str], gene_ids: list[str]) -> b
     ]})
 
 
-def values_body(case_ids_requested: list[str], gene_ids: list[str]) -> bytes:
-    lines = ["gene_id\t" + "\t".join(case_ids_requested)]
+def values_body(case_ids_requested: list[str], gene_ids: list[str], *, drop_columns: int = 0) -> bytes:
+    returned = case_ids_requested[: len(case_ids_requested) - drop_columns] if drop_columns else case_ids_requested
+    lines = ["gene_id\t" + "\t".join(returned)]
     for gene_index, gene_id in enumerate(gene_ids):
-        cells = [f"{3.0 + gene_index + (index % 7) * 0.5:.4f}" for index in range(len(case_ids_requested))]
+        cells = [f"{3.0 + gene_index + (index % 7) * 0.5:.4f}" for index in range(len(returned))]
         lines.append(gene_id + "\t" + "\t".join(cells))
     return ("\n".join(lines) + "\n").encode()
 
@@ -148,12 +149,14 @@ class ReplayTransport:
     """Network-boundary test double: real artifacts, real shapes, no sockets."""
 
     def __init__(self, artifacts: ArtifactStore, run_id: str, *, controlled_files: bool = False,
-                 incomplete_frame: bool = False, empty_expression_projects: set[str] | None = None) -> None:
+                 incomplete_frame: bool = False, empty_expression_projects: set[str] | None = None,
+                 drop_value_columns: int = 0) -> None:
         self.artifacts = artifacts
         self.run_id = run_id
         self.controlled_files = controlled_files
         self.incomplete_frame = incomplete_frame
         self.empty_expression_projects = empty_expression_projects or set()
+        self.drop_value_columns = drop_value_columns
         self.requests: list[GDCRequest] = []
         self._counter = 0
 
@@ -191,7 +194,8 @@ class ReplayTransport:
         elif name == "gene_expression_values":
             project = self._project_of(request.body["case_ids"])
             assert project not in self.empty_expression_projects, "guard failed: values requested without values"
-            body = values_body(request.body["case_ids"], request.body["gene_ids"])
+            body = values_body(request.body["case_ids"], request.body["gene_ids"],
+                               drop_columns=self.drop_value_columns)
         else:  # pragma: no cover - guards against silent fixture drift
             raise AssertionError(f"replay transport has no fixture for {name}")
         media = "text/tab-separated-values" if request.accept != "application/json" else "application/json"

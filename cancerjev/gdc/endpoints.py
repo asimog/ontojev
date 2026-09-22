@@ -153,6 +153,24 @@ def projects_request(size: int = MAX_PROJECTS_PAGE) -> GDCRequest:
     )
 
 
+def cohort_project_request(project_id: str) -> GDCRequest:
+    """Fetch exactly one project record for an explicitly named cohort."""
+    if not project_id or len(project_id) > 128:
+        raise EndpointError("cohort project_id is invalid")
+    return _request(
+        resolve_endpoint("GET", "/projects"),
+        {
+            "size": 1,
+            "filters": _filter_json({"op": "in", "content": {"field": "project_id", "value": [project_id]}}),
+            "fields": ",".join((
+                "project_id", "name", "program.name", "primary_site", "disease_type",
+                "summary.case_count", "summary.file_count", "summary.data_categories.data_category",
+            )),
+        },
+        logical_query_id=f"inventory:cohort:{project_id}",
+    )
+
+
 def cases_request(project_id: str, size: int = MAX_CASES_PAGE) -> GDCRequest:
     if not 1 <= size <= MAX_CASES_PAGE:
         raise EndpointError(f"cases size must be 1..{MAX_CASES_PAGE}")
