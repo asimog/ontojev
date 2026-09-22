@@ -1,26 +1,23 @@
-"""Deterministic wide ranking: baseline and Jev policy over persisted dimensions.
-
-The baseline is always computed from deterministic state fields; the Jev ranking
-uses only persisted raw judgment vectors. Both are retained so Phase 3 can
-compare baseline vs baseline+Jev on the same states. Jev never replaces the
-baseline, and no opaque master score is created.
-"""
+"""Deterministic baseline and bounded Jev admission over persisted judgments."""
 
 from __future__ import annotations
 
 from typing import Any
 
-BASELINE_POLICY_VERSION = "baseline-wide-v1"
-JEV_POLICY_VERSION = "wide-policy-v1"
+BASELINE_POLICY_VERSION = "baseline-wide-v2"
+JEV_POLICY_VERSION = "wide-policy-v2"
 PROMOTION_LIMIT = 3
-PATTERN_PRIORITY = (
-    "WIDESPREAD_RECURRENCE",
-    "PROJECT_SPECIFIC_EXCEPTION",
-    "WEAK_DISTRIBUTED_SIGNAL",
-    "NO_COHERENT_PATTERN",
-    "DATA_QUALITY_CONCERN",
-    "INSUFFICIENT_EVIDENCE",
-)
+ADMISSION_MIN_WARRANTS = 0.60
+ADMISSION_MIN_UNCERTAINTY = 0.50
+ADMISSION_MIN_QUALITY = 0.40
+ADMISSION_MAX_CONFOUND = 0.50
+
+_ADMISSION_THRESHOLDS = {
+    "warrants_deeper_investigation_min": ADMISSION_MIN_WARRANTS,
+    "unresolved_uncertainty_material_min": ADMISSION_MIN_UNCERTAINTY,
+    "evidence_quality_adequate_min": ADMISSION_MIN_QUALITY,
+    "signal_explained_by_coverage_max": ADMISSION_MAX_CONFOUND,
+}
 
 
 def _metric_value(metric: dict[str, Any] | None) -> float | None:
@@ -29,25 +26,41 @@ def _metric_value(metric: dict[str, Any] | None) -> float | None:
     return metric.get("value")
 
 
+def _project_result(state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    project_ids = state["scope"]["projects"]
+    project_id = state["scope"].get("project_id")
+    if len(project_ids) != 1:
+        return {}, state["cross_project"]
+    project_id = project_id or project_ids[0]
+    if project_id != project_ids[0]:
+        return {}, state["cross_project"]
+    mutation = next(
+        (result for result in state["mutation"]["project_results"] if result["project_id"] == project_id),
+        {},
+    )
+    return mutation, state["cross_project"]
+
+
 def baseline_ranking(states: list[dict[str, Any]]) -> dict[str, Any]:
     entries = []
     for state in states:
-        cross = state["cross_project"]
+        mutation, scope = _project_result(state)
+        affected = mutation.get("affected_case_count")
         entries.append({
             "state_id": state["state_id"],
             "state_hash": state["state_hash"],
             "gene_symbol": state["entity"]["gene_symbol"],
             "dimensions": {
-                "projects_with_mutation_observation": cross["projects_with_mutation_observation"],
-                "affected_case_total": _metric_value(cross["affected_case_total"]),
-                "top_project_share": _metric_value(cross["top_project_share"]),
-                "coverage_imbalance": cross["coverage_imbalance"],
+                "affected_cases": _metric_value(affected),
+                "mutation_observed": bool(affected and affected.get("availability") == "OBSERVED"),
+                "coverage_imbalance": scope["coverage_imbalance"],
             },
         })
     entries.sort(key=lambda entry: (
-        -entry["dimensions"]["projects_with_mutation_observation"],
-        -(entry["dimensions"]["affected_case_total"] or -1.0),
-        entry["dimensions"]["top_project_share"] if entry["dimensions"]["top_project_share"] is not None else 1.1,
+        -(entry["dimensions"]["affected_cases"]
+          if entry["dimensions"]["affected_cases"] is not None else -1.0),
+        -int(entry["dimensions"]["mutation_observed"]),
+        entry["dimensions"]["coverage_imbalance"],
         entry["state_hash"],
     ))
     for rank, entry in enumerate(entries, start=1):
@@ -55,71 +68,146 @@ def baseline_ranking(states: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "policy_version": BASELINE_POLICY_VERSION,
         "kind": "BASELINE",
-        "ordering": (
-            "projects_with_mutation_observation desc, affected_case_total desc, top_project_share asc, "
-            "state_hash asc"
-        ),
+        "ordering": "affected_cases desc, mutation_observed desc, coverage_imbalance asc, state_hash asc",
         "entries": entries,
-        "admitted_state_ids": [entry["state_id"] for entry in entries[:PROMOTION_LIMIT]],
+        "top_state_ids": [entry["state_id"] for entry in entries[:PROMOTION_LIMIT]],
+        "admitted_state_ids": [],
     }
 
 
 def _applicable(evaluation: dict[str, Any], question_id: str) -> bool:
-    return bool(evaluation.get("applicability", {}).get(question_id, {}).get("applicable"))
+    return evaluation.get("applicability", {}).get(question_id, {}).get("applicable") is True
+
+
+def _eligibility_exclusions(state: dict[str, Any]) -> list[str]:
+    mutation, _ = _project_result(state)
+    reasons = []
+    if state["quality"]["completeness"] != "COMPLETE":
+        reasons.append("INCOMPLETE_ACQUISITION")
+    if not mutation.get("affected_case_count") or mutation["affected_case_count"].get("availability") != "OBSERVED":
+        reasons.append("MUTATION_NOT_OBSERVED")
+    if state["expression"]["availability"] not in {"OBSERVED", "PARTIAL"}:
+        reasons.append("EXPRESSION_NOT_OBSERVED")
+    return reasons
+
+
+def _answer_probability(evaluation: dict[str, Any], question_id: str) -> float | None:
+    if not _applicable(evaluation, question_id):
+        return None
+    answer = evaluation.get("answers", {}).get(question_id)
+    if not answer or answer.get("kind") != "noul":
+        return None
+    return answer["probability_yes"]
+
+
+def _admission_exclusions(state: dict[str, Any], evaluation: dict[str, Any]) -> list[str]:
+    reasons = _eligibility_exclusions(state)
+    if reasons:
+        return reasons
+
+    thresholds = (
+        ("warrants_deeper_investigation", ADMISSION_MIN_WARRANTS),
+        ("unresolved_uncertainty_material", ADMISSION_MIN_UNCERTAINTY),
+        ("evidence_quality_adequate", ADMISSION_MIN_QUALITY),
+    )
+    for question_id, threshold in thresholds:
+        probability = _answer_probability(evaluation, question_id)
+        if probability is None:
+            reasons.append(f"JUDGMENT_UNAVAILABLE:{question_id}")
+        elif probability < threshold:
+            reasons.append(f"BELOW_ADMISSION_THRESHOLD:{question_id}")
+
+    if _applicable(evaluation, "signal_explained_by_coverage"):
+        confound = _answer_probability(evaluation, "signal_explained_by_coverage")
+        if confound is None:
+            reasons.append("JUDGMENT_UNAVAILABLE:signal_explained_by_coverage")
+        elif confound > ADMISSION_MAX_CONFOUND:
+            reasons.append("ABOVE_ADMISSION_THRESHOLD:signal_explained_by_coverage")
+    return reasons
+
+
+def _raw_dimensions(evaluation: dict[str, Any]) -> dict[str, Any]:
+    answers = evaluation.get("answers", {})
+    dimensions = {
+        question_id: answer.get("probability_yes")
+        for question_id, answer in answers.items()
+        if answer.get("kind") == "noul"
+    }
+    limitation = answers.get("dominant_limitation", {})
+    if limitation.get("kind") == "choice":
+        dimensions.update({
+            "dominant_limitation": limitation["choice"],
+            "dominant_limitation_confidence": limitation["confidence"],
+            "dominant_limitation_probabilities": limitation["probabilities"],
+        })
+    dimensions["applicability"] = evaluation.get("applicability", {})
+    dimensions["cache_source_evaluation_id"] = evaluation.get("cache_source_evaluation_id")
+    return dimensions
 
 
 def jev_ranking(states: list[dict[str, Any]], evaluations: list[dict[str, Any]]) -> dict[str, Any]:
-    by_state = {
-        evaluation["input_ref_id"]: evaluation
-        for evaluation in evaluations if evaluation.get("error") is None
-    }
+    by_state = {evaluation["input_ref_id"]: evaluation for evaluation in evaluations}
     entries = []
     for state in states:
         evaluation = by_state.get(state["state_id"])
+        exclusion_reasons = _eligibility_exclusions(state)
         if evaluation is None:
-            continue
-        answers = evaluation["answers"]
-        warrants_applicable = _applicable(evaluation, "warrants_deeper_investigation")
-        fragile_applicable = _applicable(evaluation, "likely_fragile")
-        pattern_applicable = _applicable(evaluation, "pattern_type")
-        pattern = answers.get("pattern_type", {}).get("choice") if pattern_applicable else None
+            exclusion_reasons.append("EVALUATION_MISSING")
+        elif evaluation.get("error") is not None:
+            exclusion_reasons.append("EVALUATION_FAILED")
+        else:
+            exclusion_reasons = _admission_exclusions(state, evaluation)
+        dimensions = _raw_dimensions(evaluation) if evaluation and evaluation.get("error") is None else {}
+        mutation, _ = _project_result(state)
         entries.append({
             "state_id": state["state_id"],
             "state_hash": state["state_hash"],
             "gene_symbol": state["entity"]["gene_symbol"],
-            "evaluation_id": evaluation["evaluation_id"],
+            "evaluation_id": evaluation.get("evaluation_id") if evaluation else None,
             "dimensions": {
-                "warrants_deeper_investigation": (
-                    answers["warrants_deeper_investigation"]["probability_yes"] if warrants_applicable else None
-                ),
-                "likely_fragile": (
-                    answers["likely_fragile"]["probability_yes"] if fragile_applicable else None
-                ),
-                "pattern_type": pattern,
-                "pattern_type_confidence": (
-                    answers["pattern_type"]["confidence"] if pattern_applicable else None
-                ),
-                "applicability": evaluation["applicability"],
-                "cache_source_evaluation_id": evaluation.get("cache_source_evaluation_id"),
+                **dimensions,
+                "affected_cases": _metric_value(mutation.get("affected_case_count")),
             },
+            "qualified": not exclusion_reasons,
+            "excluded_reason": "; ".join(exclusion_reasons) or None,
         })
     entries.sort(key=lambda entry: (
-        -(entry["dimensions"]["warrants_deeper_investigation"]
-          if entry["dimensions"]["warrants_deeper_investigation"] is not None else -1.0),
-        entry["dimensions"]["likely_fragile"] if entry["dimensions"]["likely_fragile"] is not None else 1.0,
-        PATTERN_PRIORITY.index(entry["dimensions"]["pattern_type"])
-        if entry["dimensions"]["pattern_type"] in PATTERN_PRIORITY else len(PATTERN_PRIORITY),
+        not entry["qualified"],
+        -(entry["dimensions"].get("warrants_deeper_investigation")
+          if entry["dimensions"].get("warrants_deeper_investigation") is not None else -1.0),
+        -(entry["dimensions"].get("unresolved_uncertainty_material")
+          if entry["dimensions"].get("unresolved_uncertainty_material") is not None else -1.0),
+        -(entry["dimensions"].get("evidence_quality_adequate")
+          if entry["dimensions"].get("evidence_quality_adequate") is not None else -1.0),
+        entry["dimensions"].get("signal_explained_by_coverage")
+        if entry["dimensions"].get("signal_explained_by_coverage") is not None else 1.0,
+        -(entry["dimensions"].get("affected_cases")
+          if entry["dimensions"].get("affected_cases") is not None else -1.0),
         entry["state_hash"],
     ))
     for rank, entry in enumerate(entries, start=1):
         entry["rank"] = rank
+
+    qualifiers = [entry for entry in entries if entry["qualified"]]
+    admitted = [entry["state_id"] for entry in qualifiers[:PROMOTION_LIMIT]]
+    decision = "ADMIT" if admitted else "ABSTAIN"
     return {
         "policy_version": JEV_POLICY_VERSION,
         "kind": "JEV",
         "ordering": (
-            "warrants_deeper_investigation desc, likely_fragile asc, pattern_type class priority, "
-            "state_hash asc; inapplicable dimensions sort last"
+            "qualified first, warrants_deeper_investigation desc, unresolved_uncertainty_material desc, "
+            "evidence_quality_adequate desc, signal_explained_by_coverage asc, affected_cases desc, state_hash asc"
         ),
         "entries": entries,
-        "admitted_state_ids": [entry["state_id"] for entry in entries[:PROMOTION_LIMIT]],
+        "admitted_state_ids": admitted,
+        "admission": {
+            "decision": decision,
+            "thresholds": dict(_ADMISSION_THRESHOLDS),
+            "promotion_limit": PROMOTION_LIMIT,
+            "states": [
+                {"state_id": entry["state_id"], "qualified": entry["qualified"],
+                 "excluded_reason": entry["excluded_reason"]}
+                for entry in entries
+            ],
+        },
     }

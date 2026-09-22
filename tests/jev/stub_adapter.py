@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from cancerjev.jev.questions import PATTERN_ROSTER, QuestionDefinition
+from cancerjev.jev.questions import LIMITATION_ROSTER, QuestionDefinition
 from cancerjev.jev.typesafe_adapter import ProviderAnswerSet
 
 
@@ -25,25 +25,20 @@ class StubAdapter:
         self.last_state = state
         if self.fail:
             raise JevProviderError("PROVIDER_ERROR", "stub provider failure")
-        affected = sum(observation["affected_cases"] or 0 for observation in state["project_observations"])
-        projects = len(state["project_observations"])
-        warrants = min(0.99, affected / 500.0)
-        fragile = state["cross_project"]["top_project_share"]
-        fragile = 0.5 if fragile is None else min(0.99, fragile)
-        pattern = "WIDESPREAD_RECURRENCE" if projects >= 3 else "INSUFFICIENT_EVIDENCE"
-        probabilities = {option: (1.0 - 0.05) if option == pattern else 0.05 / (len(PATTERN_ROSTER) - 1)
-                         for option in PATTERN_ROSTER}
+        limitation = "COVERAGE" if state["cohort"]["coverage_imbalance"] else "NONE"
+        probabilities = {
+            option: (0.88 if option == limitation else 0.12 / (len(LIMITATION_ROSTER) - 1))
+            for option in LIMITATION_ROSTER
+        }
         answers = {
-            "warrants_deeper_investigation": {"kind": "noul", "probability_yes": warrants},
-            "mutation_project_exception": {"kind": "noul", "probability_yes": 0.4},
-            "expression_project_exception": {"kind": "noul", "probability_yes": 0.3},
-            "coverage_explains_apparent_difference": {
-                "kind": "noul",
-                "probability_yes": 0.8 if state["cross_project"]["coverage_imbalance"] else 0.1,
-            },
-            "likely_fragile": {"kind": "noul", "probability_yes": fragile},
-            "pattern_type": {
-                "kind": "choice", "choice": pattern, "confidence": 0.9,
+            "evidence_quality_adequate": {"kind": "noul", "probability_yes": 0.85},
+            "mutation_evidence_coherent": {"kind": "noul", "probability_yes": 0.82},
+            "expression_evidence_coherent": {"kind": "noul", "probability_yes": 0.80},
+            "signal_explained_by_coverage": {"kind": "noul", "probability_yes": 0.10},
+            "unresolved_uncertainty_material": {"kind": "noul", "probability_yes": 0.85},
+            "warrants_deeper_investigation": {"kind": "noul", "probability_yes": 0.90},
+            "dominant_limitation": {
+                "kind": "choice", "choice": limitation, "confidence": 0.88,
                 "probabilities": probabilities,
             },
         }

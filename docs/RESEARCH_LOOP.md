@@ -51,10 +51,10 @@ specification `LUAD_RESEARCH_V1`:
    request; a batched cohort records `BATCHED_PROVIDER_SUMMARY_NOT_COHORT_WIDE` rather than
    aggregating per-batch statistics. Deterministic methods produce one immutable
    StatisticalState artifact per gene plus `STATISTICAL_STATE_CREATED`; `WIDE_SCAN_COMPLETED`.
-4. `JEV_WIDE` (Phase 3, same run when enabled): projection per state, one Jev request per state
-   with the `wide-v2` set, validation, persistence, baseline and Jev rankings, bounded candidate
-   promotion. The question set is technically implemented but semantically stale for the
-   single-cohort state (see `docs/JEV_QUESTIONS.md`).
+4. `JEV_WIDE` (Phase 3, same run when enabled): single-cohort projection per state, one Jev
+   request per state with `wide-v3`, validation, persistence, deterministic baseline and Jev
+   admission rankings, and at most three candidate promotions. Incomplete/unobserved evidence is
+   excluded deterministically; a valid zero-admission result is recorded as `ABSTAIN`.
 5. `RUN_COMPLETED` with `coverage = COMPLETE_FOR_SCOPE` or `PARTIAL`, real GDC/Jev usage counters,
    and zero LLM calls.
 

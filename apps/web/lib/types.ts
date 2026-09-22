@@ -102,8 +102,17 @@ export type WideRankingEntry = {
   state_hash: string;
   gene_symbol: string;
   rank: number;
-  evaluation_id?: string;
+  evaluation_id?: string | null;
   dimensions: Record<string, unknown>;
+  qualified?: boolean;
+  excluded_reason?: string | null;
+};
+
+export type WideAdmission = {
+  decision: "ADMIT" | "ABSTAIN";
+  thresholds: Record<string, number>;
+  promotion_limit: number;
+  states: Array<{ state_id: string; qualified: boolean; excluded_reason: string | null }>;
 };
 
 export type WideRanking = {
@@ -111,7 +120,9 @@ export type WideRanking = {
   kind: "BASELINE" | "JEV";
   ordering: string;
   entries: WideRankingEntry[];
+  top_state_ids?: string[];
   admitted_state_ids: string[];
+  admission?: WideAdmission;
 };
 
 export type RunEvent = {

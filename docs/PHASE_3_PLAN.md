@@ -1,14 +1,14 @@
 # Phase 3 implementation plan — TCGA-LUAD Wide Jev semantic/admission redesign
 
-Status: **PLAN (not implemented).** Step 2 of the sequence in `docs/IMPLEMENTATION_STATUS.md`.
-Step 1 (targeted pre-Phase-3 readiness audit) is complete (`docs/SOURCE_REVIEW.md`).
+Status: **IMPLEMENTED (2026-09-23).** This document is the completed Phase 3 design and acceptance
+record. The implementation and observed live result are in `docs/IMPLEMENTATION_STATUS.md`.
 
 Authority: `docs/SOURCE_REVIEW.md` (GDC docs + TypeSafe docs), `docs/JEV_DESIGN.md`,
 `docs/JEV_QUESTIONS.md`, `docs/ARCHITECTURE.md`, `docs/SCIENTIFIC_INVARIANTS.md`, and the
 implemented code referenced by file and line.
 
-This plan fully specifies the redesign so it can be implemented as one bounded task. It changes no
-code. It does not implement Deep Jev, Phase 4, or any LLM path.
+The detailed sections preserve the original bounded design specification. The implementation does
+not add Deep Jev, Phase 4, or any LLM path.
 
 ---
 
@@ -203,8 +203,8 @@ OTHER: a limitation outside the listed options dominates.
 
 Design notes:
 
-- Questions 1–3 are the three separated dimensions; 4 is the confound; 5–6 are the value of
-  investigation; 7 names the uncertainty a follow-up would target.
+- Questions 1–3 are the three separated dimensions; 4 is the confound; 5–6 judge uncertainty and
+  investigation value; 7 names the dominant limitation.
 - `dominant_limitation` is a Choice because the alternatives are genuinely mutually exclusive and
   closed. It is **not** used to rank and computes nothing deterministic.
 - No Score is introduced. No deterministic fact (counts, shares, flags) is asked of the model.
@@ -239,9 +239,9 @@ New `JEV_POLICY_VERSION = "wide-policy-v2"`. `PROMOTION_LIMIT = 3` remains a **m
 Deterministic eligibility gate (no Jev; applied before any dimension is read):
 
 ```text
-cohort.completeness == "COMPLETE"
-cohort.mutation_observed is True
-expression availability in {"OBSERVED", "PARTIAL"}
+state.quality.completeness == "COMPLETE"
+the single project's affected_case_count metric is "OBSERVED"
+state.expression.availability in {"OBSERVED", "PARTIAL"}
 ```
 
 Admission (raw Noul dimensions, only when applicable):
@@ -300,7 +300,8 @@ may be empty. Raw Noul probabilities, the full Choice distribution, every applic
 - `JEV_WIDE_STARTED` reports `question_set: "wide-v3"`.
 - `WIDE_RANKING_COMPLETED` gains `admission_decision` and `thresholds`; `JEV_WIDE_COMPLETED` gains
   `admission_decision` and may report `promoted: 0`.
-- Ranking artifacts (`baseline_ranking.json`, `jev_ranking.json`) include the `admission` block.
+- `jev_ranking.json` includes the `admission` block; the baseline artifact records `top_state_ids`
+  for comparison and has no admission authority.
 - `/api/runs/{id}/rankings` needs no route change (it returns artifacts verbatim).
 - UI: update `WideJudgment.tsx` label map, `WideRanking.tsx` dimension labels, and
   `RunDetail.tsx:154-173` summary for the v3 IDs; display `admission_decision` and show `ABSTAIN`
@@ -308,23 +309,21 @@ may be empty. Raw Noul probabilities, the full Choice distribution, every applic
 
 ---
 
-## 5. Implementation steps (ordered, file-by-file)
+## 5. Completed implementation (ordered, file-by-file)
 
-1. `cancerjev/jev/projection.py` — rewrite `build_projection`, `INCLUDED_FIELDS`,
+1. **Implemented** `cancerjev/jev/projection.py` — rewrite `build_projection`, `INCLUDED_FIELDS`,
    `_limitations`; bump `PROJECTION_VERSION` to `jev-state-projection-v2`. Keep the byte cap.
-2. `cancerjev/jev/questions.py` — replace `WIDE_QUESTIONS`, `PATTERN_ROSTER`; bump
+2. **Implemented** `cancerjev/jev/questions.py` — replace `WIDE_QUESTIONS`, `PATTERN_ROSTER`; bump
    `WIDE_QUESTION_SET_VERSION` to `wide-v3`; add `mutation_observed`/`expression_observed`
    applicability rules and update the validation allow list.
-3. `cancerjev/research/ranking.py` — new `baseline-wide-v2`; new `wide-policy-v2` with the
+3. **Implemented** `cancerjev/research/ranking.py` — new `baseline-wide-v2`; new `wide-policy-v2` with the
    eligibility gate, admission rule, threshold constants and `admission` block; keep raw dimensions.
-4. `cancerjev/research/wide.py` — emit `question_set: wide-v3`, surface `admission_decision`,
+4. **Implemented** `cancerjev/research/wide.py` — emit `question_set: wide-v3`, surface `admission_decision`,
    tolerate zero promotions.
-5. `apps/web/components/WideJudgment.tsx`, `apps/web/components/WideRanking.tsx`,
+5. **Implemented** `apps/web/components/WideJudgment.tsx`, `apps/web/components/WideRanking.tsx`,
    `apps/web/components/RunDetail.tsx` — v3 labels, admission/`ABSTAIN` display.
-6. Tests (§6).
-7. Docs (§7).
-
-No production code is changed by this planning task.
+6. **Implemented and verified** focused regression, replay, and provider-contract tests (§6).
+7. **Updated** active design/status/testing documentation (§7).
 
 ---
 
@@ -332,7 +331,7 @@ No production code is changed by this planning task.
 
 All offline and provider-free by default:
 
-- **Projection v2**: deterministic bytes for a fixed state; no `cross_project` key; hash stable;
+- **Projection v2**: deterministic bytes for a fixed state; rejects multi-project input; no `cross_project` key; hash stable;
   byte-cap fail-closed; each included field copied from the state (no recomputation); a state with
   no expression yields `expression_observed = false` and null summaries.
 - **Questions v3**: validates at import; question-set hash changes from v2; the applicability table
@@ -344,11 +343,11 @@ All offline and provider-free by default:
   non-`COMPLETE`/unobserved states; a threshold miss yields `admission_decision = "ABSTAIN"` with
   zero admissions; promotion count never exceeds `PROMOTION_LIMIT`; raw dimensions and the
   `admission` block persisted; baseline and Jev rankings cover the same states.
-- **Cache**: v2 and v3 evaluations never collide; a v3 cache hit yields zero provider usage.
+- **Cache**: repeated v3 evaluations use persisted cache with zero provider usage; projection and question versions are part of inference identity.
 - **Orchestration (replay)**: a `--jev` run with a stub adapter produces v3 evaluations, rankings
   and either promotions or an explicit `ABSTAIN`.
 - **Adversarial**: a failed/malformed evaluation defers its state rather than scoring it.
-- **Live**: existing `live_jev` opt-in unchanged; no live call in this task.
+- **Live**: a fresh bounded `run --live --jev` used anonymous GDC responses and ten real TypeSafe evaluations; observed `ABSTAIN` and zero promotions (details in implementation status).
 
 ---
 
@@ -357,28 +356,28 @@ All offline and provider-free by default:
 | Document | Change |
 |---|---|
 | `docs/PHASE_3_PLAN.md` | This plan (the redesign specification). |
-| `docs/JEV_QUESTIONS.md` | Add the planned `wide-v3` specification; keep `wide-v2` as stale history; describe planned `wide-policy-v2`. |
-| `docs/JEV_DESIGN.md` | Mark projection v2 and policy v2 as PLANNED; state the admission rule is explicit and may admit zero. |
-| `docs/IMPLEMENTATION_STATUS.md` | Record the plan and the redesign's planned versions; keep step 2 as NEXT. |
-| `docs/GDC_BUDGETS.md` | Planned judgment count becomes seven questions per state. |
-| `docs/TESTING.md` | Add the planned Phase 3 redesign gates. |
-| `docs/ARCHITECTURE.md` | Note the planned single-cohort Wide redesign and admission policy. |
-| `docs/SCIENTIFIC_INVARIANTS.md` | Add that zero admissions / `ABSTAIN` is a valid, non-failure outcome and that Jev admission confers no significance. |
+| `docs/JEV_QUESTIONS.md` | Record implemented `wide-v3`, historical `wide-v2`, applicability, and admission policy. |
+| `docs/JEV_DESIGN.md` | Mark projection v2 and policy v2 as implemented; describe zero-admission behavior. |
+| `docs/IMPLEMENTATION_STATUS.md` | Record implementation, live run, test results and next evaluation step. |
+| `docs/GDC_BUDGETS.md` | Record seven implemented judgments per state. |
+| `docs/TESTING.md` | Record implemented regression gates and live acceptance path. |
+| `docs/ARCHITECTURE.md` | Record the implemented single-cohort Wide path and admission policy. |
+| `docs/SCIENTIFIC_INVARIANTS.md` | Verified existing invariant already states zero admissions / `ABSTAIN` is valid and Jev admission confers no significance. |
 
 ---
 
 ## 8. Acceptance criteria
 
-1. `wide-v3` is the current set; `wide-v2` is retained only as history.
-2. Projection v2 is single-cohort with no misleading cross-project fields.
-3. Questions separate quality, pattern and value; none asks for a deterministic fact.
-4. Applicability is computed in code; inapplicable answers never drive policy.
-5. The admission rule is explicit in `ranking.py`, permits zero admissions, and supports `ABSTAIN`.
-6. The promotion limit is enforced as a maximum.
-7. Baseline and Jev rankings are both persisted for the same states.
-8. No claim of improved scientific decision quality; step 3 remains required.
-9. `python -m ruff check cancerjev apps tests` and `python -m pytest` pass.
-10. No Deep/Phase 4/LLM code is added.
+1. [x] `wide-v3` is the current set; `wide-v2` is retained only as history.
+2. [x] Projection v2 is single-cohort with no misleading cross-project fields.
+3. [x] Questions separate quality, pattern and value; none asks for a deterministic fact.
+4. [x] Applicability is computed in code; inapplicable answers never drive policy.
+5. [x] The admission rule is explicit in `ranking.py`, permits zero admissions, and supports `ABSTAIN`.
+6. [x] The promotion limit is enforced as a maximum.
+7. [x] Baseline and Jev rankings are both persisted for the same states.
+8. [x] No claim of improved scientific decision quality; baseline evaluation remains required.
+9. [x] Python lint, offline regression, frontend build/typecheck, Playwright E2E and bounded live acceptance pass.
+10. [x] No Deep/Phase 4/LLM code is added.
 
 ---
 
@@ -394,13 +393,11 @@ All offline and provider-free by default:
 - **No measurement leakage** — the projection copies measured values; no projection-side
   arithmetic becomes a scientific field.
 
-## 10. Open questions to resolve before coding
+## 10. Resolved design questions
 
-1. Keep `dominant_limitation` in v3? (Recommendation: yes — closed, cheap, names the uncertainty.)
-2. Include any projection-side ratio (e.g. affected share, missing share)? (Recommendation: no —
-   omit ratios not already present in the state.)
-3. Should baseline v2 order on `affected_cases` at all? (Recommendation: keep as a deterministic
-   ordering/display field with the existing no-matched-denominator limitation, never a rate.)
+1. Keep `dominant_limitation` in v3: **yes**, as a closed Choice that names the dominant constraint.
+2. Add projection-side ratios: **no**; the projection copies existing deterministic measurements.
+3. Order baseline v2 on `affected_cases`: **yes**, as an observed count only, never a rate.
 
 ## 11. Out of scope (do not implement here)
 

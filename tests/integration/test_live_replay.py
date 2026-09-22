@@ -152,7 +152,7 @@ def test_live_replay_with_jev_wide_evaluation(runtime, monkeypatch):
     client = TestClient(create_app())
     projections = client.get(f"/api/runs/{run_id}/projections").json()["items"]
     assert len(projections) == 2
-    assert all(row["projection_version"] == "jev-state-projection-v1" for row in projections)
+    assert all(row["projection_version"] == "jev-state-projection-v2" for row in projections)
     assert all(row["source_state_hash"] and row["projection_hash"] for row in projections)
 
     evaluations = client.get(f"/api/runs/{run_id}/evaluations?purpose=WIDE").json()["items"]
@@ -164,18 +164,20 @@ def test_live_replay_with_jev_wide_evaluation(runtime, monkeypatch):
         assert vector["resolved_model"] == "jev-1.13.0"
         assert vector["cache_source_evaluation_id"] is None
         assert set(vector["answers"]) == {
-            "warrants_deeper_investigation", "mutation_project_exception",
-            "expression_project_exception", "coverage_explains_apparent_difference",
-            "likely_fragile", "pattern_type",
+            "evidence_quality_adequate", "mutation_evidence_coherent", "expression_evidence_coherent",
+            "signal_explained_by_coverage", "unresolved_uncertainty_material",
+            "warrants_deeper_investigation", "dominant_limitation",
         }
-        assert vector["applicability"]["pattern_type"]["applicable"] is True
+        assert vector["applicability"]["dominant_limitation"]["applicable"] is True
 
     rankings = client.get(f"/api/runs/{run_id}/rankings").json()
-    assert rankings["baseline"]["policy_version"] == "baseline-wide-v1"
-    assert rankings["jev"]["policy_version"] == "wide-policy-v1"
+    assert rankings["baseline"]["policy_version"] == "baseline-wide-v2"
+    assert rankings["jev"]["policy_version"] == "wide-policy-v2"
     assert len(rankings["baseline"]["entries"]) == 2
     assert len(rankings["jev"]["entries"]) == 2
     assert rankings["jev"]["admitted_state_ids"]
+    assert rankings["jev"]["admission"]["decision"] == "ADMIT"
+    assert rankings["baseline"]["admitted_state_ids"] == []
 
     candidates = client.get(f"/api/runs/{run_id}/candidates").json()["items"]
     assert len(candidates) == 2
@@ -186,6 +188,11 @@ def test_live_replay_with_jev_wide_evaluation(runtime, monkeypatch):
     for event_type in ("JEV_PROJECTION_CREATED", "JEV_WIDE_STARTED", "JEV_WIDE_STATE_EVALUATED",
                        "WIDE_RANKING_COMPLETED", "JEV_WIDE_COMPLETED", "CANDIDATE_PROMOTED"):
         assert event_type in events
+    ranking_event = next(
+        event for event in repository.events(run_id, 0, 500)["items"]
+        if event["type"] == "WIDE_RANKING_COMPLETED"
+    )
+    assert ranking_event["data"]["admission_decision"] == "ADMIT"
     assert not any(event_type.startswith("HYPOTHESES") or event_type.startswith("FOLLOWUP") for event_type in events)
 
 
@@ -412,7 +419,7 @@ def test_run_wide_evaluation_takes_explicit_collaborators(runtime):
     adapter = StubAdapter()
     service = JevService(settings, repository, artifacts, adapter_factory=lambda: adapter)
     run_id = repository.create_run("wide-decoupled", mode="LIVE", fixture_id=None, fixture_version=None)
-    states = [_build([_frame("P1"), _frame("P2"), _frame("P3")])]
+    states = [_build([_frame("TCGA-LUAD")])]
     _register_state(artifacts, repository, run_id, states[0])
     emitted: list[str] = []
     published: list[str] = []
@@ -441,3 +448,33 @@ def test_run_wide_evaluation_takes_explicit_collaborators(runtime):
         "JEV_WIDE_STARTED", "JEV_PROJECTION_CREATED", "JEV_WIDE_STATE_EVALUATED",
         "WIDE_RANKING_COMPLETED", "CANDIDATE_PROMOTED", "JEV_WIDE_COMPLETED",
     ]
+
+
+def test_run_wide_evaluation_abstains_and_defers_provider_failures(runtime):
+    settings, repository, artifacts = runtime
+    service = JevService(settings, repository, artifacts, adapter_factory=lambda: StubAdapter(fail=True))
+    run_id = repository.create_run("wide-provider-failure", mode="LIVE", fixture_id=None, fixture_version=None)
+    state = _build([_frame("TCGA-LUAD")])
+    states = [state]
+    _register_state(artifacts, repository, run_id, state)
+
+    def emit(event_run_id, event_type, key, message, **kwargs):
+        return repository.append_event(event_run_id, event_type=event_type, idempotency_key=key,
+                                       message=message, **kwargs)
+
+    def publish_json(pub_run_id, relative_path, payload, purpose):
+        return artifacts.publish(relative_path, canonical_json(payload), "application/json", purpose)
+
+    result = run_wide_evaluation(
+        run_id=run_id, states=states, coverage="COMPLETE_FOR_SCOPE",
+        repository=repository, jev_service=service, emit=emit, publish_json=publish_json,
+    )
+    assert result["jev"]["admission"]["decision"] == "ABSTAIN"
+    assert result["jev"]["entries"][0]["excluded_reason"] == "EVALUATION_FAILED"
+    assert result["promoted"] == []
+    ranking_event = next(
+        event for event in repository.events(run_id, 0, 100)["items"]
+        if event["type"] == "WIDE_RANKING_COMPLETED"
+    )
+    assert ranking_event["data"]["deferred_state_ids"] == [state["state_id"]]
+    assert ranking_event["data"]["admission_decision"] == "ABSTAIN"

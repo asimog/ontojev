@@ -10,17 +10,18 @@ from cancerjev.jev.questions import WIDE_QUESTIONS, WIDE_QUESTIONS_BY_ID
 
 def _valid_answers() -> dict:
     return {
+        "evidence_quality_adequate": {"kind": "noul", "probability_yes": 0.8},
+        "mutation_evidence_coherent": {"kind": "noul", "probability_yes": 0.6},
+        "expression_evidence_coherent": {"kind": "noul", "probability_yes": 0.7},
+        "signal_explained_by_coverage": {"kind": "noul", "probability_yes": 0.2},
+        "unresolved_uncertainty_material": {"kind": "noul", "probability_yes": 0.75},
         "warrants_deeper_investigation": {"kind": "noul", "probability_yes": 0.8},
-        "mutation_project_exception": {"kind": "noul", "probability_yes": 0.6},
-        "expression_project_exception": {"kind": "noul", "probability_yes": 0.4},
-        "coverage_explains_apparent_difference": {"kind": "noul", "probability_yes": 0.7},
-        "likely_fragile": {"kind": "noul", "probability_yes": 0.3},
-        "pattern_type": {
-            "kind": "choice", "choice": "PROJECT_SPECIFIC_EXCEPTION", "confidence": 0.75,
+        "dominant_limitation": {
+            "kind": "choice", "choice": "COVERAGE", "confidence": 0.75,
             "probabilities": {
-                "WIDESPREAD_RECURRENCE": 0.05, "PROJECT_SPECIFIC_EXCEPTION": 0.75,
-                "WEAK_DISTRIBUTED_SIGNAL": 0.05, "NO_COHERENT_PATTERN": 0.05,
-                "DATA_QUALITY_CONCERN": 0.05, "INSUFFICIENT_EVIDENCE": 0.05,
+                "COVERAGE": 0.75, "MISSINGNESS": 0.05, "MUTATION_ABSENCE": 0.05,
+                "EXPRESSION_SPARSITY": 0.05, "PARTIAL_AGGREGATION": 0.05, "NONE": 0.025,
+                "OTHER": 0.025,
             },
         },
     }
@@ -29,13 +30,13 @@ def _valid_answers() -> dict:
 def test_valid_answers_pass_and_are_normalized():
     validated = validate_answers(WIDE_QUESTIONS, _valid_answers())
     assert validated["warrants_deeper_investigation"] == {"kind": "noul", "probability_yes": 0.8}
-    assert validated["pattern_type"]["choice"] == "PROJECT_SPECIFIC_EXCEPTION"
+    assert validated["dominant_limitation"]["choice"] == "COVERAGE"
     assert set(validated) == {definition.question_id for definition in WIDE_QUESTIONS}
 
 
 def test_missing_answer_fails_closed():
     answers = _valid_answers()
-    del answers["likely_fragile"]
+    del answers["dominant_limitation"]
     with pytest.raises(JevContractError) as exc:
         validate_answers(WIDE_QUESTIONS, answers)
     assert exc.value.code == "MISSING_ANSWER"
@@ -68,7 +69,7 @@ def test_invalid_noul_probability_fails_closed(value):
 
 def test_choice_outside_roster_fails_closed():
     answers = _valid_answers()
-    answers["pattern_type"]["choice"] = "MADE_UP_PATTERN"
+    answers["dominant_limitation"]["choice"] = "MADE_UP_LIMITATION"
     with pytest.raises(JevContractError) as exc:
         validate_answers(WIDE_QUESTIONS, answers)
     assert exc.value.code == "INVALID_CHOICE"
@@ -76,7 +77,7 @@ def test_choice_outside_roster_fails_closed():
 
 def test_choice_distribution_mismatch_fails_closed():
     answers = _valid_answers()
-    answers["pattern_type"]["probabilities"] = {"WIDESPREAD_RECURRENCE": 1.0}
+    answers["dominant_limitation"]["probabilities"] = {"COVERAGE": 1.0}
     with pytest.raises(JevContractError) as exc:
         validate_answers(WIDE_QUESTIONS, answers)
     assert exc.value.code == "DISTRIBUTION_MISMATCH"
@@ -84,10 +85,9 @@ def test_choice_distribution_mismatch_fails_closed():
 
 def test_choice_distribution_must_sum_to_one():
     answers = _valid_answers()
-    answers["pattern_type"]["probabilities"] = {
-        "WIDESPREAD_RECURRENCE": 0.5, "PROJECT_SPECIFIC_EXCEPTION": 0.5,
-        "WEAK_DISTRIBUTED_SIGNAL": 0.5, "NO_COHERENT_PATTERN": 0.0,
-        "DATA_QUALITY_CONCERN": 0.0, "INSUFFICIENT_EVIDENCE": 0.0,
+    answers["dominant_limitation"]["probabilities"] = {
+        "COVERAGE": 0.5, "MISSINGNESS": 0.5, "MUTATION_ABSENCE": 0.5,
+        "EXPRESSION_SPARSITY": 0.0, "PARTIAL_AGGREGATION": 0.0, "NONE": 0.0, "OTHER": 0.0,
     }
     with pytest.raises(JevContractError) as exc:
         validate_answers(WIDE_QUESTIONS, answers)
@@ -96,14 +96,14 @@ def test_choice_distribution_must_sum_to_one():
 
 def test_invalid_confidence_fails_closed():
     answers = _valid_answers()
-    answers["pattern_type"]["confidence"] = math.nan
+    answers["dominant_limitation"]["confidence"] = math.nan
     with pytest.raises(JevContractError) as exc:
         validate_answers(WIDE_QUESTIONS, answers)
     assert exc.value.code == "INVALID_NUMBER"
 
 
 def test_score_validation_rules():
-    definition = WIDE_QUESTIONS_BY_ID["pattern_type"]
+    definition = WIDE_QUESTIONS_BY_ID["dominant_limitation"]
     score_definition = type(definition)(
         question_id="test_score", primitive="SCORE", version=1, instructions="test",
         criteria=["none", "low", "medium", "high"], applicability_rule="any_observation",

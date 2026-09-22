@@ -45,17 +45,22 @@ The autouse test guard denies every outbound socket connection whose host is not
 | Ranking | Baseline and Jev rankings persisted for the same states; policy deterministic for identical stored evaluations; raw dimensions preserved; promotion bounded; a Jev error defers the state rather than scoring it |
 | UI | Deterministic facts and Jev judgments visibly separated; judgment vectors render full probabilities; no LLM content exists anywhere in the run |
 
-Planned `wide-v3` / `wide-policy-v2` gates (PLANNED; specification in `docs/PHASE_3_PLAN.md` §6):
-projection v2 is single-cohort with no `cross_project` key and copies every field from the state;
-`wide-v3` validates at import and its applicability table matches observed/absent mutation and
-expression; `dominant_limitation` outside the roster is rejected; the admission gate excludes
-non-`COMPLETE`/unobserved states; a threshold miss yields `admission_decision = "ABSTAIN"` with zero
-promotions; promotion never exceeds `PROMOTION_LIMIT`; v2 and v3 cache entries never collide; a
-failed evaluation defers its state.
+Implemented `wide-v3` / `wide-policy-v2` gates (specification in `docs/PHASE_3_PLAN.md` §6):
+projection v2 is single-cohort with no `cross_project` payload and copies deterministic state
+fields; `wide-v3` validates at import and applicability matches observed/absent mutation and
+expression; an out-of-roster `dominant_limitation` is rejected; the admission gate excludes
+incomplete/unobserved states; threshold misses yield `ABSTAIN` with zero promotions; promotion is
+capped by `PROMOTION_LIMIT`; raw answers, full Choice distribution, applicability and exclusion
+reasons are retained; and failed evaluations remain auditable but cannot be promoted.
 
 CI after implementation: Python install, Ruff, offline pytest; frontend npm ci, TypeScript typecheck, production build. Browser smoke against a local API with fixture runs; no provider credentials. Cache setup dependencies, not results that could hide missing integration. No live calls in ordinary CI. Never weaken scientific tests to obtain a pass; document any scientific method change and exclusion.
 
-Live tests stay separate behind explicit `live_gdc` and `live_jev` opt-in markers with real resource ceilings: `live_gdc` performs the small bounded contract probe (≤30 requests, ≤8 MiB); `live_jev` evaluates at most a handful of real states with the pinned model and records usage. `live_llm` is reserved for Phase 6 and is not implemented.
+Live tests stay separate behind explicit `live_gdc` and `live_jev` opt-in markers with real
+resource ceilings: `live_gdc` performs the small bounded contract probe (≤30 requests, ≤8 MiB);
+`live_jev` evaluates one state with the pinned model and records usage. A full live acceptance run
+uses the existing `python -m cancerjev run --live --jev` bounded LUAD path, which exercises the
+anonymous GDC API and the configured Jev provider together. `live_llm` is reserved for Phase 6 and
+is not implemented.
 
 ## Later budget/contract tests
 

@@ -162,7 +162,7 @@ export function RunDetail({ runId }: { runId: string }) {
                       <span className="badge">{String(item.status)}</span>
                       <h3>{String((item.entity as Record<string, unknown>)?.gene_symbol ?? "Candidate")}</h3>
                       <p>{String(summary.promotion_reason ?? "")}</p>
-                      <p className="fine mono">warrants {formatDimensionValue(dimensions.warrants_deeper_investigation)} · fragile {formatDimensionValue(dimensions.likely_fragile)} · {String(dimensions.pattern_type ?? "n/a")}</p>
+                      <p className="fine mono">quality {formatDimensionValue(dimensions.evidence_quality_adequate)} · warrants {formatDimensionValue(dimensions.warrants_deeper_investigation)} · uncertainty {formatDimensionValue(dimensions.unresolved_uncertainty_material)} · coverage {formatDimensionValue(dimensions.signal_explained_by_coverage)} · {String(dimensions.dominant_limitation ?? "n/a")}</p>
                     </article>
                   );
                 })}

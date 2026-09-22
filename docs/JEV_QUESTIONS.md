@@ -1,22 +1,23 @@
 # Versioned question architecture
 
-Implementation plan for the pending redesign: `docs/PHASE_3_PLAN.md`. This document describes the
-current (stale) `wide-v2` set and the planned shape; it does not implement the replacement.
+Active Wide specification and historical question-set record. The current `wide-v3` implementation
+is defined in `cancerjev/jev/questions.py`; the implementation and verification record is in
+`docs/IMPLEMENTATION_STATUS.md` and the design rationale is in `docs/PHASE_3_PLAN.md`.
 
-Question sets: `wide-v2` (**technically IMPLEMENTED in Phase 3, semantically STALE pending redesign**), `deep-v2` and `hypothesis-v2` (**PLANNED**, Phase 4+/Phase 6, not implemented). `wide-v1` was the Phase 0 draft for synthetic fixtures; `wide-v2` replaced it because the real state contains mutation counts, expression summaries and coverage context, but no signed effects, no registered follow-up, and no defined cross-modal proposition. `wide-v2` was itself designed around a cross-project evidence model; for the single TCGA-LUAD cohort several of its questions are inapplicable or ungrounded, so the set must be redesigned before Phase 3 is treated as scientifically meaningful. No replacement is implemented here.
+Question sets: `wide-v3` (**IMPLEMENTED**, current), `wide-v2` (retained as historical record), `deep-v2` and
+`hypothesis-v2` (**PLANNED**, Phase 4+/Phase 6, not implemented). The earlier `wide-v2` set was designed
+around cross-project evidence and became semantically stale when production scope narrowed to one
+TCGA-LUAD cohort. `wide-v3` replaces those questions with single-cohort evidence judgments and a
+deterministic admission policy. This implementation does not establish scientific improvement.
 
 Each definition carries an ID, primitive, version, full instruction text, criteria, applicability rule and a hash over the canonical definition bytes. Question IDs are not sent to the model; changing wording changes the definition hash. Questions refer only to supplied observations and their stated limitations, and never ask Jev to invent facts, compute quantities, or establish causality.
 
 Shared Noul criteria template: true means the explicitly stated proposition is supported by the supplied observations and their quality context; false means it is not supported. Missing data does not establish a biological negative; if the prerequisite evidence is absent, deterministic applicability marks the answer unusable for routing.
 
-## `wide-v2`: six questions in one request per StatisticalState (Phase 3, semantically stale)
+## `wide-v2`: historical question set (superseded)
 
-`wide-v2` remains wired into the code and persists valid evaluations, but under a single-cohort
-LUAD state `mutation_project_exception` and `expression_project_exception` (require ≥3 project
-observations), `likely_fragile` (needs `top_project_share`, `NOT_APPLICABLE` with one project)
-and `coverage_explains_apparent_difference` (needs a cross-project coverage imbalance) become
-inapplicable or ungrounded, and the `pattern_type` roster is cross-project. The definitions below
-are retained for audit; they are not the target semantics.
+These definitions document the retired cross-project semantics. They remain useful when reading
+older immutable evaluations, but current runs use `wide-v3`.
 
 | ID | Primitive | Instruction (verbatim definition) | Applicability (deterministic) |
 |---|---|---|---|
@@ -87,7 +88,7 @@ State contains one immutable EvidenceState, one generated hypothesis, and determ
 
 The deterministic registry — not `registered_test_exists` — establishes whether a test exists. Hypothesis review is critique, not scientific verification.
 
-## `wide-v3`: planned single-cohort redesign (PLANNED, not implemented)
+## `wide-v3`: single-cohort set (IMPLEMENTED)
 
 Full specification: `docs/PHASE_3_PLAN.md`. The next Wide decision is: **which TCGA-LUAD
 candidate states, if any, contain sufficiently coherent and decision-relevant evidence to justify
@@ -107,11 +108,11 @@ deeper investigation, and asks no deterministic fact.
 | 6 | `warrants_deeper_investigation` | Noul | value/admission | mutation or expression observed |
 | 7 | `dominant_limitation` | Choice | naming | mutation or expression observed |
 
-Proposed instruction text and the `dominant_limitation` roster are fixed in `docs/PHASE_3_PLAN.md`
-§4.2; the roster is `COVERAGE`, `MISSINGNESS`, `MUTATION_ABSENCE`, `EXPRESSION_SPARSITY`,
+The versioned instruction text and criteria are defined in `cancerjev/jev/questions.py` and
+specified in `docs/PHASE_3_PLAN.md` §4.2; the Choice roster is `COVERAGE`, `MISSINGNESS`, `MUTATION_ABSENCE`, `EXPRESSION_SPARSITY`,
 `PARTIAL_AGGREGATION`, `NONE`, `OTHER`.
 
-Planned `wide-policy-v2` (PLANNED): a deterministic eligibility gate
+Implemented `wide-policy-v2`: a deterministic eligibility gate
 (`completeness == COMPLETE`, mutation observed, expression in `OBSERVED`/`PARTIAL`) followed by an
 explicit admission rule over raw Nouls with provisional `ADMISSION_*` thresholds and
 `PROMOTION_LIMIT = 3` as a maximum; if no state qualifies, `admission_decision = "ABSTAIN"` and
@@ -128,8 +129,21 @@ measurement or write a measured field.
 
 ## Wide policy and baseline comparison
 
-Deterministic baseline (`baseline-wide-v1`, no model input): eligible states ordered by projects with mutation observations descending, then affected-case total descending, then `top_project_share` ascending, then `state_hash` ascending; top-K (≤3) admitted.
+Deterministic baseline (`baseline-wide-v2`, no model input): states ordered by affected cases
+descending, mutation observation descending, coverage imbalance ascending, then `state_hash`
+ascending. The first three state IDs are retained as `top_state_ids` for display/comparison only;
+`admitted_state_ids` is empty because the baseline is not the admission authority.
 
-Jev policy (`wide-policy-v1`): `warrants_deeper_investigation` descending, then `likely_fragile` ascending, then `pattern_type` class priority (`WIDESPREAD_RECURRENCE` > `PROJECT_SPECIFIC_EXCEPTION` > `WEAK_DISTRIBUTED_SIGNAL` > `NO_COHERENT_PATTERN` > `DATA_QUALITY_CONCERN` > `INSUFFICIENT_EVIDENCE`), then `state_hash` ascending; top-K (≤3) admitted. Raw Noul probabilities, the full Choice distribution and every applicability flag are persisted, so the policy can be recomputed without rerunning Jev. Both rankings are persisted for the baseline-vs-Jev comparison; Jev never replaces the baseline. This ordering depends on stale cross-project dimensions and is superseded by the planned `wide-policy-v2` (see `wide-v3` above and `docs/PHASE_3_PLAN.md` §4.4–4.5); the baseline-vs-Jev evaluation remains the required test of incremental value.
+Jev policy (`wide-policy-v2`): first exclude incomplete acquisition, unobserved mutation, or
+expression outside `OBSERVED`/`PARTIAL`; then require warrants ≥0.60, material uncertainty ≥0.50,
+evidence quality ≥0.40, and (when applicable) coverage confound ≤0.50. Rank qualified states by
+warrants, uncertainty, quality, coverage confound, affected cases, and `state_hash`; admit at most
+three. A threshold miss can produce a valid `ABSTAIN` with zero promotions. The ranking artifact
+retains raw judgments, the full Choice distribution, applicability, per-state qualification and
+exclusion reasons, and the thresholds. Thresholds are provisional and not calibrated. Both rankings
+are retained; changed ranking is not evidence of a better research decision.
 
-Thresholds and gates are recorded in policy code, never hidden in prompts. Provisional starting gates: Noul ≥0.8 yes / ≤0.2 no, middle band uncertain; Choice confidence ≥0.7. These are unvalidated operational parameters, not provider guarantees. A Jev probability never confers statistical significance, causality, or clinical meaning. Under the planned `wide-policy-v2`, a state that fails the admission thresholds is not admitted, and an empty admission set is a valid `ABSTAIN` outcome rather than a failure.
+Thresholds and gates are recorded in policy code, never hidden in prompts. These are unvalidated
+operational parameters, not provider guarantees. A Jev probability never confers statistical
+significance, causality, or clinical meaning. Zero admissions and `ABSTAIN` are valid outcomes, not
+failures.

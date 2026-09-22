@@ -20,7 +20,7 @@ EVALUATION_FIELDS = (
 
 
 def _state() -> dict:
-    return _build([_frame("P1"), _frame("P2"), _frame("P3")])
+    return _build([_frame("P1")])
 
 
 def _register_state(artifacts, repository, run_id: str, state: dict) -> None:
@@ -61,11 +61,11 @@ def test_evaluate_persists_projection_evaluation_and_events(runtime):
     assert evaluation["resolved_model"] == "jev-1.13.0"
     assert evaluation["requested_model"] == "jev-1.13.0"
     assert evaluation["projection_hash"] == projection_hash(build_projection(state))
-    assert evaluation["answers"]["pattern_type"]["choice"] == "WIDESPREAD_RECURRENCE"
+    assert evaluation["answers"]["dominant_limitation"]["choice"] == "NONE"
     assert evaluation["usage"] == {"input_tokens": 1200, "output_tokens": 60}
     assert evaluation["latency_ms"] == 250
     assert evaluation["cache_source_evaluation_id"] is None
-    assert evaluation["question_set_version"] == "wide-v2"
+    assert evaluation["question_set_version"] == "wide-v3"
     assert adapter.calls == 1
 
     repository = context["repository"]
@@ -151,7 +151,7 @@ def test_projection_is_registered_once_per_state_and_version(runtime):
     service.evaluate(run_id=context["run_id"], state=state, emit=context["emit"])
     projections = context["repository"].page_projections(context["run_id"], 10, None)
     assert len(projections["items"]) == 1
-    assert projections["items"][0]["projection_version"] == "jev-state-projection-v1"
+    assert projections["items"][0]["projection_version"] == "jev-state-projection-v2"
 
 
 def test_evaluation_record_and_event_contract_is_unchanged(runtime):

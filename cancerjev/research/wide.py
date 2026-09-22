@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from cancerjev.domain.events import canonical_json, utc_now
 from cancerjev.jev.projection import ProjectionError
+from cancerjev.jev.questions import WIDE_QUESTION_SET_VERSION
 from cancerjev.research.ranking import (
     BASELINE_POLICY_VERSION,
     JEV_POLICY_VERSION,
@@ -30,7 +31,7 @@ def run_wide_evaluation(*, run_id: str, states: list[dict[str, Any]], coverage: 
     emit(
         run_id, "JEV_WIDE_STARTED", "jev:wide:started",
         f"Wide Jev evaluation started for {len(states)} states.",
-        stage="JEV_WIDE", data={"states": len(states), "question_set": "wide-v2"},
+        stage="JEV_WIDE", data={"states": len(states), "question_set": WIDE_QUESTION_SET_VERSION},
     )
     evaluations: list[dict[str, Any]] = []
     deferred: list[str] = []
@@ -65,6 +66,9 @@ def run_wide_evaluation(*, run_id: str, states: list[dict[str, Any]], coverage: 
             "jev_ranking_artifact_id": jev_artifact.artifact_id,
             "jev_policy_version": JEV_POLICY_VERSION,
             "admitted_state_ids": jev["admitted_state_ids"],
+            "admission_decision": jev["admission"]["decision"],
+            "admission_thresholds": jev["admission"]["thresholds"],
+            "promotion_limit": jev["admission"]["promotion_limit"],
             "deferred_state_ids": deferred,
         },
         artifact_refs=[baseline_artifact.ref(), jev_artifact.ref()],
@@ -72,11 +76,13 @@ def run_wide_evaluation(*, run_id: str, states: list[dict[str, Any]], coverage: 
     promoted = _promote(run_id, states, evaluations, jev, emit)
     emit(
         run_id, "JEV_WIDE_COMPLETED", "jev:wide:completed",
-        f"Wide Jev evaluation completed: {len(evaluations)} evaluations, {len(promoted)} promoted.",
+        f"Wide Jev evaluation completed: {len(evaluations)} evaluations, admission {jev['admission']['decision']}, "
+        f"{len(promoted)} promoted.",
         stage="JEV_WIDE",
         data={
             "evaluations": len(evaluations), "deferred": len(deferred), "promoted": len(promoted),
-            "coverage": coverage,
+            "coverage": coverage, "admission_decision": jev["admission"]["decision"],
+            "promotion_limit": jev["admission"]["promotion_limit"],
         },
     )
     return {"baseline": baseline, "jev": jev, "promoted": promoted}
@@ -103,7 +109,7 @@ def _promote(run_id: str, states: list[dict[str, Any]], evaluations: list[dict[s
         candidate_id = str(uuid4())
         now = utc_now()
         summary = {
-            "promotion_reason": f"wide-policy-v1 rank {entry['rank']}",
+            "promotion_reason": f"wide-policy-v2 rank {entry['rank']}",
             "policy_version": JEV_POLICY_VERSION,
             "wide_evaluation_id": evaluation["evaluation_id"],
             "dimensions": entry["dimensions"],

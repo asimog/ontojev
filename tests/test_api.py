@@ -11,6 +11,7 @@ from cancerjev.research.orchestrator import DemoOrchestrator
 def test_api_incremental_events_and_errors(runtime, monkeypatch):
     settings, repository, artifacts = runtime
     monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))
+    monkeypatch.setenv("TYPESAFE_API_KEY", "")
     run_id = DemoOrchestrator(settings, repository, artifacts, lambda event: None).run()
     pending_id = repository.create_run("pagination-test")
     client = TestClient(create_app())

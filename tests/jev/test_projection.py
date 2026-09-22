@@ -19,7 +19,7 @@ from tests.science.test_methods import GENE, _build, _frame
 
 
 def _state(**kwargs) -> dict:
-    return _build([_frame("P1"), _frame("P2")], **kwargs)
+    return _build([_frame("P1")], **kwargs)
 
 
 def test_projection_is_deterministic_and_compact():
@@ -31,8 +31,12 @@ def test_projection_is_deterministic_and_compact():
     assert first["entity"]["symbol"] == "TP53"
     assert first["entity"]["cancer_census"] is True
     assert first["scope"]["expression_unit"] == "log2(UQFPKM+1)"
-    assert len(first["project_observations"]) == 2
-    assert first["cross_project"]["coverage_imbalance"] is False
+    assert first["cohort"]["project_id"] == "P1"
+    assert first["cohort"]["affected_cases"] == 10
+    assert first["cohort"]["examined_cases"] == 60
+    assert first["cohort"]["mutation_observed"] is True
+    assert first["cohort"]["expression_observed"] is True
+    assert first["cohort"]["coverage_imbalance"] is False
     assert first["eligible_followups"] == []
     assert len(str(first)) < PROJECTION_BYTE_CAP
 
@@ -44,22 +48,29 @@ def test_projection_contains_no_raw_or_operational_fields():
     for forbidden in ("artifact_id", "retrieved_at", "state_id", "request_hash", "_score",
                       "provider_discovery_rank", "response_sha256"):
         assert forbidden not in serialized
-    observation = projection["project_observations"][0]
-    assert set(observation) == {
-        "project_id", "cases_examined", "cases_with_ssm", "cases_with_expression",
-        "affected_cases", "expression_local", "expression_provider",
+    cohort = projection["cohort"]
+    assert set(cohort) == {
+        "project_id", "examined_cases", "affected_cases", "mutation_observed",
+        "mutation_coverage_complete", "ssm_coverage_cases", "expression_observed",
+        "expression_median", "expression_sample_sd", "expression_n_finite", "expression_n_missing",
+        "expression_provider_median", "expression_provider_stddev", "coverage_imbalance",
+        "completeness", "scientific_sufficiency",
     }
 
 
 def test_projection_preserves_missingness_and_limitations():
-    state = _build([_frame("P1", missing_expression_cells=7), _frame("P2")],
-                   counts={"P1": {GENE.gene_id: 4}})
+    state = _build([_frame("P1", missing_expression_cells=7)], counts={"P1": {GENE.gene_id: 4}})
     projection = build_projection(state)
-    p2 = next(item for item in projection["project_observations"] if item["project_id"] == "P2")
-    assert p2["affected_cases"] is None, "not observed must stay null, never zero"
+    assert projection["cohort"]["affected_cases"] == 4
+    assert projection["cohort"]["expression_n_missing"] == 7
     assert any("7 of 60" in entry for entry in projection["missingness"])
     assert any("no matched denominator" in limitation for limitation in projection["limitations"])
-    assert any("NOT_EXAMINED" in limitation for limitation in projection["limitations"])
+
+
+def test_projection_rejects_multiple_projects():
+    with pytest.raises(ProjectionError) as exc:
+        build_projection(_build([_frame("P1"), _frame("P2")]))
+    assert exc.value.code == "MULTI_COHORT_STATE"
 
 
 def test_projection_byte_cap_fails_closed(monkeypatch):
@@ -71,7 +82,7 @@ def test_projection_byte_cap_fails_closed(monkeypatch):
 
 
 def test_included_field_contract_is_declared():
-    assert "project_observations[].affected_cases" in INCLUDED_FIELDS
+    assert "cohort.affected_cases" in INCLUDED_FIELDS
     assert "missingness[]" in INCLUDED_FIELDS
     assert "eligible_followups[]" in INCLUDED_FIELDS
 
@@ -80,18 +91,25 @@ def test_applicability_rules_follow_the_evidence():
     projection = build_projection(_state())
     rules = applicability_map(projection)
     assert rules["warrants_deeper_investigation"]["applicable"] is True
-    assert rules["mutation_project_exception"]["applicable"] is False, "only two projects observed"
-    assert rules["expression_project_exception"]["applicable"] is False
-    assert rules["coverage_explains_apparent_difference"]["applicable"] is False
-    assert rules["likely_fragile"]["applicable"] is True
+    assert rules["mutation_evidence_coherent"]["applicable"] is True
+    assert rules["expression_evidence_coherent"]["applicable"] is True
+    assert rules["dominant_limitation"]["applicable"] is True
 
-    three = build_projection(_build([_frame("P1"), _frame("P2"), _frame("P3")]))
-    rules = applicability_map(three)
-    assert rules["mutation_project_exception"]["applicable"] is True
-    assert rules["expression_project_exception"]["applicable"] is True
+    expression_only = build_projection(_build(
+        [_frame("P1")], counts={"P1": {}},
+    ))
+    assert expression_only["cohort"]["affected_cases"] is None
+    assert expression_only["cohort"]["mutation_observed"] is False
+    rules = applicability_map(expression_only)
+    assert rules["mutation_evidence_coherent"]["applicable"] is False
+    assert rules["expression_evidence_coherent"]["applicable"] is True
 
-    imbalanced = build_projection(_build([_frame("P1", missing_expression_cells=25), _frame("P2")]))
-    assert applicability_map(imbalanced)["coverage_explains_apparent_difference"]["applicable"] is True
+    mutation_only_state = _build([_frame("P1")])
+    mutation_only_state["expression"]["project_results"][0]["local"]["median"]["availability"] = "INSUFFICIENT"
+    mutation_only = build_projection(mutation_only_state)
+    rules = applicability_map(mutation_only)
+    assert rules["mutation_evidence_coherent"]["applicable"] is True
+    assert rules["expression_evidence_coherent"]["applicable"] is False
 
 
 def test_question_set_hash_changes_with_wording():

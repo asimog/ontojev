@@ -112,7 +112,7 @@ values that code already extracted and returns a judgment that Python policy may
 | Canonical open expression file per case is not selected; only workflow strings are collected | "Which of these code-extracted open file IDs is the canonical quantification file for this case?" | Choice over supplied file IDs (pre-parsed value extraction) | Choice only among supplied IDs; code validates membership and keeps provenance | PLANNED |
 | Phase 6 hypothesis text will need to resolve gene mentions | "Which of these code-retrieved `/genes` candidates does this mention refer to?" | Choice over supplied Ensembl IDs | Ensembl ID stays authoritative; Jev selects, never invents an ID | PLANNED (Phase 6) |
 | Future clinical fields (`ajcc_pathologic_stage`, `tumor_grade`, `primary_diagnosis`) carry `Not Reported`/`NOS` variants | Normalize to a code-supplied dictionary value | Choice over supplied dictionary values | No clinical measurement from Jev; code owns the dictionary | PLANNED (Phase 4+, out of scope) |
-| Cross-project evidence pattern typing | Redesign of the stale `wide-v2` set | Noul/Choice | See `JEV_QUESTIONS.md`; not implemented here | PLANNED (Phase 3 redesign) |
+| Single-cohort evidence quality, coherence, confounding, uncertainty and investigation value | `wide-v3` over the v2 single-cohort projection | Six Nouls + closed Choice | Code-owned applicability and deterministic admission/abstention; no measured field is model-owned | IMPLEMENTED (Phase 3); incremental decision value remains unverified |
 
 Explicit **non-opportunities** (must stay deterministic code): JSON/TSV parsing and numeric
 values, population membership and counts, missingness, coverage arithmetic, `access` open/closed
@@ -158,9 +158,9 @@ any of these would violate the measurement boundary.
 This audit is step 1. The following remain separate tasks (see `IMPLEMENTATION_STATUS.md`):
 
 ```text
-1. targeted pre-Phase-3 readiness audit            ← this document
-2. TCGA-LUAD Wide Jev semantic/admission redesign
-3. baseline-vs-Jev incremental-value evaluation
+1. targeted pre-Phase-3 readiness audit            ← this document (complete)
+2. TCGA-LUAD Wide Jev semantic/admission redesign (implemented; `docs/PHASE_3_PLAN.md`)
+3. baseline-vs-Jev incremental-value evaluation (next; not yet performed)
 4. one Phase-4 vertical slice: E0 → one registered follow-up → E1
 5. bounded next-candidate autonomous iteration
 6. bounded LLM hypothesis generation + Jev hypothesis evaluation

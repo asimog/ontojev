@@ -328,8 +328,8 @@ Deterministic wide policy (`wide-policy-v1`): `warrants_deeper_investigation` de
 > deterministic expression batching (each ≤250 cases × ≤10 genes) merged by identifier, and
 > provider `gene_selection` retained only when the whole cohort fits one request. The section is
 > retained as the Phase 0/1 analysis record, not as current behavior. The `wide-v2` table above is
-> likewise technically implemented but semantically stale for the single-cohort state
-> (`docs/JEV_QUESTIONS.md`).
+> likewise a historical implementation record; the active single-cohort semantics are `wide-v3`
+> with `jev-state-projection-v2` (`docs/JEV_QUESTIONS.md`, `docs/PHASE_3_PLAN.md`).
 
 **2A — transport, capture, contract verification.** `GDCTransport` (single socket owner, host/endpoint/method allowlists, no auth, no redirects, streamed reads with per-response and per-run byte caps, attempt ledger, response publication and hashing, cache, pagination ledger), strict parsers for the admitted endpoints, budget tables (schema 3), contract-capture command that reproduces the research captures, adversarial offline tests, and the open-access security tests.
 

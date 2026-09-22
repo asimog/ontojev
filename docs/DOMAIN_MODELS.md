@@ -112,24 +112,34 @@ Phase 4+ target shapes (documented, not implemented): `CNVSummary = {project_id,
 
 ```text
 JevStateProjection
-  projection_id, projection_version: "jev-state-projection-v1", run_id, state_id
+  projection_id, projection_version: "jev-state-projection-v2", run_id, state_id
   source_state_hash, projection_hash, artifact_id, included_fields[]
-  payload: {entity, scope, project_observations[], cross_project, missingness[],
+  payload: {entity, scope, cohort, missingness[],
             limitations[], eligible_followups[]}
 ```
 
-`project_observations[] = {project_id, cases_examined, cases_with_ssm, cases_with_expression, affected_cases|null, expression_local|null, expression_provider|null}`. Every field derives from deterministic StatisticalState fields; nothing is recomputed from raw responses at projection time. `eligible_followups` is empty until Phase 4 registers executable actions. The projection hash covers the canonical payload bytes and is the cache identity component for inference; routing-policy version is excluded.
+The v2 projection requires exactly one project and has a single `cohort` record containing the
+project ID, examined and mutation-affected case counts, observation/coverage flags, local and
+provider expression summaries, coverage-imbalance flag, acquisition completeness and scientific
+sufficiency. All values derive from deterministic StatisticalState fields; no measurement is
+recomputed from raw responses at projection time. `eligible_followups` is empty until Phase 4
+registers executable actions. The projection hash covers canonical payload bytes and is the cache
+identity component for inference; routing-policy version is excluded.
 
 ## Wide ranking records (Phase 3)
 
 ```text
 WideRanking (artifact + event)
   ranking_id, run_id, policy_version, kind: "BASELINE"|"JEV"
-  entries: [{state_id, state_hash, rank, dimensions{}, admission}]
-  admitted_candidate_ids[], baseline_ranking_ref?, created_at
+  entries: [{state_id, state_hash, rank, dimensions{}, qualified?, excluded_reason?}]
+  top_state_ids[], admitted_state_ids[], admission?, created_at
 ```
 
-The baseline ranking is always computed from deterministic dimensions; the Jev ranking is computed from persisted raw judgment vectors. Both are retained so Phase 3 can compare baseline vs baseline+Jev on the same states. Jev never replaces the baseline.
+The baseline ranking is computed from deterministic dimensions and its top three are display-only;
+it has no admission authority. The Jev ranking is computed from persisted raw judgment vectors and
+contains an `admission` record with `ADMIT`/`ABSTAIN`, thresholds, promotion limit, and a qualification
+or exclusion reason for every state. Both rankings cover the same states. Jev never replaces the
+baseline.
 
 ## EvidenceState (PROVISIONAL, Phase 4+)
 

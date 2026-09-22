@@ -8,11 +8,12 @@ instructions override implementation steps embedded in reference documents.
 
 - Phase 1 offline synthetic fixture slice exists (`run --fixture demo`).
 - Phase 2 real open-access GDC evidence and deterministic StatisticalStates exist.
-- Phase 3 technical Wide Jev integration exists (projection, one adapter, cache, rankings).
+- Phase 3 single-cohort Wide Jev integration exists: `jev-state-projection-v2`, `wide-v3`,
+  deterministic admission/abstention, baseline/Jev rankings, and bounded candidate promotion.
 - `LUAD_RESEARCH_V1` (`domain=lung cancer`, `cohort_id=TCGA-LUAD`, `project_id=TCGA-LUAD`)
   is the only production `ResearchSpec`. TCGA-LUAD and TCGA-LUSC are never pooled.
-- The `wide-v2` question set is technically implemented but semantically stale for the
-  single-cohort state. Redesigning it is a separate task; do not redesign it here.
+- `wide-v2` is retained only for historical evaluations. Do not silently change `wide-v3` semantics;
+  a new question set requires a separate versioned task and validation.
 
 ## Ownership boundaries
 

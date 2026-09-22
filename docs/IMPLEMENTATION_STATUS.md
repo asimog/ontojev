@@ -1,18 +1,16 @@
 # Implementation status
 
-Factual source of truth. Current `main` HEAD: `60acf6b0b4b809d84878b82b4d2d118f4ec5d3ef`
-("Fix pagination, identifier, and spec validation defects"); the pre-Phase-3 readiness audit
-(2026-09-23) changes are applied on top and are uncommitted in this working tree.
+Factual source of truth for the current repository state. The Phase 3 single-cohort semantic and
+admission redesign is implemented and validated; see the acceptance and verification records below.
 
 **DONE:** Phase 0 design; Phase 1 offline synthetic vertical slice (verified); the GDC × Jev fit
 analysis (`docs/GDC_JEV_FIT_ANALYSIS.md`); Phase 2 real open-access GDC evidence with deterministic
-StatisticalStates, scoped to the single TCGA-LUAD cohort; Phase 3 technical Wide Jev integration
-(projection, one adapter, cache, baseline and Jev rankings). **CURRENT:** the implemented
-architecture is modular and `ResearchSpec`-driven; `LUAD_RESEARCH_V1` is the only production
-research specification. **NEXT:** the six-step sequence at the end of this document. Phase 4+ is
-documented only. Phase 3's `wide-v2` question set is technically implemented but semantically
-stale for the single-cohort state and is not redesigned here. Phase 3 did **not** demonstrate
-improved scientific decision quality; that requires the baseline-vs-Jev evaluation below.
+StatisticalStates, scoped to the single TCGA-LUAD cohort; and Phase 3 single-cohort projection,
+`wide-v3` judgments, deterministic eligibility, explicit Jev admission/abstention, rankings and
+bounded candidate promotion. **CURRENT:** the architecture is modular and `ResearchSpec`-driven;
+`LUAD_RESEARCH_V1` is the only production research specification. **NEXT:** baseline-vs-Jev
+incremental-value evaluation. Phase 4+ remains documented only. Phase 3 did **not** demonstrate
+improved scientific decision quality.
 
 Phase 1 remains available and separate: `run --fixture demo` still produces the synthetic
 dossier run with zero provider calls, and fixture and live records are never mixed.
@@ -40,25 +38,20 @@ The generic multi-project sweep was replaced by one explicitly defined cohort: *
 - **Scientific identity:** discovery rank, provider `_score`, lane ordering and `examined_genes_ref` are excluded from `state_hash`; discovery provenance stays visible in `generation.discovery` and `provider_discovery_rank` but does not affect identity.
 - **Bounded modular acquisition:** TCGA-LUAD remains the only production research specification, with a 1,000-case ceiling and 250-case pages/batches. Case pages fail closed on an over-limit total, inconsistent totals, premature empty pages, cross-page duplicate IDs, or unexpected project IDs. Local expression values and missingness merge by ID across batches. Provider batch medians/stddev are not aggregated; the provider summary is explicitly unavailable when the cohort needs multiple requests.
 
-**Phase 3 assumptions now stale (not redesigned here).** `wide-v2` was designed for cross-project evidence. Under a single LUAD state: `mutation_project_exception` and `expression_project_exception` (need ≥3 project observations), `likely_fragile` (needs `top_project_share`, which is `NOT_APPLICABLE` with one project) and `coverage_explains_apparent_difference` (needs a cross-project coverage imbalance) become inapplicable or ungrounded; `pattern_type`'s roster is cross-project and is semantically stale. Phase 2 stays functional and Phase 3 still runs, but the question set and the projection's `cross_project` framing must be revisited before Phase 3 is treated as scientifically meaningful for this cohort. No replacement is invented yet.
-
-**Phase 3 redesign (PLANNED, specified in `docs/PHASE_3_PLAN.md`).** The replacement is fully
-specified but not implemented: `jev-state-projection-v2` (single `cohort` block, no cross-project
-fields), `wide-v3` (six atomic Nouls + one closed Choice separating evidence quality, evidence
-pattern and value of investigation), deterministic applicability, `baseline-wide-v2`, and
-`wide-policy-v2` with an explicit admission rule that permits zero admissions and `ABSTAIN` and
-treats `PROMOTION_LIMIT = 3` as a maximum. Exact question wording, projection schema, thresholds,
-tests and acceptance criteria are in `docs/PHASE_3_PLAN.md`; no code changes exist yet.
+**Historical v1/v2 issue (resolved in the current implementation).** `wide-v2` and
+`jev-state-projection-v1` used cross-project semantics that did not fit the single LUAD cohort.
+Current runs use the single-cohort `jev-state-projection-v2` and `wide-v3` set; older records remain
+immutable and readable with their original version metadata.
 
 ## What exists (Phase 3 additions)
 
 - **Owned Jev contracts** (`cancerjev/jev/contracts.py`): normalized Noul/Choice/Score answers with fail-closed validation (missing/unknown questions, wrong primitive, out-of-range or non-finite probabilities, roster/distribution mismatch, invalid confidence/legend, non-summing distributions). No defaults are fabricated.
-- **Versioned question set** (`wide-v2`, six questions): warrants, mutation exception, expression exception, coverage explanation, fragility (Noul) and pattern type (Choice, closed six-option roster); deterministic applicability rules; hash over canonical definitions. `multimodal_convergence`, `direction_reversal` and `followup_value` are deliberately excluded because the real state cannot ground them.
-- **Projection** (`jev-state-projection-v1`): compact deterministic JSON built only from state fields, with included-field contract, hard byte cap, and a projection hash used as the inference identity.
+- **Versioned question set** (`wide-v3`, six Nouls plus `dominant_limitation` Choice): evidence quality, mutation/expression coherence, coverage confounding, unresolved uncertainty, and investigation value; code-owned applicability and a closed seven-option limitation roster. Canonical definitions are hashed. `wide-v2` is retained only for historical records.
+- **Projection** (`jev-state-projection-v2`): compact deterministic JSON for exactly one project, built only from StatisticalState fields, with a single `cohort` block, included-field contract, hard byte cap, and projection hash used as inference identity. Multi-project input fails closed.
 - **One adapter** (`cancerjev/jev/typesafe_adapter.py`): the only module that imports the TypeSafe SDK; converts provider objects to plain data immediately; records requested/resolved model, request id, usage and latency.
 - **JevService** (`cancerjev/jev/service.py`): projection registration, cache identity (`projection hash + question hash + pinned model + adapter version`, policy version excluded), provider call, validation, persistence, and events; cache hits create a new evaluation with `cache_source_evaluation_id` and zero usage.
-- **Deterministic ranking** (`cancerjev/research/ranking.py`): baseline policy (`baseline-wide-v1`) and Jev policy (`wide-policy-v1`) over persisted raw dimensions; both rankings are retained for the same states; bounded promotion (top 3) as `WIDE_EVALUATED` candidates; no deep analysis, hypotheses, follow-ups or LLM.
-- **UI separation**: `DeterministicStatePanel` (measured facts with explicit availability, never a zero for `NOT_OBSERVED`), `WideRankingPanel` (baseline vs Jev side by side), `WideJudgment` (full judgment vectors with applicability, labeled “not a measurement”), plus GDC lifecycle events in the feed.
+- **Deterministic ranking and admission** (`cancerjev/research/ranking.py`): `baseline-wide-v2` top-three comparison list has no admission authority. `wide-policy-v2` applies completeness/mutation/expression gates before judgments, then explicit thresholds; `ABSTAIN` with zero promotions is valid and `PROMOTION_LIMIT=3` is a maximum. Raw judgments, Choice distributions, applicability and exclusion reasons are persisted.
+- **UI separation**: `DeterministicStatePanel` (measured facts with explicit availability, never a zero for `NOT_OBSERVED`), `WideRankingPanel` (comparison-only baseline and explicit Jev decision/thresholds/exclusions), `WideJudgment` (full judgment vectors with applicability, labeled “not a measurement”), plus the canonical event feed.
 
 ## Documentation pass (2026-09-22)
 
@@ -126,7 +119,7 @@ Acceptance run `51a1828f-33d8-47d9-baa3-583fec577b75` — **COMPLETED**, coverag
 
 Failure-path evidence: an earlier run failed closed on a provider HTTP 400 (`gene_selection` when no examined case had expression values); the error body was captured, the guard was implemented, and a replay test proves the lane is skipped with `expression NOT_OBSERVED`.
 
-## Phase 3 acceptance record (2026-09-22)
+## Phase 3 historical acceptance record (2026-09-22, `wide-v2`)
 
 Acceptance run `36e09880-bd72-4a15-af2a-eb3abe6ef266` — **COMPLETED**:
 
@@ -135,33 +128,51 @@ Acceptance run `36e09880-bd72-4a15-af2a-eb3abe6ef266` — **COMPLETED**:
 - Both rankings persisted (10 baseline + 10 Jev entries); 3 candidates promoted (`TP53`, `PRPF3`, `TPTE`); zero LLM calls; zero deep analysis.
 - Cache verification run `ea2067d8-48aa-40f0-ba5b-a8eb6da29999`: 0 GDC requests (49 cache hits), 0 Jev provider calls (10 cached evaluations with `cache_source_evaluation_id`), identical promotions.
 
-This record demonstrates that the Phase 3 integration works and is reproducible. It does **not**
-demonstrate that Jev improved a research decision: the question set was cross-project and is now
-semantically stale for the single LUAD cohort, and no baseline-vs-Jev evaluation has been run.
+This record is retained as immutable evidence for `wide-v2`; it does **not** establish improved
+research decisions. Current semantics and admission results are recorded below.
+
+## Phase 3 single-cohort acceptance record (2026-09-23)
+
+Uncached live acceptance run `34e49ab0-0696-4caf-bd0a-bc37692d9a57` — **COMPLETED**:
+
+- One exact cohort (`TCGA-LUAD`), 10 deterministic StatisticalStates, 10 v2 projections, and 10
+  fresh `wide-v3` provider evaluations using model `jev-1.13.0` / SDK `typesafe-sdk` 0.7.1.
+- 16 anonymous GDC requests completed without cache hits (359.2 KiB); no file downloads or GDC
+  credentials. Ten Jev calls recorded 19,659 input tokens; provider cost is unavailable.
+- Both v2 rankings persisted for the same 10 states. All ten states failed the explicit
+  `warrants_deeper_investigation >= 0.60` admission threshold (observed probabilities 0.30–0.48);
+  two additionally exceeded the coverage-confound threshold. The policy returned `ABSTAIN`,
+  admitted/promoted zero candidates, and persisted per-state exclusion reasons.
+- The integrated browser rendered the admission decision, thresholds, baseline comparison,
+  per-state reasons, all ten raw judgment vectors and applicability records. No LLM calls or deep
+  analysis occurred.
+
+The zero-promotion result verifies the abstention path only. It is not a scientific conclusion and
+does not establish whether the thresholds improve research decisions; threshold calibration and
+baseline-vs-Jev incremental-value evaluation remain open work.
 
 ## Verification record
 
-Offline gates re-run 2026-09-23 at HEAD `60acf6b`. The live-provider and frontend rows are the
-2026-09-22 record and were **not** re-run in this documentation-alignment task.
+Verification performed 2026-09-23 on the Phase 3 implementation working tree:
 
 | Gate | Command | Result |
 |---|---|---|
-| Python lint | `python -m ruff check cancerjev apps tests` | All checks passed (2026-09-23) |
-| Offline suite | `python -m pytest` (live markers excluded by default) | **214 passed**, 0 failed, 0 errors (2 live-marked tests deselected) (2026-09-23, audit changes applied) |
-| Live markers | `pytest -m live_gdc` / `-m live_jev` | opt-in; the GDC probe passed in a manual run (14 captures, all 200); the Jev live test skips without a key |
+| Python lint | `python -m ruff check cancerjev apps tests` | All checks passed |
+| Offline suite | `python -m pytest -q` | **218 passed**, 0 failed; 2 opt-in live-marked tests deselected (220 collected) |
 | Frontend typecheck | `npm run typecheck` | Passed |
 | Frontend build | `npm run build` | Passed (all routes) |
-| Browser acceptance | `npm run test:e2e` (API 8010, web 3010) | 4 passed (1.2 m) |
-| Live browser inspection | live run detail in the integrated browser | Deterministic panel, candidate admission, baseline vs Jev ranking, 10 judgment panels; 0 console errors |
-| Phase 2 live run | `python -m cancerjev run --live` | COMPLETED, 10 real states, 0 Jev/LLM |
-| Phase 3 live run | `python -m cancerjev run --live --jev` | COMPLETED, 10 real Jev calls, 3 promotions |
-| Cache verification | second `run --live --jev` | 0 provider calls, identical rankings/promotions |
-| Contract probe | `python -m cancerjev probe` | 14 captures, all HTTP 200, anonymous |
+| Browser E2E | `npm run test:e2e` (API 8010, web 3010; matching localhost origin) | **4 passed** |
+| Live application | Integrated browser on the acceptance run | Rendered `ABSTAIN`, thresholds, exclusions, baseline and raw judgments; API responses 200 |
+| Live GDC + Jev | `python -m cancerjev run --live --jev` with a fresh data directory and GDC cache disabled | **COMPLETED**, 16 fresh GDC requests, 10 Jev calls/evaluations, 10 states, 0 promotions, explicit `ABSTAIN` |
+| GDC contract probe | `python -m cancerjev probe` | Historical probe: 14 captures, all HTTP 200, anonymous |
 
-## Provider-use record (cumulative, 2026-09-22)
+On Windows, pytest exited successfully with all 218 offline tests passing but emitted an ignored
+`PermissionError` while cleaning its temporary `pytest-current` symlink at process exit.
 
-- **GDC:** 84 real anonymous network attempts (735,207 bytes ≈ 718 KiB) plus 158 cache hits; all open-access metadata/analysis endpoints; zero file downloads; zero controlled records admitted; zero authentication headers.
-- **Jev / TypeSafe:** 10 real provider calls (one Phase 3 run), model `jev-1.13.0`, 28,294 input + 2,020 output tokens, no cost field available (unknown).
+## Provider-use record (cumulative through 2026-09-23)
+
+- **GDC:** prior record 84 real anonymous network attempts (735,207 bytes) plus 158 cache hits; this task made 32 additional fresh requests across two runs (each 16 requests, about 359 KiB). All endpoints remained within the open-access allowlist; zero file downloads, controlled records, or authentication headers.
+- **Jev / TypeSafe:** prior record 10 provider calls; this task made 10 additional calls on model `jev-1.13.0` for `wide-v3` (19,659 input tokens). No cost field is available (unknown). The initial environment setup attempt made no provider calls because the project-declared SDK was not installed; the same bounded run succeeded after installing SDK 0.7.1.
 - **LLM / OpenRouter:** 0.
 - No GDC credential exists anywhere in the codebase or environment; the TypeSafe key is read only from `TYPESAFE_API_KEY` at call time and is never persisted or logged.
 
@@ -177,7 +188,7 @@ Offline gates re-run 2026-09-23 at HEAD `60acf6b`. The live-provider and fronten
 - The examined gene set is selection-biased: genes are taken from the cohort's provider top-mutated ranking by provider rank (no recurrence + round-robin pooling). The state records the bias and does not claim a genome-wide scan.
 - Case-to-sample resolution for expression values is **UNVERIFIED**; no sample-matched cross-modal claim is made.
 - GDC release atomicity across requests is **UNVERIFIED**; reproducibility means replay from retained responses and hashes.
-- No seed/temperature control exists for Jev; repeated calls may differ. Cache identity binds projection bytes, question bytes, model and adapter version; policy version is excluded so policy experiments do not rerun inference.
+- No seed/temperature control exists for Jev; repeated calls may differ. Cache identity binds projection bytes, question bytes, model and adapter version; policy version is excluded so policy experiments do not rerun inference. `wide-policy-v2` thresholds remain provisional and uncalibrated.
 - The TypeSafe price page is documentation, not a contract; cost stays `null`/unknown because the API exposes no cost field.
 - Schema 3 does not migrate schema 1/2 data directories; they must be moved or deleted (the pre-Phase-2 schema-2 database was preserved as `data/cancerjev.schema2.db.bak`).
 - Hosted CI was not executed locally; the local runs used Python 3.14.3 and Node 24.13.1 while CI pins Python 3.12 and Node 22. **UNVERIFIED:** hosted CI status.
@@ -187,8 +198,8 @@ Offline gates re-run 2026-09-23 at HEAD `60acf6b`. The live-provider and fronten
 These are separate tasks; do not combine them.
 
 1. Targeted pre-Phase-3 readiness audit. **DONE (2026-09-23)** — see `docs/SOURCE_REVIEW.md`.
-2. TCGA-LUAD Wide Jev semantic/admission redesign. **NEXT** — plan: `docs/PHASE_3_PLAN.md`.
-3. Baseline-vs-Jev incremental-value evaluation.
+2. TCGA-LUAD Wide Jev semantic/admission redesign. **DONE (2026-09-23)** — implementation and bounded live acceptance recorded above; design: `docs/PHASE_3_PLAN.md`.
+3. Baseline-vs-Jev incremental-value evaluation. **NEXT** — separate validation task; do not infer quality from changed rankings.
 4. One Phase-4 vertical slice: E0 → one registered follow-up → E1.
 5. Bounded next-candidate autonomous iteration.
 6. Bounded LLM hypothesis generation + Jev hypothesis evaluation.

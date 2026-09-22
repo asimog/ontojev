@@ -27,12 +27,13 @@ export type LiveEvaluationVector = {
 };
 
 const QUESTION_LABELS: Record<string, string> = {
+  evidence_quality_adequate: "Evidence quality adequate",
+  mutation_evidence_coherent: "Mutation evidence coherent",
+  expression_evidence_coherent: "Expression evidence coherent",
+  signal_explained_by_coverage: "Signal explained by coverage",
+  unresolved_uncertainty_material: "Material uncertainty remains",
   warrants_deeper_investigation: "Warrants deeper investigation",
-  mutation_project_exception: "Mutation project exception",
-  expression_project_exception: "Expression project exception",
-  coverage_explains_apparent_difference: "Coverage explains the difference",
-  likely_fragile: "Likely fragile",
-  pattern_type: "Pattern type",
+  dominant_limitation: "Dominant limitation",
 };
 
 function percent(value?: number | null): string {

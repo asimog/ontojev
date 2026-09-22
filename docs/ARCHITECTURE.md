@@ -72,21 +72,13 @@ real StatisticalStates → API/UI inspection. Provider expression summaries are 
 when the complete cohort fits one admitted request; per-batch medians/standard deviations are
 never combined. Zero Jev and zero LLM calls.
 
-**Live Phase 3 (IMPLEMENTED, technically):** the same run continues through projection creation
-→ one Jev request per state with the `wide-v2` question set → fail-closed validation → cache →
-baseline and Jev rankings persisted → bounded candidate promotion. No deep analysis, no
-hypotheses, no follow-ups, no LLM.
-
-**Phase 3 semantic status (PLANNED redesign):** the `wide-v2` question set and the projection's
-`cross_project` framing were designed for the older cross-project evidence model. For a single
-TCGA-LUAD cohort several questions become inapplicable or ungrounded. The integration is real,
-but the question set is **semantically stale pending redesign**; no claim is made that Phase 3
-improved a research decision. The replacement is specified in `docs/PHASE_3_PLAN.md`:
-`jev-state-projection-v2` (single-cohort `cohort` block), `wide-v3` (six atomic Nouls + one closed
-Choice separating evidence quality, evidence pattern and value of investigation), and
-`wide-policy-v2` with a deterministic eligibility gate and an explicit admission rule that permits
-zero admissions and `ABSTAIN` and treats the promotion limit as a maximum. None of it is
-implemented yet.
+**Live Phase 3 (IMPLEMENTED):** the same run continues through a single-project
+`jev-state-projection-v2` → one Jev request per state with the `wide-v3` question set → fail-closed
+validation → cache → deterministic baseline and explicit Jev admission rankings → at most three
+candidate promotions. The deterministic gate may exclude incomplete or unobserved evidence, and
+the Jev policy may return `ABSTAIN` with zero promotions. Baseline top-3 is comparison-only. No
+deep analysis, hypotheses, follow-ups, or LLM are reachable from this path. Changed ranking is not
+evidence of improved research decision quality; that remains a separate evaluation.
 
 ## Simplification review
 
