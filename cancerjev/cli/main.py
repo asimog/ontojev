@@ -42,6 +42,11 @@ def parser() -> argparse.ArgumentParser:
                                   "FOLLOW_UP moves are dispatched and re-judged while the follow-up and "
                                   "revision caps allow, and bounded hypothesis generation runs when the "
                                   "policy asks for it; requires --deep-candidate")
+        command.add_argument("--deep-hypotheses", action="store_true",
+                             help="explicitly request bounded hypothesis generation for the selected "
+                                  "candidate(s) even when the recorded next move is not "
+                                  "GENERATE_HYPOTHESES (recorded as OPERATOR_REQUESTED_HYPOTHESES); "
+                                  "requires --deep-candidate --deep-followup")
     probe = commands.add_parser("probe", help="bounded anonymous GDC contract capture")
     probe.add_argument("--capture-dir", default=None)
     show = commands.add_parser("show")
@@ -104,6 +109,7 @@ def main(argv: list[str] | None = None) -> None:
     deep_candidate = getattr(args, "deep_candidate", None)
     deep_action = getattr(args, "deep_action", None)
     deep_followup = bool(getattr(args, "deep_followup", False))
+    deep_hypotheses = bool(getattr(args, "deep_hypotheses", False))
     if jev_requested and not live:
         raise SystemExit("--jev requires --live (Jev evaluates real GDC states only).")
     if jev_requested and not os.getenv("TYPESAFE_API_KEY"):
@@ -112,6 +118,8 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit("--deep-candidate requires --live --jev (a deep slice needs a wide-evaluated candidate).")
     if deep_followup and not deep_candidate:
         raise SystemExit("--deep-followup requires --deep-candidate (dispatch is authorized per candidate).")
+    if deep_hypotheses and not (deep_candidate and deep_followup):
+        raise SystemExit("--deep-hypotheses requires --deep-candidate --deep-followup.")
     if deep_action:
         from cancerjev.science.actions import ACTION_REGISTRY
 
@@ -174,12 +182,24 @@ def main(argv: list[str] | None = None) -> None:
                     from cancerjev.jev.service import JevService
 
                     jev_service = JevService(settings, repository, artifacts)
+                llm_generator = None
+                if deep_candidate and jev_requested and settings.llm_model and os.getenv("OPENROUTER_API_KEY"):
+                    from cancerjev.llm.openrouter import OpenRouterGenerator
+
+                    llm_generator = OpenRouterGenerator(model=settings.llm_model,
+                                                        timeout=settings.llm_timeout_seconds)
+                    print(f"[LLM] hypothesis generation enabled with {settings.llm_model}", flush=True)
+                elif deep_candidate:
+                    print("[LLM] no provider credential/model configured; generated text stays deterministic",
+                          flush=True)
                 orchestrator = LiveOrchestrator(settings, repository, artifacts, render_event,
                                                 jev_service=jev_service,
                                                 deep_selection=(deep_candidate or [None])[0],
                                                 deep_selections=tuple(deep_candidate or ()),
                                                 deep_action_id=deep_action,
-                                                deep_followup_authorized=deep_followup)
+                                                deep_followup_authorized=deep_followup,
+                                                deep_hypotheses_requested=deep_hypotheses,
+                                                llm_generator=llm_generator)
             else:
                 orchestrator = DemoOrchestrator(settings, repository, artifacts, render_event)
             if args.command == "run":

@@ -81,7 +81,7 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
                                 read_artifact: Callable[[str], bytes | None],
                                 stage: Callable[[str, Callable[[], Any]], Any],
                                 jev_service: Any = None, requested_action_id: str | None = None,
-                                authorize_iteration: bool = False,
+                                authorize_iteration: bool = False, hypotheses_requested: bool = False,
                                 llm_generator: Callable[..., Any] | None = None) -> CandidateInvestigation:
     """Run the bounded arc for one explicitly selected candidate."""
     plan = stage("DEEP_ANALYSIS", lambda: plan_deep_slice(
@@ -144,7 +144,11 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
     else:
         status = "ABSTAINED"
     hypothesis: dict[str, Any] | None = None
-    if final_move == "GENERATE_HYPOTHESES" and authorize_iteration and jev_service is not None:
+    # The policy asks for hypotheses itself, or the operator requests them explicitly for the
+    # current revision; the recorded next move is never rewritten either way.
+    generate_hypotheses_now = final_move == "GENERATE_HYPOTHESES" or hypotheses_requested
+    if generate_hypotheses_now and authorize_iteration and jev_service is not None \
+            and current.revision is not None:
         revision_eligibilities = eligible_actions(current.revision, "EVIDENCE_STATE")
         hypotheses = stage("HYPOTHESIS_GENERATION", lambda: run_hypothesis_stage(
             run_id=run_id, candidate=candidate, revision=current.revision,
@@ -152,6 +156,7 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
             eligible_action_ids=[item.action_id for item in revision_eligibilities if item.eligible],
             repository=repository, jev_service=jev_service, emit=emit, publish_json=publish_json,
             llm_generator=llm_generator,
+            requested_reason=None if final_move == "GENERATE_HYPOTHESES" else "OPERATOR_REQUESTED_HYPOTHESES",
         ))
         hypothesis = dict(hypotheses)
         if hypothesis.get("status") == "GENERATED":

@@ -4,7 +4,13 @@ import os
 
 import pytest
 
-from cancerjev.config import JEV_TIMEOUT_SECONDS_HARD_CAP, Settings, load_local_env
+from cancerjev.config import (
+    DEFAULT_LLM_MODEL,
+    JEV_TIMEOUT_SECONDS_HARD_CAP,
+    LLM_TIMEOUT_SECONDS_HARD_CAP,
+    Settings,
+    load_local_env,
+)
 
 
 def test_loads_values_and_ignores_comments_blanks_and_invalid_names(tmp_path, monkeypatch):
@@ -88,14 +94,21 @@ def test_lowering_hard_caps_is_allowed_and_effective(monkeypatch):
     assert settings.jev_max_states == 2
 
 
-def test_no_inert_llm_settings_are_exposed(monkeypatch):
-    """This repository performs no model request, so no LLM setting may exist."""
+def test_llm_settings_exist_without_holding_credentials(monkeypatch):
+    """Generated text is an opt-in provider: model and timeout are settings, the key is not."""
     import dataclasses
 
     names = {field.name for field in dataclasses.fields(Settings)}
-    assert not {name for name in names if "llm" in name}
+    assert {"llm_model", "llm_timeout_seconds"} <= names
+    assert not {name for name in names
+                if "key" in name.lower() or "token" in name.lower() or "credential" in name.lower()}
     monkeypatch.setenv("CANCERJEV_NO_DOTENV", "1")
-    monkeypatch.setenv("CANCERJEV_LLM_MODEL", "someone/model-1")
-    monkeypatch.setenv("CANCERJEV_LLM_TIMEOUT_SECONDS", "30")
-    settings = Settings.from_env()
-    assert not hasattr(settings, "llm_model")
+    assert Settings.from_env().llm_model == DEFAULT_LLM_MODEL
+    monkeypatch.setenv("CANCERJEV_LLM_MODEL", "deepseek/deepseek-v4.1-flash")
+    assert Settings.from_env().llm_model == "deepseek/deepseek-v4.1-flash"
+    monkeypatch.setenv("CANCERJEV_LLM_TIMEOUT_SECONDS", "0")
+    with pytest.raises(ValueError):
+        Settings.from_env()
+    monkeypatch.setenv("CANCERJEV_LLM_TIMEOUT_SECONDS", str(LLM_TIMEOUT_SECONDS_HARD_CAP + 1))
+    with pytest.raises(ValueError):
+        Settings.from_env()

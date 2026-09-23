@@ -112,8 +112,8 @@ provisional; do not lower them to force a `FOLLOW_UP`.
 Still open after this pass:
 
 - further registered actions (a longer arc needs a second revision action to be informative);
-- a concrete LLM provider adapter with its own contract, key policy and budget, if live generation is
-  ever wanted — not in this repository today;
+- the opt-in OpenRouter adapter exists and is live-validated; extending it (other providers, budgets,
+  cost accounting) stays a separate, explicitly configured change;
 - the **incremental-value result**: the harness exists, but a pre-registered protocol over held-out
   labelled cohorts is a scientific task, not a code change, and remains undone;
 - Phase 7 offline autoresearch, which needs a labelled historical corpus and human review before any

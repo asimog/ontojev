@@ -197,7 +197,8 @@ names the accepted state, and whose `action` block cites the action that produce
 action is excluded from that revision's eligible set.
 
 A generated hypothesis is a first-class record with the existing `hypotheses` shape plus
-`generator` and a label that names its generator (`GENERATED HYPOTHESIS — NOT EVIDENCE` or
+`generator`, `generator_model` (the pinned provider identity, so a review is never reused across
+models) and a label that names its generator (`GENERATED HYPOTHESIS — NOT EVIDENCE` or
 `LLM-GENERATED HYPOTHESIS — NOT EVIDENCE`); `proposed_action_ids` may only cite registered actions and
 the record is bounded to `MAX_HYPOTHESES` per candidate. Its review is a normal JevEvaluation with
 `purpose="HYPOTHESIS"`, `input_ref_kind="HYPOTHESIS"`, `input_ref_id=<hypothesis_id>` and the

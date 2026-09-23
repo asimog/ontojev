@@ -68,6 +68,10 @@ instructions override implementation steps embedded in reference documents.
 
 - Public anonymous official GDC API only. No token, credential seeking, bulk acquisition or
   file download. `/data`, manifests and slicing are outside the allowlist.
+- GDC never authenticates. Exactly one allow-listed module (`cancerjev/llm/openrouter.py`) may carry a
+  provider authorization header for generated hypothesis text: the credential is environment-only,
+  never persisted or logged, the model must be a pinned identity, and its output is bounded, validated
+  strictly and never evidence. Any other module adding an authorization header fails the guard test.
 - Respect the caps in `docs/GDC_BUDGETS.md`. Never enlarge a limit to finish work.
 - Missing is not negative; unavailable mutation evidence is not wild type; a missing
   expression column is not zero. Never hide partial retrieval.

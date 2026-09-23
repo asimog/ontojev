@@ -222,6 +222,7 @@ class LiveOrchestrator:
     deep_selections: tuple[str, ...] = ()
     deep_action_id: str | None = None
     deep_followup_authorized: bool = False
+    deep_hypotheses_requested: bool = False
     llm_generator: Callable[..., Any] | None = None
 
     # ------------------------------------------------------------- event helpers
@@ -340,6 +341,15 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
                     "deep_selections": list(self._deep_selections()),
                     "deep_action_id": self.deep_action_id,
                     "deep_followup_authorized": self.deep_followup_authorized,
+                    "deep_hypotheses_requested": self.deep_hypotheses_requested,
+                    "llm_generation": {
+                        "enabled": self.llm_generator is not None,
+                        "generator": str(getattr(self.llm_generator, "name", "deterministic-template-v1"))
+                        if self.llm_generator is not None else "deterministic-template-v1",
+                        "model": str(getattr(self.llm_generator, "model", None))
+                        if self.llm_generator is not None else None,
+                        "credential": "environment-only; never recorded",
+                    },
                     "deep_selection_rule": (
                         "An operator names one promoted candidate explicitly; wide admission never "
                         "dispatches a follow-up on its own."
@@ -599,6 +609,7 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
                 stage=lambda name, function: self._stage(run_id, name, function),
                 jev_service=self.jev_service, requested_action_id=self.deep_action_id,
                 authorize_iteration=self.deep_followup_authorized,
+                hypotheses_requested=self.deep_hypotheses_requested,
                 llm_generator=self.llm_generator,
             )
             summaries.append(investigation.summary())

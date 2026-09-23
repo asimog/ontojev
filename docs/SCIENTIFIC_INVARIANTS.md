@@ -104,11 +104,15 @@ action set, using its own versioned question set (`deep-v1`). The boundary is ex
 
 - Generated text is never evidence. Every statement carries a label naming its generator, is stored in
   its own record, is bounded (`MAX_HYPOTHESES = 3` per candidate) and never writes a measured field.
-- This repository performs no model request, holds no provider credential and defines no provider
-  contract. Generation is deterministic by default; an LLM is used only through a generator injected
-  by the caller, whose output is validated strictly (schema, non-empty statement, distinguishing tests
-  restricted to eligible registered actions) and whose absence or deviation is a typed, recorded
-  `UNAVAILABLE` outcome.
+- Generation is deterministic by default. An LLM is used only through a generator injected by the
+  caller; the optional OpenRouter adapter is the only module that authenticates, reads its credential
+  from the environment, persists nothing and bounds both the completion and the whole request. Its
+  output is validated strictly (schema, bounds, non-empty statement, string lists, distinguishing tests
+  restricted to eligible registered actions) and its absence or deviation is a typed, recorded
+  `UNAVAILABLE` outcome. No measured field is ever written from generated text.
+- A hypothesis review binds the generator and its pinned model identity, so a review of text from one
+  provider model is never reused for another. Provider failures (missing credential, HTTP status,
+  deadline, empty content, oversized or malformed response) are typed and never partial trust.
 - `hypothesis-v2` reviews each statement over the new `jev-hypothesis-projection-v1` projection. The
   review is an input to Python policy; it executes nothing and authorizes nothing.
 - A live dossier is presentation over what the run already recorded: every section states its

@@ -149,7 +149,11 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: dict[st
         "OBSERVED" if hypothesis_evaluations else "NOT_ACQUIRED",
         narrative=(
             "; ".join(
-                f"{item.get('label')}: testable={item.get('answers', {}).get('hypothesis_testable', {}).get('probability_yes')}"
+                f"{str(item.get('hypothesis_id'))[:8]}"
+                f" ({item.get('generator')}, {item.get('question_set_version')}): "
+                f"testable={item.get('answers', {}).get('hypothesis_testable', {}).get('probability_yes')}, "
+                f"exceeds_evidence="
+                f"{item.get('answers', {}).get('hypothesis_exceeds_recorded_evidence', {}).get('probability_yes')}"
                 for item in hypothesis_evaluations
             ) or None
         ),

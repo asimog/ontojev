@@ -22,7 +22,8 @@ from tests.science.test_methods import _build, _frame
 
 def _orchestrator(runtime, monkeypatch, *, jev_adapter=None, research_spec=None,
                   deep_selection=None, deep_selections=(), deep_action_id=None,
-                  deep_followup_authorized=False, llm_generator=None, **replay_options):
+                  deep_followup_authorized=False, deep_hypotheses_requested=False,
+                  llm_generator=None, **replay_options):
     settings, repository, artifacts = runtime
     monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))
     holder: dict[str, ReplayTransport] = {}
@@ -41,6 +42,7 @@ def _orchestrator(runtime, monkeypatch, *, jev_adapter=None, research_spec=None,
                                     deep_selection=deep_selection, deep_selections=tuple(deep_selections),
                                     deep_action_id=deep_action_id,
                                     deep_followup_authorized=deep_followup_authorized,
+                                    deep_hypotheses_requested=deep_hypotheses_requested,
                                     llm_generator=llm_generator)
     return orchestrator, holder, repository
 

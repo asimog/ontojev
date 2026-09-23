@@ -24,6 +24,8 @@ implement an optional expanded-budget override. Freeze validated effective limit
 | MAX_COHORT_CASES | `case_page_size × 10` (≤2,500) | `AcquisitionSpec`: the ten-page query budget |
 | MAX_JEV_WIDE_STATES_PER_RUN | 1,000 | `Settings.jev_max_states`; persist distinct state admissions before cache/provider evaluation; reevaluation cannot reset admission budget |
 | JEV_REQUEST_TIMEOUT | 30 s | `Settings.jev_timeout_seconds` (`CANCERJEV_JEV_TIMEOUT_SECONDS`, bounded-seconds pattern); one provider request timeout, may be lowered only |
+| LLM_REQUEST_TIMEOUT | 120 s | `Settings.llm_timeout_seconds` (`CANCERJEV_LLM_TIMEOUT_SECONDS`, bounded-seconds pattern); one generated-text provider request, may be lowered only. 120 s because a reasoning model spends part of its bounded completion (`MAX_OUTPUT_TOKENS = 6000`, `reasoning.effort = low`) on reasoning before returning content |
+| MAX_HYPOTHESES_PER_CANDIDATE | 3 | `cancerjev.research.hypotheses.MAX_HYPOTHESES`; generated text is bounded per statement and per list (`MAX_TEXT_CHARS`, `MAX_LIST_ITEMS`), never evidence and never a measured field |
 | MAX_EVENT_DATA_BYTES | 65,536 | `domain.events.DATA_LIMIT`; UTF-8 serialized payload validation before event commit |
 | MAX_PROJECTION_BYTES | 65,536 | `jev.projection.PROJECTION_BYTE_CAP`; fail-closed projection size |
 | WIDE_PROMOTION_LIMIT | 3 | `research.ranking.PROMOTION_LIMIT`; top-K wide admission (a maximum, not a quota) |

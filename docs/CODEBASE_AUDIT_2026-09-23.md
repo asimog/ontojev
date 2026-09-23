@@ -614,6 +614,79 @@ holds it.
 - **AUD-45 (NEW, fixed): the loop guard bound the cap at import time.** The guard now reads
   `FOLLOWUP_LIMIT` at call time, so reconfiguring the cap cannot leave a stale backstop.
 
+## Audit pass 7 (2026-09-23, live OpenRouter provider testing)
+
+The owner requested live generated-text testing through OpenRouter with `deepseek/deepseek-v4.1-flash`.
+The work below was driven by what the live provider actually did; each item has a regression test or a
+recorded rationale.
+
+### AUD-46: the open-access authentication guard needed a deliberate, single-module seam
+
+- **Disposition:** deliberate narrowing, documented and asserted. The guard test previously failed any
+  `Authorization` header literal anywhere in `cancerjev/`. The GDC boundary stays strictly anonymous and
+  is now asserted separately (`test_only_the_opt_in_provider_module_may_authenticate` asserts the GDC
+  tree has zero auth literals), while exactly one allow-listed module may carry a provider header.
+- **Why:** an LLM provider is a different provider from GDC; the owner authorised it, and the credential
+  stays environment-only, is never persisted, never logged and never enters a request body or any record.
+  Any other module adding an auth header still fails the test.
+
+### AUD-47: an unbounded reasoning completion hung the request for ten minutes
+
+- **Severity:** High (hang/cost). **Disposition:** CONFIRMED live → fixed.
+- **Root cause:** the adapter sent no `max_tokens`. A reasoning model streams reasoning tokens before
+  emitting content, so the socket timeout (which bounds one read) never fired and the whole call hung;
+  with a small budget the same model returned `content: None` while reporting consumed tokens.
+- **Fix:** bounded completion (`MAX_OUTPUT_TOKENS = 6000`), a whole-request deadline checked between
+  chunk reads (`LLM_DEADLINE_EXCEEDED`), `reasoning.effort = low`, and a typed `LLM_EMPTY_CONTENT` that
+  reports `finish_reason` and the reasoning length instead of a confusing JSON error.
+- **Coverage:** `test_request_bounds_the_completion_and_enforces_a_whole_request_deadline`.
+
+### AUD-48: fenced JSON output was rejected as malformed
+
+- **Severity:** Medium (availability). **Disposition:** CONFIRMED live (same request parsed cleanly on a
+  repeat) → fixed.
+- **Fix:** a bounded single markdown-fence extraction before failing; the extracted payload is still
+  parsed as JSON and every draft is still strictly validated afterwards, so no text is trusted.
+
+### AUD-49: the 120 s LLM timeout was rejected by a 30 s cap
+
+- **Disposition:** DELIBERATE change with rationale: the LLM timeout cap is now 120 s (default 120 s,
+  setting may be lowered only), documented in `docs/GDC_BUDGETS.md`, because a reasoning model spends
+  part of its bounded completion on reasoning. This is an operational provider setting, not a measured
+  evidence limit, and the change is recorded rather than made to finish work.
+
+### AUD-50: operator-requested hypothesis generation
+
+- **Disposition:** implemented. Live `deep-v1` judgments recorded `COMPLETE` for every candidate tried
+  (`next_step_warranted ~0.53`, `stopping_more_honest ~0.58`), so the policy never asks for hypotheses.
+  The thresholds were **not** tuned. Instead `--deep-hypotheses` lets an operator request bounded
+  generation for the current revision; the recorded move is never rewritten, the request is recorded as
+  `requested_reason = OPERATOR_REQUESTED_HYPOTHESES`, and all existing bounds still apply.
+- **Coverage:** `test_operator_request_generates_hypotheses_without_rewriting_the_move`.
+
+### AUD-51: the provider name was reported as the generic default
+
+- **Severity:** Low (provenance). **Disposition:** CONFIRMED by test → fixed: `GeneratedHypotheses`
+  carried `injected-generator-v1` while the stored records carried `openrouter-chat-v1`. The name now
+  comes from the injected generator (`getattr(generator, "name", …)`), and a failure reports the
+  provider that failed.
+
+### AUD-52: the dossier printed `None:` for hypothesis reviews
+
+- **Severity:** Low (presentation). **Disposition:** CONFIRMED live → fixed: the review narrative read a
+  `label` field the evaluation vector does not carry; it now names the hypothesis id, generator and
+  question-set version, plus testable and exceeds-evidence probabilities.
+
+### Live result (run `204e57b8`, retained in `data/live-e2e-20260923/`)
+
+16 GDC cache hits, 10 wide judgments reused, 1 deep judgment, **1 OpenRouter call** (315 in / 3,364 out
+tokens, `deepseek/deepseek-v4.1-flash`) producing two competing, falsifiable hypotheses that quote only
+recorded numbers (393 of 585 examined, 518 expression cases, 67 missing); each was reviewed by
+`hypothesis-v2` (testable 0.68/0.66, exceeds-recorded-evidence 0.79/0.77, dominant unsupported
+assumption `OTHER`) and both reviews were recorded as `HYPOTHESIS_EVALUATED` (AUD-39 fix verified live).
+The dossier carried the LLM notice and `OBSERVED` sections for competing hypotheses, reviews, provider
+metadata and falsification criteria. The recorded move stayed `COMPLETE`.
+
 ## Recommended Follow-Up
 
 1. Complete the baseline-vs-Jev evaluation with a predefined labeled/decision-quality protocol;

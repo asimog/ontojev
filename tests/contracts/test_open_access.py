@@ -21,6 +21,11 @@ from cancerjev.gdc.transport import BudgetCaps, TransportError, TransportErrorCo
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FORBIDDEN_HEADER_NAMES = {"authorization", "x-auth-token", "proxy-authorization"}
 FORBIDDEN_ENV_PATTERN = ("GDC_TOKEN", "X_AUTH_TOKEN", "GDC_AUTH", "GDC_API_KEY")
+# The GDC boundary must never authenticate. Exactly one module may carry a provider authorization
+# header: the opt-in OpenRouter hypothesis adapter, which is injected by the caller, reads its
+# credential from the environment, persists nothing and produces text that is never evidence.
+# Any other offender still fails, so authentication cannot spread beyond this single seam.
+PROVIDER_AUTH_ALLOWLIST = {"openrouter.py"}
 
 
 def _string_constants(path: Path) -> list[str]:
@@ -56,9 +61,23 @@ def test_no_source_file_uses_an_authentication_header_literal():
     offenders: list[str] = []
     for path in (REPO_ROOT / "cancerjev").rglob("*.py"):
         for value in _string_constants(path):
-            if value.strip().lower() in FORBIDDEN_HEADER_NAMES:
+            if value.strip().lower() in FORBIDDEN_HEADER_NAMES and path.name not in PROVIDER_AUTH_ALLOWLIST:
                 offenders.append(f"{path.name}: {value!r}")
     assert offenders == [], f"authentication header literals found: {offenders}"
+
+
+def test_only_the_opt_in_provider_module_may_authenticate():
+    authenticated = [
+        path.name for path in (REPO_ROOT / "cancerjev").rglob("*.py")
+        if any(value.strip().lower() in FORBIDDEN_HEADER_NAMES for value in _string_constants(path))
+    ]
+    assert sorted(authenticated) == sorted(PROVIDER_AUTH_ALLOWLIST), (
+        "a provider authorization header may exist only in the allow-listed adapter"
+    )
+    gdc_modules = [path.name for path in (REPO_ROOT / "cancerjev" / "gdc").rglob("*.py")
+                   if any(value.strip().lower() in FORBIDDEN_HEADER_NAMES
+                          for value in _string_constants(path))]
+    assert gdc_modules == [], "the GDC boundary must stay anonymous"
 
 
 def test_no_gdc_credential_environment_variable_is_read():

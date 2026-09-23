@@ -84,9 +84,10 @@ def _recorded_facts(revision: dict[str, Any]) -> dict[str, Any]:
 
 def _draft(generator: str, label: str, *, statement: str, mechanism: str, predictions: list[str],
            contradicted_if: list[str], distinguishing_tests: list[str], required_evidence: list[str],
-           assumptions: list[str]) -> dict[str, Any]:
+           assumptions: list[str], generator_model: str | None = None) -> dict[str, Any]:
     return {
-        "label": label, "generator": generator, "statement": statement,
+        "label": label, "generator": generator, "generator_model": generator_model,
+        "statement": statement,
         "proposed_mechanism": mechanism, "predictions": predictions,
         "contradicted_if": contradicted_if, "distinguishing_tests": distinguishing_tests,
         "required_evidence": required_evidence, "unsupported_assumptions": assumptions,
@@ -211,7 +212,9 @@ def generation_request(revision: dict[str, Any], *, eligible_action_ids: list[st
 
 
 def validate_generated_drafts(entries: Any, *, eligible_action_ids: list[str],
-                              generator: str = INJECTED_GENERATOR) -> tuple[tuple[dict[str, Any], ...], None]:
+                              generator: str = INJECTED_GENERATOR,
+                              generator_model: str | None = None,
+                              ) -> tuple[tuple[dict[str, Any], ...], None]:
     """Validate injected generator output strictly; any deviation is a typed failure.
 
     Untrusted text is bounded here so it can never reach an evidence record: every
@@ -250,6 +253,7 @@ def validate_generated_drafts(entries: Any, *, eligible_action_ids: list[str],
             distinguishing_tests=tests,
             required_evidence=list(entry["required_evidence"]),
             assumptions=list(entry["unsupported_assumptions"]),
+            generator_model=generator_model,
         ))
     return tuple(drafts), None
 
@@ -260,10 +264,10 @@ def generate_with_injected_generator(revision: dict[str, Any], *, eligible_actio
     """Use a caller-supplied generator and validate its output strictly.
 
     The generator receives only :func:`generation_request` and may return either the
-    entry list or ``(entries, usage)``. Its output is untrusted text: schema,
-    distinguishing tests and label are enforced here, and any deviation raises a
-    typed :class:`HypothesisUnavailable` rather than producing a partly trusted
-    hypothesis.
+    entry list or ``(entries, usage)``. Its output is untrusted text: schema, bounds,
+    distinguishing tests, label and provider identity are enforced here, and any
+    deviation raises a typed :class:`HypothesisUnavailable` rather than producing a
+    partly trusted hypothesis.
     """
     request = generation_request(revision, eligible_action_ids=eligible_action_ids)
     try:
@@ -271,7 +275,8 @@ def generate_with_injected_generator(revision: dict[str, Any], *, eligible_actio
     except HypothesisUnavailable:
         raise
     except Exception as exc:  # noqa: BLE001 - every generator failure is a typed outcome
-        raise HypothesisUnavailable("GENERATOR_ERROR", f"{type(exc).__name__}: {exc}") from exc
+        code = getattr(exc, "code", None) or "GENERATOR_ERROR"
+        raise HypothesisUnavailable(str(code), f"{type(exc).__name__}: {exc}") from exc
     usage = {"input_tokens": None, "output_tokens": None}
     entries = produced
     if isinstance(produced, tuple) and len(produced) == 2:
@@ -279,7 +284,11 @@ def generate_with_injected_generator(revision: dict[str, Any], *, eligible_actio
         if isinstance(raw_usage, dict):
             usage = {"input_tokens": raw_usage.get("input_tokens"),
                      "output_tokens": raw_usage.get("output_tokens")}
-    drafts, _ = validate_generated_drafts(entries, eligible_action_ids=eligible_action_ids)
+    generator_name = str(getattr(generator, "name", INJECTED_GENERATOR))
+    generator_model = getattr(generator, "model", None)
+    drafts, _ = validate_generated_drafts(entries, eligible_action_ids=eligible_action_ids,
+                                          generator=generator_name,
+                                          generator_model=str(generator_model) if generator_model else None)
     return drafts, usage
 
 
@@ -288,14 +297,15 @@ def generate_hypotheses(*, revision: dict[str, Any], candidate: dict[str, Any],
                         llm_generator: Callable[..., Any] | None = None) -> GeneratedHypotheses:
     """Deterministic template generation by default; an injected generator otherwise."""
     if llm_generator is not None:
+        generator_name = str(getattr(llm_generator, "name", INJECTED_GENERATOR))
         try:
             drafts, usage = generate_with_injected_generator(
                 revision, eligible_action_ids=eligible_action_ids, generator=llm_generator)
-            return GeneratedHypotheses(generator=INJECTED_GENERATOR, label=LLM_HYPOTHESIS_LABEL,
+            return GeneratedHypotheses(generator=generator_name, label=LLM_HYPOTHESIS_LABEL,
                                        drafts=drafts, provider_attempted=True, usage=usage,
                                        error_code=None, error_detail=None)
         except HypothesisUnavailable as exc:
-            return GeneratedHypotheses(generator=INJECTED_GENERATOR, label=LLM_HYPOTHESIS_LABEL, drafts=(),
+            return GeneratedHypotheses(generator=generator_name, label=LLM_HYPOTHESIS_LABEL, drafts=(),
                                        provider_attempted=True,
                                        usage={"input_tokens": None, "output_tokens": None},
                                        error_code=exc.code, error_detail=exc.detail)
@@ -318,8 +328,13 @@ def run_hypothesis_stage(*, run_id: str, candidate: dict[str, Any], revision: di
                          evidence_hash: str, eligible_action_ids: list[str], repository: Any,
                          jev_service: Any, emit: Callable[..., Any],
                          publish_json: Callable[[str, str, Any, str], Any],
-                         llm_generator: Callable[..., Any] | None = None) -> dict[str, Any]:
-    """Generate bounded hypotheses, persist them, and have Jev judge each one."""
+                         llm_generator: Callable[..., Any] | None = None,
+                         requested_reason: str | None = None) -> dict[str, Any]:
+    """Generate bounded hypotheses, persist them, and have Jev judge each one.
+
+    ``requested_reason`` records an explicit operator request when the stage runs without the
+    policy having asked for hypotheses; the recorded next move is never rewritten.
+    """
     existing = repository.page_child("hypotheses", run_id, 100, None,
                                      {"candidate_id": candidate["candidate_id"]})["items"]
     remaining = MAX_HYPOTHESES - len(existing)
@@ -350,7 +365,7 @@ def run_hypothesis_stage(*, run_id: str, candidate: dict[str, Any], revision: di
                   "evidence_state_id": revision.get("evidence_state_id")},
         )
         return {"status": "UNAVAILABLE", "error_code": generated.error_code, "hypothesis_ids": [],
-                "evaluations": []}
+                "evaluations": [], "generator": generated.generator, "label": generated.label}
     hypothesis_ids: list[str] = []
     registrations: list[tuple[str, tuple[Any, ...]]] = []
     refs: list[dict[str, Any]] = []
@@ -384,7 +399,9 @@ def run_hypothesis_stage(*, run_id: str, candidate: dict[str, Any], revision: di
         data={"outcome": "GENERATED", "candidate_id": candidate["candidate_id"], "count": len(hypothesis_ids),
               "hypothesis_ids": hypothesis_ids, "generator": generated.generator,
               "label": generated.label, "provider_attempted": generated.provider_attempted,
-              "usage": generated.usage, "cache": False, "evidence_state_id": revision.get("evidence_state_id")},
+              "usage": generated.usage, "cache": False,
+              "evidence_state_id": revision.get("evidence_state_id"),
+              "requested_reason": requested_reason},
         artifact_refs=refs, registrations=registrations,
     )
     evaluations: list[dict[str, Any]] = []
@@ -403,4 +420,5 @@ def run_hypothesis_stage(*, run_id: str, candidate: dict[str, Any], revision: di
             "answers": evaluation["answers"],
         })
     return {"status": "GENERATED", "generator": generated.generator,
-            "hypothesis_ids": hypothesis_ids, "evaluations": evaluations}
+            "hypothesis_ids": hypothesis_ids, "evaluations": evaluations,
+            "requested_reason": requested_reason}
