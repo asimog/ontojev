@@ -175,6 +175,7 @@ EVIDENCE_INCLUDED_FIELDS = (
     "revision.not_observed_checks",
     "action.action_id",
     "action.version",
+    "action.input_kind",
     "action.method_id",
     "action.method_version",
     "action.title",

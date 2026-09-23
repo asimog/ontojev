@@ -33,7 +33,9 @@ def parser() -> argparse.ArgumentParser:
                                   "gene:<SYMBOL>, state:<STATE_ID> (wide-evaluated states) or slot:N "
                                   "(policy-promoted candidates); requires --live --jev")
         command.add_argument("--deep-action", default=None,
-                             help="explicitly selected registered action id for the deep slice (optional)")
+                             help="explicitly selected registered action id for the first deterministic "
+                                  "step on the accepted evidence E0 (optional); a dispatched follow-up "
+                                  "uses the policy's distinct eligible revision action instead")
         command.add_argument("--deep-followup", action="store_true",
                              help="authorize dispatching one recorded FOLLOW_UP for the selected candidate "
                                   "(bounded to one dispatch per run); requires --deep-candidate")

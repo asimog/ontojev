@@ -154,7 +154,7 @@ export function RunDetail({ runId }: { runId: string }) {
           <Metric label={live ? "Projects examined" : "Projects simulated"} value={run.counts.projects_completed} />
           <Metric label="States generated" value={run.counts.states_generated} />
           <Metric label="States evaluated" value={run.counts.states_evaluated} />
-          <Metric label="Wide candidates" value={run.counts.candidates_promoted} />
+                <Metric label="Candidates promoted" value={run.counts.candidates_promoted} />
           <Metric label="Jev provider calls" value={run.provider_usage.jev_calls} />
           <Metric label="LLM calls" value={run.provider_usage.llm_calls} />
         </div>

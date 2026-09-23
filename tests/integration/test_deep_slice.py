@@ -469,8 +469,11 @@ def test_authorized_follow_up_dispatches_one_revision_and_rejudges_it(runtime, m
     assert dispatch["reason_code"] == "DISPATCHED"
     assert dispatch["action_id"] == "CHECK_REVISION_FAITHFULNESS_V1"
     assert dispatch["iteration"] == 2
+    assert dispatch["result_status"] == "COMPLETED"
     assert dispatch["next_move"]["move"] == "ABSTAIN"
     assert dispatch["next_move"]["reason_code"] == "NO_FURTHER_REGISTERED_ACTION"
+    assert dispatch["judgment"]["deep_evaluation_id"], "the dispatched revision's judgment must be named"
+    assert dispatch["judgment"]["deep_usage"]["input_tokens"] == 1200
 
     candidate = next(row for row in repository.list_table("candidates", run_id)
                      if row["entity"]["gene_symbol"] == "GENEONE")
@@ -552,3 +555,60 @@ def test_dispatch_respects_the_caps(runtime, monkeypatch, attribute, limit, reas
     assert summary["dispatch"]["reason_code"] == reason
     assert [row["iteration"] for row in repository.list_table("evidence_states", run_id)] == [0, 1]
     assert len(repository.list_table("followup_executions", run_id)) == 1
+
+
+def test_a_failed_attempt_consumes_follow_up_budget(runtime, monkeypatch):
+    """A failed action attempt spent budget, so it must count against the cap."""
+    from cancerjev.domain.events import utc_now
+
+    run_id, _, repository = _completed_slice(runtime, monkeypatch, deep_selection="GENEONE")
+    artifacts = runtime[2]
+    candidate = next(row for row in repository.list_table("candidates", run_id)
+                     if row["entity"]["gene_symbol"] == "GENEONE")
+    evidence = deep.load_candidate_evidence(repository, artifacts, candidate)
+    revision = json.loads(artifacts.read(
+        repository.artifact(repository.evidence_revisions(candidate["candidate_id"])[1]["artifact_id"])["relative_path"]))
+    result = deep.FollowUpResult(
+        status="COMPLETED", action_id=revision["action"]["action_id"],
+        evidence_state_id=revision["evidence_state_id"],
+        evidence_hash=content_hash(evidence_state_identity_payload(revision)),
+        iteration=1, checks_total=5, checks_verified=5, checks_contradicted=0, checks_not_observed=0,
+        error_code=None, revision=revision,
+    )
+    repository.append_event(
+        run_id, event_type="FOLLOWUP_FAILED", idempotency_key="audit:failed-attempt",
+        message="failed attempt", stage="FOLLOWUP", level="error", candidate_id=candidate["candidate_id"],
+        registrations=[repository.followup_execution_registration(
+            execution_id="audit-failed-execution", run_id=run_id, candidate_id=candidate["candidate_id"],
+            action_id="CHECK_REVISION_FAITHFULNESS_V1", action_version="1",
+            input_evidence_hash="f" * 64, output_evidence_state_id=None, slot=9, status="FAILED",
+            summary_json="{}", created_at=utc_now(),
+        )],
+    )
+    monkeypatch.setattr(deep, "FOLLOWUP_LIMIT", 2)
+    emitted: list[dict] = []
+
+    def emit(event_run_id, event_type, key, message, **kwargs):
+        event = repository.append_event(event_run_id, event_type=event_type, idempotency_key=key,
+                                        message=message, **kwargs)
+        emitted.append(event)
+        return event
+
+    def read_artifact(artifact_id):
+        metadata = repository.artifact(artifact_id)
+        return artifacts.read(metadata["relative_path"]) if metadata else None
+
+    dispatch = deep.dispatch_recorded_move(
+        run_id=run_id, candidate=evidence, result=result,
+        decision={"move": "FOLLOW_UP",
+                  "dimensions": {"distinct_eligible_action_ids": ["CHECK_REVISION_FAITHFULNESS_V1"]}},
+        repository=repository, emit=emit,
+        publish_json=lambda pub_run_id, path, payload, purpose: artifacts.publish(
+            path, json.dumps(payload, sort_keys=True).encode(), "application/json", purpose),
+        read_artifact=read_artifact, authorized=True,
+    )
+    assert dispatch.dispatched is False
+    assert dispatch.reason_code == "FOLLOWUP_LIMIT_REACHED"
+    refusals = [event for event in emitted if event["type"] == "NEXT_MOVE_DISPATCHED"]
+    assert refusals and refusals[0]["data"]["dispatched"] is False
+    assert [row["iteration"] for row in repository.list_table("evidence_states", run_id)] == [0, 1]

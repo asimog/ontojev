@@ -38,6 +38,16 @@ function judgmentDimensions(judgment: ChildRecord | undefined): Array<[string, s
   });
 }
 
+function judgmentLabel(judgment: ChildRecord | undefined): string {
+  if (!judgment) return "no deep judgment recorded";
+  const vector = judgment.vector as Record<string, unknown> | undefined;
+  const error = vector?.error as { code?: string } | undefined;
+  if (error?.code) return `deep judgment failed: ${error.code} (the revision stands)`;
+  const dimensions = judgmentDimensions(judgment);
+  if (!dimensions.length) return "deep judgment recorded with no usable answers";
+  return `deep judgment: ${dimensions.map(([question, value]) => `${question} ${value}`).join(" · ")}`;
+}
+
 export function DeepEvidencePanel({ revisions, executions, judgments }: {
   revisions: ChildRecord[];
   executions: ChildRecord[];
@@ -83,7 +93,6 @@ export function DeepEvidencePanel({ revisions, executions, judgments }: {
               const summary = (row.summary ?? {}) as Record<string, unknown>;
               const evidenceStateId = String(row.evidence_state_id);
               const judgment = judgments.find((entry) => String(entry.input_ref_id) === evidenceStateId);
-              const dimensions = judgmentDimensions(judgment);
               return (
                 <tr key={evidenceStateId}>
                   <td>{String(row.iteration)}</td>
@@ -98,11 +107,7 @@ export function DeepEvidencePanel({ revisions, executions, judgments }: {
                       {openId === evidenceStateId ? "Hide" : "Inspect"}
                     </button>
                   </td>
-                  <td className="fine">
-                    {judgment
-                      ? `deep judgment: ${dimensions.map(([question, value]) => `${question} ${value}`).join(" · ")}`
-                      : "no deep judgment recorded"}
-                  </td>
+                  <td className="fine">{judgmentLabel(judgment)}</td>
                 </tr>
               );
             })}

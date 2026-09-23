@@ -620,10 +620,11 @@ def _check_source_evidence_restated(revision: dict[str, Any], state: dict[str, A
     ), []
 
 
-def _source_triples(container: dict[str, Any]) -> set[tuple[Any, Any, Any]]:
+def _source_triples(container: dict[str, Any]) -> set[tuple[Any, Any, Any, Any]]:
     sources = container.get("sources") if isinstance(container.get("sources"), list) else []
     return {
-        (source.get("endpoint"), source.get("normalized_request_hash"), source.get("response_sha256"))
+        (source.get("endpoint"), source.get("normalized_request_hash"), source.get("response_sha256"),
+         source.get("parser_version"))
         for source in sources if isinstance(source, dict)
     }
 
@@ -654,7 +655,8 @@ def _check_source_provenance_unchanged(revision: dict[str, Any], state: dict[str
         notes = ()
     return _check(
         "SOURCE_PROVENANCE_UNCHANGED",
-        "The revision keeps exactly the accepted evidence's retained response provenance and substitutes nothing.",
+        "The revision keeps exactly the accepted evidence's retained response provenance "
+        "(endpoint, canonical request hash, response hash and parser version) and substitutes nothing.",
         outcome, observed=observed, expected={"revision sources": len(state_triples)}, n_effective=len(revision_triples),
         notes=notes,
     ), []
@@ -720,10 +722,16 @@ def _check_revision_chain_linked(revision: dict[str, Any], state: dict[str, Any]
         "gene_id": gene_id, "source_gene_id": state_gene_id,
     }
     contradictions: list[str] = []
-    if action is None or definition is None:
-        contradictions.append("the revision does not cite a registered producing action")
+    unverifiable: list[str] = []
+    if action is None:
+        contradictions.append("the revision does not cite a producing action")
+    elif definition is None:
+        contradictions.append("the revision cites an action the registry does not hold")
     elif action.get("version") != definition.version:
-        contradictions.append("the revision cites a producing action version the registry does not hold")
+        unverifiable.append(
+            "the registry holds a different version of the producing action, so the cited version "
+            "cannot be verified"
+        )
     if not revision.get("previous_evidence_state_id"):
         contradictions.append("the revision records no parent revision")
     if state_gene_id is not None and gene_id != state_gene_id:
@@ -731,9 +739,9 @@ def _check_revision_chain_linked(revision: dict[str, Any], state: dict[str, Any]
     if contradictions:
         outcome = CHECK_CONTRADICTED
         notes = tuple(contradictions[:3])
-    elif state is None or gene_id is None:
+    elif unverifiable or state is None or gene_id is None:
         outcome = CHECK_NOT_OBSERVED
-        notes = ("the revision or the retained source artifact does not permit a chain check",)
+        notes = tuple(unverifiable) or ("the revision or the retained source artifact does not permit a chain check",)
     else:
         outcome = CHECK_VERIFIED
         notes = ()
@@ -742,6 +750,7 @@ def _check_revision_chain_linked(revision: dict[str, Any], state: dict[str, Any]
         "The revision cites a registered producing action at its recorded version, records its parent, and keeps the accepted entity.",
         outcome, observed=observed, expected={"registered producing action": True, "parent present": True},
         n_effective=1, notes=notes,
+        limitations=("A producing action version retired from the registry is reported as not observed, not as a contradiction.",),
     ), []
 
 

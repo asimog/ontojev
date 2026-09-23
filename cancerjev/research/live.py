@@ -422,11 +422,11 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
     def _deep_state_index(self, run_id: str) -> dict[str, dict[str, Any]]:
         evaluations = {
             row["input_ref_id"]: row for row in self.repository.page_child(
-                "jev_evaluations", run_id, 200, None, {"purpose": "WIDE"},
+                "jev_evaluations", run_id, 1000, None, {"purpose": "WIDE"},
             )["items"]
         }
         index: dict[str, dict[str, Any]] = {}
-        for row in self.repository.list_table("statistical_states", run_id):
+        for row in self.repository.list_table("statistical_states", run_id, limit=1000):
             evaluation = evaluations.get(row["state_id"])
             summary = row["summary"] if isinstance(row["summary"], dict) else {}
             index[row["state_id"]] = {

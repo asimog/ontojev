@@ -101,7 +101,10 @@ action set, using its own versioned question set (`deep-v1`). The boundary is ex
   dropped. Jev does not select, authorize or execute a computation, and no loop is driven by a
   judgment.
 - Deep thresholds are provisional and must not be tuned to force a move; a `COMPLETE` decision is a
-  statement about remaining deterministic work, not a biological conclusion.
+  statement about remaining deterministic work, not a biological conclusion. The `deep-policy-v1`
+  values are `revision_reliable_min = 0.5`, `evidence_sufficient_min = 0.5`,
+  `next_step_warranted_min = 0.6` and `stopping_more_honest_min = 0.5`
+  (`cancerjev/research/nextmove.py` is the source of truth).
 
 ## Dispatch of a recorded move (Phase 4 dispatch stage)
 
@@ -111,7 +114,8 @@ action set, using its own versioned question set (`deep-v1`). The boundary is ex
   revision chain, and reports anything it cannot verify as `NOT_OBSERVED`.
 - The policy's recorded move is never dispatched by the policy; dispatch is a separate Python step
   that requires explicit operator authorization, runs at most once per run, and obeys
-  `followup_count ≤ 3` and `iteration ≤ 2`.
+  `followup_count ≤ 3` and `iteration ≤ 2`. Every attempt consumes follow-up budget, not only
+  successful ones, so a failed action cannot buy extra iterations.
 - A dispatched revision is a new immutable revision whose parent is the current one; it cites its
   producing action, which is excluded from its own eligible set, so the follow-on decision is
   `NO_FURTHER_REGISTERED_ACTION` rather than a silent repetition.

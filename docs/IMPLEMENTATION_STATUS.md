@@ -302,7 +302,7 @@ Verification performed 2026-09-23 (pre-Phase-4 hardening) on the hardened implem
 | Gate | Command | Result |
 |---|---|---|
 | Python lint | `python -m ruff check cancerjev apps tests` | All checks passed |
-| Offline suite | `python -m pytest -q` | **343 passed**, 0 failed; 2 opt-in live-marked tests deselected (345 collected) |
+| Offline suite | `python -m pytest -q` | **348 passed**, 0 failed; 2 opt-in live-marked tests deselected (350 collected) |
 | Frontend typecheck | `npm run typecheck` | Passed |
 | Frontend build | `npm run build` | Passed (all routes) |
 | Browser E2E | `npm run test:e2e` (API 8010, web 3010; matching localhost origin) | **4 passed** |
@@ -319,7 +319,7 @@ No live GDC, TypeSafe or LLM call was made by the pre-Phase-4 hardening pass, th
 slice, or their verification: the tests use loopback sockets, the injected fake SDK module, and the
 replay transport. The deep slice acquires no evidence and calls no model by construction.
 
-On Windows, pytest exited successfully with all 343 offline tests passing but emitted an ignored
+On Windows, pytest exited successfully with all 348 offline tests passing but emitted an ignored
 `PermissionError` while cleaning its temporary `pytest-current` symlink at process exit.
 
 The dispatch stage is verified offline end-to-end (replay transport + stub adapter, both the

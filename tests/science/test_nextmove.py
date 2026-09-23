@@ -4,9 +4,24 @@ from __future__ import annotations
 
 import pytest
 
-from cancerjev.research.nextmove import DEEP_POLICY_VERSION, THRESHOLDS, next_move
+from cancerjev.research.nextmove import DEEP_POLICY_VERSION, MOVES, THRESHOLDS, next_move
 
 ACTION = "CHECK_EVIDENCE_INTEGRITY_V1"
+
+
+def test_declared_move_vocabulary_is_the_only_output():
+    assert MOVES == ("COMPLETE", "FOLLOW_UP", "ABSTAIN")
+    scenarios = [
+        (_checks(), _judgment(), [ACTION]),
+        (_checks(), _judgment(reliable=0.1), [ACTION]),
+        (_checks(), _judgment(stopping=0.9), [ACTION]),
+        (_checks(), _judgment(warranted=0.9, stopping=0.1), [ACTION]),
+        (_checks(), _judgment(warranted=0.9, stopping=0.1), [ACTION, "ANOTHER"]),
+        (_checks(contradicted=1), _judgment(), [ACTION]),
+        ({}, {"answers": {}, "error": {"code": "X"}}, []),
+    ]
+    for checks, judgment, actions in scenarios:
+        assert next_move(checks=checks, judgment=judgment, eligible_action_ids=actions)["move"] in MOVES
 
 
 def _judgment(**probabilities) -> dict:

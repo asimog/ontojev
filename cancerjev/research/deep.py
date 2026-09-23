@@ -83,10 +83,6 @@ class DeepPlan:
     execution_id: str | None
     evidence_state_id: str | None
 
-    @property
-    def eligible_action_ids(self) -> list[str]:
-        return [item.action_id for item in self.eligibilities if item.eligible]
-
 
 @dataclass(frozen=True)
 class FollowUpResult:
@@ -730,7 +726,10 @@ class DispatchResult:
         return {
             "dispatched": self.dispatched, "reason_code": self.reason_code, "action_id": self.action_id,
             "evidence_state_id": self.result.evidence_state_id if self.result else None,
+            "result_status": self.result.status if self.result else None,
             "iteration": self.result.iteration if self.result else None,
+            "judgment": {key: value for key, value in (self.judgement or {}).items()
+                         if key != "deep_judgment_vector"},
             "next_move": (self.judgement or {}).get("next_move"),
         }
 
@@ -743,8 +742,9 @@ def dispatch_recorded_move(*, run_id: str, candidate: CandidateEvidence, result:
     """Dispatch one recorded FOLLOW_UP, only when an operator authorized it.
 
     At most one dispatch happens per run, it obeys the existing follow-up and
-    revision caps, and a dispatched revision is judged again by the same deep
-    fan-out. Every refusal reason is recorded rather than silently dropped.
+    revision caps (every attempt consumes follow-up budget, not only successful
+    ones), and a dispatched revision is judged again by the same deep fan-out.
+    Every refusal reason is recorded rather than silently dropped.
     """
 
     def refuse(reason_code: str, detail: str) -> DispatchResult:
@@ -773,10 +773,11 @@ def dispatch_recorded_move(*, run_id: str, candidate: CandidateEvidence, result:
         return refuse("NO_DISTINCT_ELIGIBLE_ACTION",
                       "no registered action other than the producing one is eligible for this revision")
     action_id = action_ids[0]
-    completed = [row for row in repository.followup_executions_for(candidate.candidate_id)
-                 if row["status"] == "COMPLETED"]
-    if len(completed) >= FOLLOWUP_LIMIT:
-        return refuse("FOLLOWUP_LIMIT_REACHED", f"the candidate reached the follow-up limit {FOLLOWUP_LIMIT}")
+    attempts = repository.followup_executions_for(candidate.candidate_id)
+    if len(attempts) >= FOLLOWUP_LIMIT:
+        return refuse("FOLLOWUP_LIMIT_REACHED",
+                      f"{len(attempts)} follow-up attempt(s) reached the limit {FOLLOWUP_LIMIT}; "
+                      "a failed attempt consumes budget too")
     iteration = result.iteration + 1
     if iteration > EVIDENCE_ITERATION_LIMIT:
         return refuse("EVIDENCE_ITERATION_LIMIT_REACHED",

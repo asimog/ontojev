@@ -395,6 +395,102 @@ were found only by the bounded live run; each is fixed with regression coverage.
 - **Live confirmation:** the bounded dispatch validation then ran end-to-end (16 GDC cache hits,
   10/10 wide judgments reused, one deep provider call).
 
+## Audit pass 4 (2026-09-23, post-dispatch-stage review)
+
+Read-only, provider-free review of the dispatch stage plus targeted probes of the API and the
+dispatched-run chain. Eight findings, seven fixed with regression coverage; refuted candidates are
+recorded so the checks are visible.
+
+### AUD-27: a retired action version was reported as a contradiction
+
+- **Severity:** Medium (false contradiction). **Disposition:** CONFIRMED → fixed.
+- **Root cause:** `REVISION_CHAIN_LINKED` treated any mismatch between the version a revision cites and
+  the registry's current version as `CONTRADICTED`. Once an action's version is bumped, every
+  historical revision would be flagged as untrustworthy even though nothing was wrong with it.
+- **Smallest fix:** distinguish an unregistered action id (still `CONTRADICTED`) from a registered
+  action whose cited version the registry no longer holds (now `NOT_OBSERVED` with an explicit note);
+  registered in the check's limitations.
+- **Regression coverage:** `test_unregistered_producing_action_is_contradicted`,
+  `test_revision_without_a_citing_action_is_contradicted`,
+  `test_retired_producing_action_version_is_not_observed_not_contradicted`,
+  `test_baseline_revision_is_ineligible_for_the_revision_action`.
+
+### AUD-28: a failed follow-up attempt did not consume follow-up budget
+
+- **Severity:** Medium (budget honesty). **Disposition:** CONFIRMED → fixed.
+- **Root cause:** the dispatch cap counted only `COMPLETED` executions, so a failed action attempt was
+  free and could be retried in a later run without consuming the candidate's follow-up budget.
+- **Smallest fix:** count every attempted execution (`cancerjev/research/deep.py`), with the reason
+  detail stating that a failed attempt consumes budget too; documented in `SCIENTIFIC_INVARIANTS.md`.
+- **Regression coverage:** `test_a_failed_attempt_consumes_follow_up_budget` (inserts a `FAILED`
+  execution row and asserts the refusal that the old completed-only rule would not have produced).
+
+### AUD-29: the run metric labelled operator-approved candidates as wide candidates
+
+- **Severity:** Low (misleading presentation). **Disposition:** CONFIRMED by probe → fixed.
+- **Evidence:** a live probe run with an abstaining policy and an operator selection recorded
+  `candidates_promoted: 1` while `JEV_WIDE_COMPLETED` recorded `admission_decision: ABSTAIN` and
+  `promoted: 0`, so the card read "Wide candidates 1" for a candidate wide admission never admitted.
+- **Smallest fix:** the metric now reads "Candidates promoted"; `UI_SPEC.md` states that an operator
+  selection counts as a promotion and consumes a slot.
+
+### AUD-30: a failed or empty deep judgment rendered as a blank judgment
+
+- **Severity:** Low (UI honesty). **Disposition:** CONFIRMED (code reading) → fixed.
+- **Root cause:** the panel built its label from answer dimensions only, so a persisted failed
+  evaluation (`answers: {}`) rendered as "deep judgment: " with no indication that the judgment failed.
+- **Smallest fix:** `judgmentLabel` renders `deep judgment failed: <code> (the revision stands)` or
+  "deep judgment recorded with no usable answers"; the wide judgment panel still excludes deep rows.
+
+### AUD-31: the dispatch summary could not name the dispatched revision's judgment
+
+- **Severity:** Low (reporting completeness). **Disposition:** CONFIRMED → fixed.
+- **Root cause:** `DispatchResult.summary()` returned the new move but omitted the second deep
+  evaluation's identifiers, so the operator-facing run summary could not trace the dispatched
+  revision's judgment even though the event and DB rows carried it.
+- **Smallest fix:** the summary now includes `result_status` and the judgment summary
+  (evaluation id, model, usage, error, question-set version) minus the full vector.
+
+### AUD-32: operator selection silently truncated its state index
+
+- **Severity:** Low (robustness). **Disposition:** CONFIRMED → fixed.
+- **Root cause:** `_deep_state_index` used the default 200-row limit for both states and wide
+  evaluations, so a larger run's evaluated states could be missing from the index and an operator
+  selection would be refused with "no statistical state has that gene symbol".
+- **Smallest fix:** query with the documented 1,000-state ceiling for both.
+
+### AUD-33: provenance comparison ignored the parser version
+
+- **Severity:** Low (audit strictness). **Disposition:** CONFIRMED → fixed.
+- **Root cause:** `SOURCE_PROVENANCE_UNCHANGED` compared endpoint, canonical request hash and response
+  hash only, so a revision whose provenance recorded a different `parser_version` for the same bytes
+  still passed.
+- **Smallest fix:** the comparison now includes the parser version, and the check's claim states it.
+
+### AUD-34: undeclared query parameters are silently ignored (documented, not fixed)
+
+- **Severity:** Low (API contract). **Disposition:** CONFIRMED by probe → **deferred**.
+- **Evidence:** `GET /api/runs/{id}/evidence?status=FAILED` returns `200` with unfiltered rows because
+  FastAPI ignores parameters a route does not declare; the same holds for every list endpoint.
+- **Why not fixed here:** rejecting undeclared parameters is a repository-wide API-contract change
+  (strict parameter handling plus client audit) that belongs with the already-deferred OpenAPI
+  cleanup, and no current client sends undeclared parameters. Recorded so it is not mistaken for a
+  working filter.
+
+### Refuted candidates (checked, no defect)
+
+- **Repeated stage names collapse:** `_stage` keys each event with a `uuid4` suffix; the dispatched
+  probe recorded four `FOLLOWUP` stage occurrences (two started/two completed) and 50 distinct
+  idempotency keys across 50 events.
+- **Duplicate idempotency keys re-run registrations:** `append_event` returns the existing event and
+  skips registrations, which is the intended idempotency contract.
+- **Interrupted live candidates are lost:** `recover_interrupted` selects by terminal-status negation,
+  so `DEEP_ANALYSIS`/`DEEP_ANALYZED` candidates are deferred correctly.
+- **Deep cache identity leaks run state:** the evidence projection excludes revision/run/candidate
+  ids, timestamps and artifact ids; a probe of two runs showed the same content reusing the judgment.
+- **Dead code:** the unused `DeepPlan.eligible_action_ids` property was removed, and
+  `nextmove.MOVES` is now asserted by a test so the declared move vocabulary is load-bearing.
+
 ## Recommended Follow-Up
 
 1. Complete the baseline-vs-Jev evaluation with a predefined labeled/decision-quality protocol;

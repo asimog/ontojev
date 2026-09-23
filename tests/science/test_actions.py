@@ -249,6 +249,17 @@ def test_revision_action_is_eligible_only_for_a_revision():
     assert eligible_actions(source, "STATISTICAL_STATE")[0].eligible is True
 
 
+def test_baseline_revision_is_ineligible_for_the_revision_action():
+    source = _live_state()
+    baseline = _revision_from(source, iteration_number=0, previous_evidence_state_id=None, action=None)
+    decision = eligible_actions(baseline, "EVIDENCE_STATE")[0]
+    assert decision.eligible is False
+    assert "REVISION_ITERATION_INVALID" in decision.reasons
+    assert "REVISION_PARENT_MISSING" in decision.reasons
+    with pytest.raises(ActionError):
+        execute(REVISION_ACTION_ID, baseline, read_artifact=_source_reader(source))
+
+
 def test_revision_action_has_an_explicit_contract():
     definition = ACTION_REGISTRY[REVISION_ACTION_ID]
     assert definition.input_kind == "EVIDENCE_STATE"
@@ -299,12 +310,29 @@ def test_tampered_source_artifact_is_contradicted():
     assert _checks(outcome)["SOURCE_STATE_IDENTITY_REPRODUCIBLE"] == CHECK_CONTRADICTED
 
 
-def test_unknown_producing_action_version_is_contradicted():
+def test_unregistered_producing_action_is_contradicted():
+    source = _live_state()
+    revision = _revision_from(source)
+    revision["action"]["action_id"] = "NOT_A_REGISTERED_ACTION"
+    outcome = execute(REVISION_ACTION_ID, revision, read_artifact=_source_reader(source))
+    assert _checks(outcome)["REVISION_CHAIN_LINKED"] == CHECK_CONTRADICTED
+
+
+def test_revision_without_a_citing_action_is_contradicted():
+    source = _live_state()
+    revision = _revision_from(source)
+    revision["action"] = None
+    outcome = execute(REVISION_ACTION_ID, revision, read_artifact=_source_reader(source))
+    assert _checks(outcome)["REVISION_CHAIN_LINKED"] == CHECK_CONTRADICTED
+
+
+def test_retired_producing_action_version_is_not_observed_not_contradicted():
     source = _live_state()
     revision = _revision_from(source)
     revision["action"]["version"] = "99"
     outcome = execute(REVISION_ACTION_ID, revision, read_artifact=_source_reader(source))
-    assert _checks(outcome)["REVISION_CHAIN_LINKED"] == CHECK_CONTRADICTED
+    assert _checks(outcome)["REVISION_CHAIN_LINKED"] == CHECK_NOT_OBSERVED
+    assert outcome.contradictions == 0, "a retired action version is unverifiable, not a contradiction"
 
 
 def test_unavailable_source_artifact_is_not_observed():
