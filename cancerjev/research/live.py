@@ -405,9 +405,12 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
     # -------------------------------------------------------------- deep slice
 
     def _deep_selections(self) -> tuple[str, ...]:
-        if self.deep_selections:
-            return tuple(self.deep_selections)
-        return (self.deep_selection,) if self.deep_selection else ()
+        selections: list[str] = []
+        for raw in (self.deep_selections or ((self.deep_selection,) if self.deep_selection else ())):
+            selection = (raw or "").strip()
+            if selection and selection not in selections:
+                selections.append(selection)
+        return tuple(selections)
 
     def _resolve_deep_candidate(self, run_id: str, promoted: list[dict[str, Any]],
                                 selection: str) -> dict[str, Any] | None:
@@ -565,6 +568,20 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
         """Investigate each explicitly selected candidate with the bounded arc."""
         promoted = wide_result.get("promoted", [])
         selections = self._deep_selections()
+        seen: set[str] = set()
+        for raw in (self.deep_selections or ((self.deep_selection,) if self.deep_selection else ())):
+            selection = (raw or "").strip()
+            if not selection:
+                continue
+            if selection in seen:
+                self._event(
+                    run_id, "DEEP_SELECTION_UNAVAILABLE", f"deep:selection:duplicate:{selection}",
+                    f"Duplicate deep selection {selection!r} was ignored; each candidate is investigated once.",
+                    stage="DEEP_ANALYSIS", level="warning",
+                    data={"selection": selection, "reason_code": "DUPLICATE_SELECTION",
+                          "detail": "the selection list is de-duplicated in order"},
+                )
+            seen.add(selection)
         summaries: list[dict[str, Any]] = []
         for selection in selections:
             candidate = self._resolve_selection(run_id, promoted, selection)

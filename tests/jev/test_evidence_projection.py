@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 
 import pytest
 
@@ -145,3 +146,26 @@ def test_deep_question_set_is_valid_and_carries_full_semantics():
         assert len(definition.instructions) > 80
         assert definition.criteria
         assert definition.applicability_rule in {"revision_evidence_present", "integrity_observed"}
+
+
+def test_hypothesis_projection_excludes_the_run_specific_id():
+    from cancerjev.jev.projection import build_hypothesis_projection
+
+    revision = _revision()
+    hypothesis = {
+        "hypothesis_id": "run-specific-id", "label": "GENERATED HYPOTHESIS — NOT EVIDENCE",
+        "generator": "deterministic-template-v1", "statement": "A statement.",
+        "proposed_mechanism": "p", "predictions": ["p"], "contradicted_if": ["c"],
+        "distinguishing_tests": [], "required_evidence": ["r"], "unsupported_assumptions": ["a"],
+    }
+    first = build_hypothesis_projection(hypothesis, revision, eligible_actions=ACTION_PAYLOAD,
+                                        evidence_hash="f" * 64)
+    renamed = {**hypothesis, "hypothesis_id": "another-run-specific-id"}
+    second = build_hypothesis_projection(renamed, revision, eligible_actions=ACTION_PAYLOAD,
+                                         evidence_hash="f" * 64)
+    assert projection_hash(first) == projection_hash(second), "the review must be reusable across runs"
+    assert "hypothesis_id" not in json.dumps(first)
+    changed_text = build_hypothesis_projection({**hypothesis, "statement": "A different statement."},
+                                               revision, eligible_actions=ACTION_PAYLOAD,
+                                               evidence_hash="f" * 64)
+    assert projection_hash(changed_text) != projection_hash(first), "changed text is a different review"

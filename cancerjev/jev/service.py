@@ -23,6 +23,7 @@ from cancerjev.jev.projection import (
     HYPOTHESIS_PROJECTION_VERSION,
     INCLUDED_FIELDS,
     PROJECTION_VERSION,
+    ProjectionError,
     build_evidence_projection,
     build_hypothesis_projection,
     build_projection,
@@ -260,6 +261,33 @@ class JevService:
         return self._persist_evaluation(run_id, state, evaluation, emit, cache_key=cache_key,
                                         provider_attempted=True)
 
+    def _projection_failure(self, *, run_id: str, subject_record: dict[str, Any], spec: JudgementSpec,
+                            exc: Exception, emit: Callable[..., Any]) -> dict[str, Any]:
+        """Persist a typed failure when an input cannot be projected at all.
+
+        A projection that exceeds the byte cap or carries an unsupported schema is
+        a fail-closed outcome, never a run abort: the revision or generated text it
+        came from stands and the failure is recorded.
+        """
+        code = getattr(exc, "code", type(exc).__name__)
+        evaluation = {
+            "evaluation_id": str(uuid4()), "mode": "LIVE", "purpose": spec.purpose,
+            "input_ref_kind": spec.input_ref_kind, "input_ref_id": spec.input_ref_id,
+            "projection_id": None, "projection_version": spec.projection_version,
+            "projection_hash": None, "question_set_version": spec.question_set_version,
+            "question_hash": spec.set_hash, "question_definitions_ref": None,
+            "adapter_version": ADAPTER_VERSION, "applicability": {},
+            "routing_policy_version": None, **spec.common,
+            "requested_model": self.settings.jev_model, "resolved_model": None,
+            "answers": {}, "raw_answers_hash": None, "request_id": None,
+            "usage": {"input_tokens": None, "output_tokens": None}, "latency_ms": None,
+            "cache_source_evaluation_id": None,
+            "error": {"code": str(code), "detail": str(exc)},
+        }
+        return self._persist_evaluation(run_id, subject_record, evaluation, emit, cache_key=None,
+                                        provider_attempted=False, purpose=spec.purpose, stage=spec.stage,
+                                        subject=spec.label, event_type=None, event_prefix=spec.event_prefix)
+
     def evaluate_evidence(self, *, run_id: str, evidence: dict[str, Any],
                           eligible_actions: list[dict[str, Any]], evidence_hash: str,
                           emit: Callable[..., Any]) -> dict[str, Any]:
@@ -270,7 +298,26 @@ class JevService:
         action set. The judgment is an input to Python policy: it neither selects
         nor executes an action, and no measured field is written from it.
         """
-        projection = build_evidence_projection(evidence, eligible_actions, evidence_hash=evidence_hash)
+        deep_spec = JudgementSpec(
+            purpose="DEEP", input_ref_kind="EVIDENCE_STATE", input_ref_id=evidence["evidence_state_id"],
+            label=(evidence.get("entity") or {}).get("gene_symbol") or evidence["evidence_state_id"],
+            stage="JEV_DEEP", questions=DEEP_QUESTIONS,
+            question_set_version=DEEP_QUESTION_SET_VERSION, set_hash=deep_question_set_hash(),
+            projection_version=EVIDENCE_PROJECTION_VERSION, event_prefix="jev-deep",
+            event_type="JEV_DEEP_EVIDENCE_JUDGED",
+            common={
+                "source_state_hash": (evidence.get("source_statistical_state") or {}).get("state_identity_hash"),
+                "source_evidence_hash": evidence_hash,
+                "evidence_state_id": evidence["evidence_state_id"],
+                "candidate_id": evidence.get("candidate_id"),
+                "action_id": (evidence.get("action") or {}).get("action_id"),
+            },
+        )
+        try:
+            projection = build_evidence_projection(evidence, eligible_actions, evidence_hash=evidence_hash)
+        except ProjectionError as exc:
+            return self._projection_failure(run_id=run_id, subject_record=evidence, spec=deep_spec,
+                                           exc=exc, emit=emit)
         projection_id = self._projection_id()
         p_hash = projection_hash(projection)
         projection_artifact = self._publish_json(
@@ -293,24 +340,9 @@ class JevService:
             run_id, version=DEEP_QUESTION_SET_VERSION, definitions=DEEP_QUESTIONS,
             set_hash=deep_question_set_hash(),
         )
-        spec = JudgementSpec(
-            purpose="DEEP", input_ref_kind="EVIDENCE_STATE", input_ref_id=input_ref_id,
-            label=(evidence.get("entity") or {}).get("gene_symbol") or input_ref_id,
-            stage="JEV_DEEP", questions=DEEP_QUESTIONS,
-            question_set_version=DEEP_QUESTION_SET_VERSION, set_hash=deep_question_set_hash(),
-            projection_version=EVIDENCE_PROJECTION_VERSION, event_prefix="jev-deep",
-            event_type="JEV_DEEP_EVIDENCE_JUDGED",
-            common={
-                "source_state_hash": (evidence.get("source_statistical_state") or {}).get("state_identity_hash"),
-                "source_evidence_hash": evidence_hash,
-                "evidence_state_id": input_ref_id,
-                "candidate_id": evidence.get("candidate_id"),
-                "action_id": (evidence.get("action") or {}).get("action_id"),
-            },
-        )
         return self._judge(run_id=run_id, subject_record=evidence, projection=projection,
                            projection_id=projection_id, p_hash=p_hash,
-                           question_artifact=question_artifact, spec=spec, emit=emit)
+                           question_artifact=question_artifact, spec=deep_spec, emit=emit)
 
     def evaluate_hypothesis(self, *, run_id: str, hypothesis: dict[str, Any], evidence: dict[str, Any],
                             eligible_actions: list[dict[str, Any]], evidence_hash: str,
@@ -321,30 +353,7 @@ class JevService:
         its generator; the judgment is an input to Python policy, never evidence, and
         never a measured field.
         """
-        projection = build_hypothesis_projection(hypothesis, evidence, eligible_actions=eligible_actions,
-                                                 evidence_hash=evidence_hash)
-        projection_id = self._projection_id()
-        p_hash = projection_hash(projection)
-        projection_artifact = self._publish_json(
-            run_id, f"runs/{run_id}/jev/projections/{projection_id}.json", projection,
-            "jev-hypothesis-projection",
-        )
         input_ref_id = hypothesis["hypothesis_id"]
-        emit(
-            run_id, "JEV_PROJECTION_CREATED", f"projection:{projection_id}",
-            f"Jev hypothesis projection created for hypothesis {input_ref_id}.",
-            stage="HYPOTHESIS_VERIFICATION",
-            data={"projection_id": projection_id, "input_ref_kind": "HYPOTHESIS",
-                  "input_ref_id": input_ref_id, "projection_version": HYPOTHESIS_PROJECTION_VERSION,
-                  "source_evidence_hash": evidence_hash, "projection_hash": p_hash,
-                  "included_fields": list(HYPOTHESIS_INCLUDED_FIELDS)},
-            artifact_refs=[projection_artifact.ref()],
-            registrations=[self.repository.artifact_registration(projection_artifact, run_id)],
-        )
-        question_artifact = self._ensure_question_artifact(
-            run_id, version=HYPOTHESIS_QUESTION_SET_VERSION, definitions=HYPOTHESIS_QUESTIONS,
-            set_hash=hypothesis_question_set_hash(),
-        )
         spec = JudgementSpec(
             purpose="HYPOTHESIS", input_ref_kind="HYPOTHESIS", input_ref_id=input_ref_id,
             label=hypothesis.get("label") or input_ref_id, stage="HYPOTHESIS_VERIFICATION",
@@ -361,6 +370,34 @@ class JevService:
                 "candidate_id": evidence.get("candidate_id"),
                 "generator": hypothesis.get("generator"),
             },
+        )
+        try:
+            projection = build_hypothesis_projection(hypothesis, evidence,
+                                                     eligible_actions=eligible_actions,
+                                                     evidence_hash=evidence_hash)
+        except ProjectionError as exc:
+            return self._projection_failure(run_id=run_id, subject_record=hypothesis, spec=spec,
+                                           exc=exc, emit=emit)
+        projection_id = self._projection_id()
+        p_hash = projection_hash(projection)
+        projection_artifact = self._publish_json(
+            run_id, f"runs/{run_id}/jev/projections/{projection_id}.json", projection,
+            "jev-hypothesis-projection",
+        )
+        emit(
+            run_id, "JEV_PROJECTION_CREATED", f"projection:{projection_id}",
+            f"Jev hypothesis projection created for hypothesis {input_ref_id}.",
+            stage="HYPOTHESIS_VERIFICATION",
+            data={"projection_id": projection_id, "input_ref_kind": "HYPOTHESIS",
+                  "input_ref_id": input_ref_id, "projection_version": HYPOTHESIS_PROJECTION_VERSION,
+                  "source_evidence_hash": evidence_hash, "projection_hash": p_hash,
+                  "included_fields": list(HYPOTHESIS_INCLUDED_FIELDS)},
+            artifact_refs=[projection_artifact.ref()],
+            registrations=[self.repository.artifact_registration(projection_artifact, run_id)],
+        )
+        question_artifact = self._ensure_question_artifact(
+            run_id, version=HYPOTHESIS_QUESTION_SET_VERSION, definitions=HYPOTHESIS_QUESTIONS,
+            set_hash=hypothesis_question_set_hash(),
         )
         return self._judge(run_id=run_id, subject_record=hypothesis, projection=projection,
                            projection_id=projection_id, p_hash=p_hash,
@@ -529,6 +566,9 @@ class JevService:
         }
         if input_ref_kind == "HYPOTHESIS":
             data["hypothesis_id"] = input_ref_id
+        if evaluation.get("evidence_state_id") is not None:
+            data["input_evidence_state_id"] = evaluation["evidence_state_id"]
+            data["evidence_state_id"] = evaluation["evidence_state_id"]
         if evaluation.get("generator") is not None:
             data["generator"] = evaluation["generator"]
         if error is not None:
@@ -540,7 +580,9 @@ class JevService:
             if evaluation.get("action_id") is not None:
                 data["action_id"] = evaluation["action_id"]
         else:
-            event_type = "JEV_WIDE_STATE_EVALUATED" if purpose == "WIDE" else "JEV_DEEP_EVIDENCE_JUDGED"
+            event_type = event_type or (
+                "JEV_WIDE_STATE_EVALUATED" if purpose == "WIDE" else "JEV_DEEP_EVIDENCE_JUDGED"
+            )
             key = f"{prefix}:{evaluation_id}"
             message = f"Jev {purpose.lower()} judgment recorded for {label}."
         emit(

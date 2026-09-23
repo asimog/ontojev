@@ -38,7 +38,8 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: dict[st
                        revisions: list[dict[str, Any]], executions: list[dict[str, Any]],
                        decisions: list[dict[str, Any]], hypotheses: list[dict[str, Any]],
                        hypothesis_evaluations: list[dict[str, Any]],
-                       wide_evaluation: dict[str, Any] | None) -> dict[str, Any]:
+                       wide_evaluation: dict[str, Any] | None,
+                       deep_evaluation: dict[str, Any] | None = None) -> dict[str, Any]:
     """Assemble every declared dossier section from what the run already recorded."""
     notice = LLM_NOTICE if any(item.get("generator") == "openrouter-chat-v1" for item in hypotheses) else LIVE_NOTICE
     entity = candidate.get("entity") or {}
@@ -214,9 +215,12 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: dict[st
     sections["jev_model_question_versions"] = _section(
         "OBSERVED" if decisions else "NOT_ACQUIRED",
         narrative=(
-            f"deep question set deep-v1 with model {(last_revision.get('model') or 'n/a')}; policy "
+            f"deep question set {deep_evaluation.get('question_set_version')} with model "
+            f"{deep_evaluation.get('resolved_model') or deep_evaluation.get('requested_model')}; policy "
             f"{final_decision.get('policy_version')}"
-            if final_decision else None
+            if final_decision is not None and deep_evaluation is not None else
+            (f"policy {final_decision.get('policy_version')} recorded without a deep judgment"
+             if final_decision is not None else None)
         ),
         reason=None if decisions else "no deep judgment was recorded",
     )
@@ -271,9 +275,19 @@ def run_dossier_stage(*, run_id: str, candidate: dict[str, Any], repository: Any
     hypothesis_rows = repository.page_child("hypotheses", run_id, 100, None,
                                             {"candidate_id": candidate["candidate_id"]})["items"]
     hypotheses = [row["hypothesis"] for row in hypothesis_rows]
+    hypothesis_ids = {row["hypothesis_id"] for row in hypothesis_rows}
     hypothesis_evaluations = [
-        row["vector"] for row in repository.page_child("jev_evaluations", run_id, 100, None,
-                                                      {"purpose": "HYPOTHESIS"})["items"]
+        row["vector"] for row in repository.page_child(
+            "jev_evaluations", run_id, 100, None,
+            {"purpose": "HYPOTHESIS", "candidate_id": candidate["candidate_id"]},
+        )["items"]
+        if row["input_ref_id"] in hypothesis_ids
+    ]
+    deep_evaluations = [
+        row["vector"] for row in repository.page_child(
+            "jev_evaluations", run_id, 100, None,
+            {"purpose": "DEEP", "candidate_id": candidate["candidate_id"]},
+        )["items"]
     ]
     wide_evaluations = [
         row["vector"] for row in repository.page_child("jev_evaluations", run_id, 100, None,
@@ -284,6 +298,7 @@ def run_dossier_stage(*, run_id: str, candidate: dict[str, Any], repository: Any
         run_id=run_id, candidate=candidate, state=state, revisions=revisions, executions=executions,
         decisions=decisions, hypotheses=hypotheses, hypothesis_evaluations=hypothesis_evaluations,
         wide_evaluation=wide_evaluations[0] if wide_evaluations else None,
+        deep_evaluation=deep_evaluations[-1] if deep_evaluations else None,
     )
     json_artifact = publish_json(run_id, f"runs/{run_id}/dossier/{dossier['dossier_id']}.json",
                                  dossier, "authoritative-dossier")

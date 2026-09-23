@@ -161,7 +161,6 @@ def build_projection(state: dict[str, Any]) -> dict[str, Any]:
 
 HYPOTHESIS_INCLUDED_FIELDS = (
     "projection_version",
-    "hypothesis.hypothesis_id",
     "hypothesis.label",
     "hypothesis.generator",
     "hypothesis.statement",
@@ -188,7 +187,9 @@ def build_hypothesis_projection(hypothesis: dict[str, Any], evidence: dict[str, 
 
     The hypothesis text is carried verbatim and labelled with its generator; the
     projection never presents generated text as evidence, never recomputes anything
-    and never includes operational ids.
+    and never includes operational ids — in particular the run-specific hypothesis
+    id is excluded, so identical generated text over identical evidence reuses its
+    review across runs.
     """
     if evidence.get("schema_version") != 2:
         raise ProjectionError("UNSUPPORTED_EVIDENCE_SCHEMA", f"schema {evidence.get('schema_version')!r}")
@@ -213,7 +214,6 @@ def build_hypothesis_projection(hypothesis: dict[str, Any], evidence: dict[str, 
     projection = {
         "projection_version": HYPOTHESIS_PROJECTION_VERSION,
         "hypothesis": {
-            "hypothesis_id": hypothesis.get("hypothesis_id"),
             "label": hypothesis.get("label"),
             "generator": hypothesis.get("generator"),
             "statement": hypothesis.get("statement"),

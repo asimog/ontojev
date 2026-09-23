@@ -199,6 +199,10 @@ generation with a Jev review, and the baseline-vs-Jev evaluation harness — are
   new `jev-hypothesis-projection-v1` projection, persisted as evaluations with
   `purpose="HYPOTHESIS"` / `input_ref_kind="HYPOTHESIS"` and recorded by `HYPOTHESIS_EVALUATED`.
   Provider failure is a persisted `JEV_EVALUATION_FAILED`; the generated text and the revision stand.
+  The projection excludes the run-specific hypothesis id, so identical generated text over identical
+  evidence reuses its review across runs, and generated output is bounded (`MAX_TEXT_CHARS`,
+  `MAX_LIST_ITEMS`, string-list fields) with a projection failure persisted as a typed outcome rather
+  than aborting the run. This repository performs no model request.
 - **Baseline-vs-Jev evaluation harness** (`cancerjev/research/evaluation.py`,
   `python -m cancerjev evaluate --run <id> --labels <file>`): offline, provider-free, compares recorded
   baseline and Jev tops against an **operator-supplied, pre-registered** label file (protocol version,
@@ -347,7 +351,7 @@ Verification performed 2026-09-23 (pre-Phase-4 hardening) on the hardened implem
 | Gate | Command | Result |
 |---|---|---|
 | Python lint | `python -m ruff check cancerjev apps tests` | All checks passed |
-| Offline suite | `python -m pytest -q` | **360 passed**, 0 failed; 2 opt-in live-marked tests deselected (362 collected) |
+| Offline suite | `python -m pytest -q` | **369 passed**, 0 failed; 2 opt-in live-marked tests deselected (371 collected) |
 | Frontend typecheck | `npm run typecheck` | Passed |
 | Frontend build | `npm run build` | Passed (all routes) |
 | Browser E2E | `npm run test:e2e` (API 8010, web 3010; matching localhost origin) | **4 passed** |
@@ -359,12 +363,16 @@ Verification performed 2026-09-23 (pre-Phase-4 hardening) on the hardened implem
 | Live deep validation | `run --live --jev --deep-candidate TP53` on the retained live directory | **COMPLETED**: wide `ABSTAIN`/0 promoted → operator-approved candidate → E0/E1 (5/5 verified) → one deep `deep-v1` call → `COMPLETE`; the following run reused 10/10 wide and the deep judgment from cache (`jev_calls: 0`) |
 | Live dispatch validation | `run --live --jev --deep-candidate TP53 --deep-followup` on the retained live directory | **COMPLETED**: 16 GDC cache hits, 10/10 wide judgments reused, one deep `deep-v1` call (3,613/174 tokens) → judgment `next_step_warranted 0.53`, `stopping_more_honest 0.56` → move `COMPLETE`, so `NEXT_MOVE_DISPATCHED` recorded `dispatched: false`, `MOVE_NOT_FOLLOW_UP`, `authorized: true`; the revision-eligible set correctly included `CHECK_REVISION_FAITHFULNESS_V1`; 2 revisions and 1 execution remained, with no `E2` |
 | GDC contract probe | `python -m cancerjev probe` | Historical probe: 14 captures, all HTTP 200, anonymous |
+| Live end-to-end (fresh dir) | `run --live --jev --deep-candidate TP53 --deep-followup` | **COMPLETED**: 16 anonymous GDC requests (367,863 bytes), 10 wide `jev-1.13.0` judgments + 1 deep judgment (23,272 in / 2,474 out tokens), `ABSTAIN`/0 policy promotions, operator-approved candidate, E0/E1 with 5/5 checks verified, deep judgment `revision_reliable 0.84`, `evidence_sufficient 0.85`, `next_step_warranted 0.54`, `stopping_more_honest 0.58`, `SCOPE_LIMITS` → move `COMPLETE`, no dispatch, dossier recorded |
+| Live end-to-end (cache reuse) | `run --live --jev --deep-candidate TNR --deep-followup` in the same directory | **COMPLETED**: 16 GDC cache hits and 0 fresh requests, 10/10 wide judgments reused, 1 deep judgment (3,609/174), move `COMPLETE`, dossier recorded; `provider_usage.jev_calls = 1` |
+| Live API/UI end-to-end | API + web against the live directory | All run/state/evidence/follow-up/dossier/evaluation/ranking/event endpoints 200; run detail renders the live dossier callout, the two immutable revisions with the deep judgment per revision, the wide ranking and the event chain; no hypothesis section because the recorded move was `COMPLETE` |
+| Evaluation harness on live rankings | `python -m cancerjev evaluate --run <live> --labels <file>` | Report written: baseline top-3 `RYR2/FLG/USH2A`, Jev top-3 `TP53/CSMD3/RYR2`, overlap `RYR2`, 1 labelled hit at k=3, `ranking_changed: true`, with the no-superiority claim and limitations |
 
 No live GDC, TypeSafe or LLM call was made by the pre-Phase-4 hardening pass, the Phase 4 first
 slice, or their verification: the tests use loopback sockets, the injected fake SDK module, and the
 replay transport. The deep slice acquires no evidence and calls no model by construction.
 
-On Windows, pytest exited successfully with all 360 offline tests passing but emitted an ignored
+On Windows, pytest exited successfully with all 369 offline tests passing but emitted an ignored
 `PermissionError` while cleaning its temporary `pytest-current` symlink at process exit.
 
 The dispatch stage is verified offline end-to-end (replay transport + stub adapter, both the
@@ -380,7 +388,7 @@ verified offline end-to-end.
 ## Provider-use record (cumulative through 2026-09-23)
 
 - **GDC:** prior record 84 real anonymous network attempts (735,207 bytes) plus 158 cache hits; this task made 32 additional fresh requests across two runs (each 16 requests, about 359 KiB). All endpoints remained within the open-access allowlist; zero file downloads, controlled records, or authentication headers.
-- **Jev / TypeSafe:** prior record 10 provider calls; the wide acceptance made 10 further calls on model `jev-1.13.0` for `wide-v3` (17,692 input / 2,070 output tokens); the deep-stage validation made 1 call for `deep-v1` (3,606 input / 174 output tokens), one further re-run made 9 wide + 1 deep calls before the identity fix (3,602/174), another made 3,605/174, and the dispatch-stage validation made 1 more deep call (3,613/174). A final re-run of each stage made 0 calls, reusing 10/10 wide and the deep judgment from cache. No cost field is available (unknown). The initial environment setup attempt made no provider calls because the project-declared SDK was not installed; the same bounded run succeeded after installing SDK 0.7.1.
+- **Jev / TypeSafe:** prior record 10 provider calls; the wide acceptance made 10 further calls on model `jev-1.13.0` for `wide-v3` (17,692 input / 2,070 output tokens); the deep-stage validation made 1 call for `deep-v1` (3,606 input / 174 output tokens), one further re-run made 9 wide + 1 deep calls before the identity fix (3,602/174), another made 3,605/174, and the dispatch-stage validation made 1 more deep call (3,613/174). The final live end-to-end pass made 11 calls in a fresh directory (10 wide + 1 deep, 23,272 in / 2,474 out) and then 1 deep call on a second candidate while reusing 10/10 wide judgments from cache (3,609/174). A final re-run of each stage made 0 calls, reusing the judgments from cache. No cost field is available (unknown). The initial environment setup attempt made no provider calls because the project-declared SDK was not installed; the same bounded run succeeded after installing SDK 0.7.1.
 - **LLM / OpenRouter:** 0.
 - No GDC credential exists anywhere in the codebase or environment; the TypeSafe key is read only from `TYPESAFE_API_KEY` at call time and is never persisted or logged.
 
@@ -399,6 +407,8 @@ verified offline end-to-end.
 - No seed/temperature control exists for Jev; repeated calls may differ. Cache identity binds projection bytes, question bytes, model and adapter version; policy version is excluded so policy experiments do not rerun inference. `wide-policy-v2` thresholds remain provisional and uncalibrated. `deep-policy-v2` thresholds are equally provisional and are not tuned to force a move.
 - Live deep determinations rest on one recorded review: the retained run's deep judgment (and its `COMPLETE` next move) is one provider call, reused from cache afterwards. It is not evidence that the deep question set is calibrated.
 - Operator-approved candidate selection consumes a promotion slot and is a recorded human decision, not a validated selection rule; the deep slice still requires `--live --jev` and cannot be reached from the fixture demo.
+- The live `deep-v1` model has now recorded `COMPLETE` for both live candidates tried (TP53 and TNR), so the live dispatch and live hypothesis-generation branches remain unexercised: they are covered by the offline suite with a stub adapter, and the thresholds were deliberately not tuned to force them.
+- The two live investigation runs and their dossiers are retained in `data/live-e2e-20260923/` as the live acceptance evidence for this pass.
 - The TypeSafe price page is documentation, not a contract; cost stays `null`/unknown because the API exposes no cost field.
 - Schema 4 does not migrate schema 1–3 data directories; they must be moved or deleted. No stale
   database or acceptance directory is retained in the repository: the schema-3 live acceptance

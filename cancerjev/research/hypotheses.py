@@ -19,14 +19,20 @@ from cancerjev.domain.events import canonical_json, utc_now
 from cancerjev.research.deep import stable_id
 
 MAX_HYPOTHESES = 3
+MAX_TEXT_CHARS = 2_000
+MAX_LIST_ITEMS = 10
 TEMPLATE_GENERATOR = "deterministic-template-v1"
-LLM_GENERATOR = "injected-generator-v1"
+INJECTED_GENERATOR = "injected-generator-v1"
 LIVE_HYPOTHESIS_LABEL = "GENERATED HYPOTHESIS — NOT EVIDENCE"
 LLM_HYPOTHESIS_LABEL = "LLM-GENERATED HYPOTHESIS — NOT EVIDENCE"
 
 REQUIRED_DRAFT_KEYS = (
     "statement", "proposed_mechanism", "predictions", "contradicted_if",
     "distinguishing_tests", "required_evidence", "unsupported_assumptions",
+)
+REQUIRED_DRAFT_LISTS = (
+    "predictions", "contradicted_if", "distinguishing_tests", "required_evidence",
+    "unsupported_assumptions",
 )
 
 
@@ -90,21 +96,46 @@ def _draft(generator: str, label: str, *, statement: str, mechanism: str, predic
 
 def generate_template_hypotheses(revision: dict[str, Any], *, candidate: dict[str, Any],
                                  eligible_action_ids: list[str]) -> tuple[dict[str, Any], ...]:
-    """Two competing statements built only from numbers the revision already records."""
+    """Two competing statements built only from numbers the revision already records.
+
+    A metric the revision does not observe is never quoted as a number: the statement
+    says so explicitly instead, because a missing observation is not a zero.
+    """
     facts = _recorded_facts(revision)
     symbol = facts["symbol"] or "the candidate gene"
     tests = sorted(eligible_action_ids)
+    affected, examined = facts["affected"], facts["examined"]
+    counts_observed = (facts["affected_availability"] == "OBSERVED"
+                       and facts["examined_availability"] == "OBSERVED"
+                       and affected is not None and examined is not None)
+    count_phrase = (
+        f"{affected} of {examined} examined cases in {facts['project_id']} carry the mutation bucket"
+        if counts_observed else
+        "the affected-case count for this examined frame is not observed in this revision"
+    )
+    expression_cases, expression_missing = facts["expression_cases"], facts["expression_missing"]
+    expression_observed = (expression_cases is not None and expression_missing is not None)
+    expression_phrase = (
+        f"{expression_missing} of {examined} examined cases have no returned expression value "
+        f"({expression_cases} observed)"
+        if expression_observed and counts_observed else
+        "the recorded expression coverage for this examined frame is not observed in this revision"
+    )
     common_assumptions = [
         "The statement is a generated explanation, not a measured result.",
         "No biological mechanism is asserted as established.",
     ]
+    if not (counts_observed and expression_observed):
+        common_assumptions.append(
+            "At least one quoted metric is not observed in this revision; the statement is phrased "
+            "without a number for it."
+        )
     return (
         _draft(
             TEMPLATE_GENERATOR, LIVE_HYPOTHESIS_LABEL,
             statement=(
                 f"The recorded mutation signal for {symbol} is an artefact of the examined cohort frame "
-                f"rather than a gene-level effect: {facts['affected']} of {facts['examined']} examined cases "
-                f"in {facts['project_id']} carry the mutation bucket."
+                f"rather than a gene-level effect: {count_phrase}."
             ),
             mechanism="Frame composition rather than gene-level biology produces the recorded count.",
             predictions=[
@@ -124,8 +155,7 @@ def generate_template_hypotheses(revision: dict[str, Any], *, candidate: dict[st
             TEMPLATE_GENERATOR, LIVE_HYPOTHESIS_LABEL,
             statement=(
                 f"The {symbol} mutation signal cannot be read as expression-supported evidence because "
-                f"{facts['expression_missing']} of {facts['examined']} examined cases have no returned "
-                f"expression value ({facts['expression_cases']} observed)."
+                f"{expression_phrase}."
             ),
             mechanism="Unreturned expression columns leave the mutation-only reading unconstrained.",
             predictions=[
@@ -181,26 +211,45 @@ def generation_request(revision: dict[str, Any], *, eligible_action_ids: list[st
 
 
 def validate_generated_drafts(entries: Any, *, eligible_action_ids: list[str],
-                              generator: str = LLM_GENERATOR) -> tuple[tuple[dict[str, Any], ...], None]:
-    """Validate injected generator output strictly; any deviation is a typed failure."""
+                              generator: str = INJECTED_GENERATOR) -> tuple[tuple[dict[str, Any], ...], None]:
+    """Validate injected generator output strictly; any deviation is a typed failure.
+
+    Untrusted text is bounded here so it can never reach an evidence record: every
+    text field has a length cap, every list field must be a list of strings within a
+    cap, and a distinguishing test must name an eligible registered action.
+    """
     if not isinstance(entries, list) or not entries:
         raise HypothesisUnavailable("GENERATOR_RESPONSE_MALFORMED", "no hypotheses in the response")
+    if len(entries) > MAX_HYPOTHESES:
+        raise HypothesisUnavailable("GENERATOR_RESPONSE_MALFORMED",
+                                    f"{len(entries)} hypotheses exceed the bound {MAX_HYPOTHESES}")
     drafts: list[dict[str, Any]] = []
-    for entry in entries[:MAX_HYPOTHESES]:
+    for entry in entries:
         if not isinstance(entry, dict) or not all(key in entry for key in REQUIRED_DRAFT_KEYS):
             raise HypothesisUnavailable("GENERATOR_RESPONSE_MALFORMED", "a hypothesis misses required fields")
-        if not str(entry["statement"]).strip():
-            raise HypothesisUnavailable("GENERATOR_RESPONSE_MALFORMED", "an empty statement")
+        for key in ("statement", "proposed_mechanism"):
+            if not isinstance(entry[key], str) or not entry[key].strip():
+                raise HypothesisUnavailable("GENERATOR_RESPONSE_MALFORMED", f"{key} must be a non-empty string")
+            if len(entry[key]) > MAX_TEXT_CHARS:
+                raise HypothesisUnavailable("GENERATOR_RESPONSE_MALFORMED",
+                                            f"{key} exceeds {MAX_TEXT_CHARS} characters")
+        for key in REQUIRED_DRAFT_LISTS:
+            value = entry[key]
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                raise HypothesisUnavailable("GENERATOR_RESPONSE_MALFORMED", f"{key} must be a list of strings")
+            if len(value) > MAX_LIST_ITEMS:
+                raise HypothesisUnavailable("GENERATOR_RESPONSE_MALFORMED",
+                                            f"{key} exceeds {MAX_LIST_ITEMS} items")
         tests = [test for test in entry["distinguishing_tests"] if test in eligible_action_ids]
         drafts.append(_draft(
             generator, LLM_HYPOTHESIS_LABEL,
-            statement=str(entry["statement"]),
-            mechanism=str(entry["proposed_mechanism"]),
-            predictions=[str(item) for item in entry["predictions"]],
-            contradicted_if=[str(item) for item in entry["contradicted_if"]],
+            statement=entry["statement"],
+            mechanism=entry["proposed_mechanism"],
+            predictions=list(entry["predictions"]),
+            contradicted_if=list(entry["contradicted_if"]),
             distinguishing_tests=tests,
-            required_evidence=[str(item) for item in entry["required_evidence"]],
-            assumptions=[str(item) for item in entry["unsupported_assumptions"]],
+            required_evidence=list(entry["required_evidence"]),
+            assumptions=list(entry["unsupported_assumptions"]),
         ))
     return tuple(drafts), None
 
@@ -242,11 +291,11 @@ def generate_hypotheses(*, revision: dict[str, Any], candidate: dict[str, Any],
         try:
             drafts, usage = generate_with_injected_generator(
                 revision, eligible_action_ids=eligible_action_ids, generator=llm_generator)
-            return GeneratedHypotheses(generator=LLM_GENERATOR, label=LLM_HYPOTHESIS_LABEL,
+            return GeneratedHypotheses(generator=INJECTED_GENERATOR, label=LLM_HYPOTHESIS_LABEL,
                                        drafts=drafts, provider_attempted=True, usage=usage,
                                        error_code=None, error_detail=None)
         except HypothesisUnavailable as exc:
-            return GeneratedHypotheses(generator=LLM_GENERATOR, label=LLM_HYPOTHESIS_LABEL, drafts=(),
+            return GeneratedHypotheses(generator=INJECTED_GENERATOR, label=LLM_HYPOTHESIS_LABEL, drafts=(),
                                        provider_attempted=True,
                                        usage={"input_tokens": None, "output_tokens": None},
                                        error_code=exc.code, error_detail=exc.detail)
@@ -256,6 +305,13 @@ def generate_hypotheses(*, revision: dict[str, Any], candidate: dict[str, Any],
                                provider_attempted=False,
                                usage={"input_tokens": None, "output_tokens": None},
                                error_code=None, error_detail=None)
+
+
+def candidate_hypothesis_ids(hypotheses: list[dict[str, Any]]) -> tuple[str, ...]:
+    """Recorded hypothesis ids, used to keep each dossier's reviews to its own statements."""
+    return tuple(
+        str(item["hypothesis_id"]) for item in hypotheses if item.get("hypothesis_id")
+    )
 
 
 def run_hypothesis_stage(*, run_id: str, candidate: dict[str, Any], revision: dict[str, Any],
@@ -268,6 +324,16 @@ def run_hypothesis_stage(*, run_id: str, candidate: dict[str, Any], revision: di
                                      {"candidate_id": candidate["candidate_id"]})["items"]
     remaining = MAX_HYPOTHESES - len(existing)
     if remaining <= 0:
+        emit(
+            run_id, "HYPOTHESES_GENERATED", f"hypotheses:{candidate['candidate_id']}:bound",
+            f"Hypothesis generation skipped: the candidate already holds {len(existing)} record(s).",
+            stage="HYPOTHESIS_GENERATION", level="warning", candidate_id=candidate["candidate_id"],
+            data={"outcome": "NO_NEW_HYPOTHESES", "candidate_id": candidate["candidate_id"], "count": 0,
+                  "generator": None, "provider_attempted": False, "cache": False,
+                  "usage": {"input_tokens": None, "output_tokens": None},
+                  "detail": f"the per-candidate bound is {MAX_HYPOTHESES}",
+                  "evidence_state_id": revision.get("evidence_state_id")},
+        )
         return {"status": "NO_NEW_HYPOTHESES", "hypothesis_ids": [], "evaluations": []}
     generated = generate_hypotheses(revision=revision, candidate=candidate,
                                     eligible_action_ids=eligible_action_ids,

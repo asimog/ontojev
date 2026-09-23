@@ -565,6 +565,55 @@ harness landed, with a focus on the new code paths and their interaction with ex
 - **Evaluation harness:** it refuses a missing baseline/Jev ranking pair, bounds `k` to 1..3, requires
   a pre-registered protocol/rationale/declaration/source/limitations, and states no superiority claim.
 
+## Audit pass 6 (2026-09-23, audit findings fixed and re-verified)
+
+The pass-5 findings were fixed with regression coverage. Each entry names the fix and the test that now
+holds it.
+
+- **AUD-35 (double judgment)** — dispatch decides and executes only; the loop judges each revision
+  exactly once. `test_authorized_follow_up_dispatches_one_revision_and_rejudges_it` asserts two steps,
+  one judgment per step and no duplicate `NEXT_MOVE_SELECTED`.
+- **AUD-36 (in-repo LLM call)** — the HTTP path, provider URL, key lookup and provider contract were
+  removed; generation is deterministic by default and an LLM is only ever an injected generator whose
+  output is validated strictly. `LLM_GENERATOR` was renamed `INJECTED_GENERATOR`, and the inert
+  `CANCERJEV_LLM_MODEL`/`CANCERJEV_LLM_TIMEOUT_SECONDS` settings were deleted (nothing consumes them;
+  asserting they cannot exist is now a test).
+- **AUD-37 (rankings SQL in the API)** — `/api/runs/{id}/rankings` uses `Repository.ranking_artifacts`.
+- **AUD-38 (unreachable live hypotheses panel)** — live runs render their own labelled section.
+- **AUD-39 (NEW, fixed): live hypothesis reviews were recorded as `JEV_DEEP_EVIDENCE_JUDGED`.**
+  `_persist_evaluation` overwrote the caller's `event_type`, so `evaluate_hypothesis`'s
+  `HYPOTHESIS_EVALUATED` never reached the stream while the evaluation row and the message looked
+  correct; the reducer's `HYPOTHESIS_EVALUATED` mapping was dead for live runs and any per-revision
+  judgment count over-counted. Fixed by honouring the passed event type; covered by
+  `test_live_hypothesis_review_is_recorded_as_hypothesis_evaluated` (2 reviews, one deep judgment per
+  step, revision and generator named in the data).
+- **AUD-40 (NEW, fixed): hypothesis reviews were never reused across runs.** The hypothesis projection
+  carried the run-specific `hypothesis_id`, so the cache key changed every run and each identical
+  review cost another provider call. The id is excluded from the projection (the record keeps it);
+  covered by `test_hypothesis_projection_excludes_the_run_specific_id` and
+  `test_identical_generated_text_reuses_its_review_across_runs`.
+- **AUD-41 (NEW, fixed): oversized or non-list generated output could fail a run or be stored as
+  garbage.** A 70 KB statement raised `ProjectionError` out of the run, and a string `predictions` field
+  was exploded into characters. Generated text is now bounded (`MAX_TEXT_CHARS`, `MAX_LIST_ITEMS`) with
+  all list fields required to be lists of strings, and a projection failure is a persisted typed failure
+  rather than a run abort; covered by `test_oversized_or_malformed_generated_output_is_rejected_typed`.
+- **AUD-42 (NEW, fixed): one candidate's dossier listed another candidate's hypothesis reviews.**
+  The dossier stage filtered hypothesis evaluations only by purpose; it now filters by candidate and by
+  the candidate's own hypothesis ids, and it reports the deep judgment's real question-set version and
+  model instead of a literal and `n/a`; covered by
+  `test_multi_candidate_dossiers_keep_their_own_reviews_and_model`.
+- **AUD-43 (NEW, fixed): the hypothesis bound was silent and template text could quote unobserved
+  numbers.** Reaching `MAX_HYPOTHESES` now records `HYPOTHESES_GENERATED` with
+  `outcome=NO_NEW_HYPOTHESES`, and template statements phrase an unobserved metric as "not observed"
+  instead of printing `None`; covered by `test_hypothesis_bound_is_recorded_when_already_reached` and
+  `test_template_phrasing_never_quotes_an_unobserved_metric`.
+- **AUD-44 (NEW, fixed): duplicate selections were silently absorbed.** Selections are de-duplicated in
+  order and each dropped duplicate records `DEEP_SELECTION_UNAVAILABLE` with
+  `reason_code=DUPLICATE_SELECTION`; covered by
+  `test_duplicate_selection_is_de_duplicated_with_a_typed_notice`.
+- **AUD-45 (NEW, fixed): the loop guard bound the cap at import time.** The guard now reads
+  `FOLLOWUP_LIMIT` at call time, so reconfiguring the cap cannot leave a stale backstop.
+
 ## Recommended Follow-Up
 
 1. Complete the baseline-vs-Jev evaluation with a predefined labeled/decision-quality protocol;

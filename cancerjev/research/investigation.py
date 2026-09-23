@@ -29,8 +29,6 @@ from cancerjev.research.dossier import run_dossier_stage
 from cancerjev.research.hypotheses import run_hypothesis_stage
 from cancerjev.science.actions import eligible_actions
 
-MAX_INVESTIGATION_STEPS = FOLLOWUP_LIMIT
-
 
 @dataclass(frozen=True)
 class CandidateInvestigation:
@@ -135,7 +133,7 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
             stop_reason = dispatch.reason_code
             break
         dispatches += 1
-        if dispatches >= MAX_INVESTIGATION_STEPS:
+        if dispatches >= FOLLOWUP_LIMIT:
             stop_reason = "MAX_STEPS_REACHED"
             break
         current = dispatch.result

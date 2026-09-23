@@ -86,3 +86,16 @@ def test_lowering_hard_caps_is_allowed_and_effective(monkeypatch):
     assert settings.gdc_max_requests == 10
     assert settings.gdc_per_response_bytes == 1024
     assert settings.jev_max_states == 2
+
+
+def test_no_inert_llm_settings_are_exposed(monkeypatch):
+    """This repository performs no model request, so no LLM setting may exist."""
+    import dataclasses
+
+    names = {field.name for field in dataclasses.fields(Settings)}
+    assert not {name for name in names if "llm" in name}
+    monkeypatch.setenv("CANCERJEV_NO_DOTENV", "1")
+    monkeypatch.setenv("CANCERJEV_LLM_MODEL", "someone/model-1")
+    monkeypatch.setenv("CANCERJEV_LLM_TIMEOUT_SECONDS", "30")
+    settings = Settings.from_env()
+    assert not hasattr(settings, "llm_model")

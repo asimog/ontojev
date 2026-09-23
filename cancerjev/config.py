@@ -20,9 +20,6 @@ JEV_MAX_STATES_HARD_CAP = 1000
 # Documented ceiling for one Jev provider request. Like the GDC socket timeout,
 # the default equals the hard cap: operational settings may lower it only.
 JEV_TIMEOUT_SECONDS_HARD_CAP = 30.0
-# Hypothesis generation is optional: an empty model keeps generation deterministic
-# and provider-free. A configured model must be an explicit pinned/versioned name.
-LLM_TIMEOUT_SECONDS_HARD_CAP = 30.0
 
 
 def load_local_env(path: Path | None = None) -> int:
@@ -81,8 +78,6 @@ class Settings:
     jev_model: str = "jev-1.13.0"
     jev_max_states: int = 1000
     jev_timeout_seconds: float = 30.0
-    llm_model: str = ""
-    llm_timeout_seconds: float = 30.0
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -108,10 +103,6 @@ class Settings:
             jev_max_states=_bounded_int("CANCERJEV_JEV_MAX_STATES", 1000, JEV_MAX_STATES_HARD_CAP),
             jev_timeout_seconds=_bounded_seconds(
                 "CANCERJEV_JEV_TIMEOUT_SECONDS", 30.0, JEV_TIMEOUT_SECONDS_HARD_CAP,
-            ),
-            llm_model=os.getenv("CANCERJEV_LLM_MODEL", "").strip(),
-            llm_timeout_seconds=_bounded_seconds(
-                "CANCERJEV_LLM_TIMEOUT_SECONDS", 30.0, LLM_TIMEOUT_SECONDS_HARD_CAP,
             ),
         )
 
