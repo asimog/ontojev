@@ -32,7 +32,10 @@ Boundaries that are invariants, not conventions:
   validation → deterministic method → StatisticalState → deterministic projection → Jev. A Jev
   input can never contain unparsed provider payloads.
 - **One event authority.** All operational changes commit through `Repository.append_event`;
-  the `gdc_attempts` ledger is operational bookkeeping and never a second status source.
+  every attempt that started is finalized in the `gdc_attempts` ledger, which is operational
+  bookkeeping and never a second status source.
+- **One persistence owner.** `storage` is the only layer that writes SQL; `research` and `jev`
+  register records through narrow `Repository` methods inside the same event transaction.
 
 Fixture and live paths share every boundary above; only the orchestrator and lane
 implementations differ (`research/orchestrator.py` for the fixture demo, `research/live.py` for
@@ -96,7 +99,7 @@ requirement?"
 | Provider boundaries | Generic AI platform, SDK types everywhere | Small owned contracts and one adapter per provider |
 | GDC acquisition | Mirror, bulk files, generalized data lake | Allowlisted bounded API requests only; unsupported when inadequate |
 | GDC HTTP stack | `requests`/`httpx` with hooks and retry plugins | stdlib `http.client` inside one transport |
-| GDC caching | External cache service | SQLite `gdc_cache` + raw response artifacts keyed by canonical request hash |
+| GDC caching | External cache service | SQLite `gdc_cache` + raw response artifacts keyed by canonical request hash and transport contract version |
 | Scientific registry | Plugin/discovery framework | Dictionary of explicit method/action definitions and functions |
 | Jev projection | Template engine, generic serializer | Plain dict builder plus canonical JSON hash and an included-field contract |
 | Wide ranking | Learned/weighted composite score | Versioned lexicographic policy over persisted raw dimensions; baseline ranking retained separately |
@@ -117,7 +120,7 @@ ontojev/
     science/       # methods (registry + deterministic implementations)
     jev/           # contracts, questions, projection, service, typesafe_adapter
     research/      # orchestrator (fixture), live (Phase 2/3), wide, ranking, specs, fixtures
-    storage/       # database (schema 3), repositories, artifacts, ownership
+    storage/       # database (schema 4), repositories, artifacts, ownership
     cli/           # run/worker --live|--fixture, probe, show
     dossier/       # deterministic renderer
   apps/

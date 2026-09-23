@@ -30,6 +30,11 @@ instructions override implementation steps embedded in reference documents.
   measurement. LLM hypothesis generation is future work and never writes measured fields.
 - Python owns loops, routing, state transitions, budgets, side effects, action eligibility,
   stopping and abstention. Jev/LLM outputs are inputs to Python policy, never control flow.
+- `storage` is the only layer that writes SQL. `research` and `jev` register records through
+  narrow `Repository` methods inside the same event + registrations transaction; they must not
+  contain raw SQL or touch `repository.database`. No ORM, DAO hierarchy or second repository.
+- Jev cache reuse requires a pinned/versioned model identity whose provider resolution equals
+  it; a mutable model alias is always evaluated and never treated as already resolved.
 
 ## Safety and evidence
 
@@ -41,6 +46,9 @@ instructions override implementation steps embedded in reference documents.
 - Preserve source requests, response hashes, examined populations, sample/workflow context,
   tested families, method versions and missingness. Evidence is immutable; revisions are new
   states. Provider ranking metadata never fills a measured field.
+- Every GDC attempt that started reaches a terminal ledger status, and a
+  `StatisticalState` source links to the attempt that supplied its response. Operational
+  attempt/cache/artifact ids and timestamps never enter scientific identity.
 - One canonical RunEvent stream. CLI and UI consume committed records; no second status
   authority and no console-text parsing.
 

@@ -24,7 +24,7 @@ dossier run with zero provider calls, and fixture and live records are never mix
 - **Real StatisticalStates**: one per gene, covering per-project affected-case counts, SSM coverage, local `log2(UQFPKM+1)` summaries, provider summaries retained separately, per-project coverage metrics, cross-project descriptives, missingness, and full source provenance with scientific identity hashing.
 - **Research specification + live orchestrator** (`cancerjev/research/specs.py`, `cancerjev/research/live.py`): one frozen production specification, `LUAD_RESEARCH_V1`, owns the reproducible domain/cohort/project and bounded acquisition parameters; deployment `Settings` remains operational only. The orchestrator consumes the specification, selects one exact project, acquires deterministic paginated case frames, batches expression requests within the 250-case endpoint cap, and never pools projects.
 - **Contract-capture command** (`python -m cancerjev probe`) using the same transport, writing run-scoped capture directories with request metadata, hashes and an index.
-- Persistence schema **3**: `gdc_attempts` (operational ledger), `gdc_cache`, `jev_projections`, `jev_cache`; earlier schema directories fail with an actionable error instead of migrating.
+- Persistence schema **4**: `gdc_attempts` (operational ledger), version-qualified `gdc_cache`, `jev_projections`, `jev_cache`, plus declared relational constraints for candidate/evidence/follow-up provenance; earlier schema directories fail with an actionable error instead of migrating.
 - New registered events for the GDC lifecycle, scope selection, projections, rankings and evaluation failures; the reducer maintains real GDC request/byte/cache-hit and Jev token usage.
 
 ## TCGA-LUAD Phase 2 scientific foundation (2026-09-22)
@@ -36,7 +36,7 @@ The generic multi-project sweep was replaced by one explicitly defined cohort: *
 - **Mutation semantics:** `mutation.absence_semantics` states explicitly that an absent bucket is `NOT_OBSERVED`, not zero, wildtype or a callable negative; no recurrence fraction is computed. `affected_case_total` is `NOT_OBSERVED` (not `0`) when no project has an observed bucket.
 - **Completeness:** `quality.acquisition_completeness` (were the requested responses acquired in full?) is now separate from `quality.scientific_sufficiency` (`SUFFICIENT`/`PARTIAL`/`INSUFFICIENT`), with definitions stored in the state.
 - **Comparability:** `scope.comparability` carries explicit statuses. `within_cohort = UNVERIFIED` (harmonization/shared membership/empty incompatibility list prove nothing) and `cross_project = NOT_APPLICABLE` for one cohort. No `VERIFIED` status is fabricated.
-- **Scientific identity:** discovery rank, provider `_score`, lane ordering and `examined_genes_ref` are excluded from `state_hash`; discovery provenance stays visible in `generation.discovery` and `provider_discovery_rank` but does not affect identity.
+- **Scientific identity:** discovery rank, provider `_score`, lane ordering, `examined_genes_ref`, the acquisition attempt link (`request_id`/`attempt_no`/`from_cache`) and response artifact ids/timestamps are excluded from `state_hash`; discovery provenance stays visible in `generation.discovery` and `provider_discovery_rank` but does not affect identity. `examined_genes_hash` is deliberately retained as tested-universe context, so a different examined gene set is a different state even when a reported measurement happens to match.
 - **Bounded modular acquisition:** TCGA-LUAD remains the only production research specification, with a 1,000-case ceiling and 250-case pages/batches. Case pages fail closed on an over-limit total, inconsistent totals, premature empty pages, cross-page duplicate IDs, or unexpected project IDs. Local expression values and missingness merge by ID across batches. Provider batch medians/stddev are not aggregated; the provider summary is explicitly unavailable when the cohort needs multiple requests.
 
 **Historical v1/v2 issue (resolved in the current implementation).** `wide-v2` and
@@ -50,7 +50,7 @@ immutable and readable with their original version metadata.
 - **Versioned question set** (`wide-v3`, six Nouls plus `dominant_limitation` Choice): evidence quality, mutation/expression coherence, coverage confounding, unresolved uncertainty, and investigation value; code-owned applicability and a closed seven-option limitation roster. Canonical definitions are hashed. `wide-v2` is retained only for historical records.
 - **Projection** (`jev-state-projection-v2`): compact deterministic JSON for exactly one project, built only from StatisticalState fields, with a single `cohort` block, included-field contract, hard byte cap, and projection hash used as inference identity. Multi-project input fails closed.
 - **One adapter** (`cancerjev/jev/typesafe_adapter.py`): the only module that imports the TypeSafe SDK; converts provider objects to plain data immediately; records requested/resolved model, request id, usage and latency.
-- **JevService** (`cancerjev/jev/service.py`): projection registration, cache identity (`projection hash + question hash + pinned model + adapter version`, policy version excluded), provider call, validation, persistence, and events; cache hits create a new evaluation with `cache_source_evaluation_id` and zero usage.
+- **JevService** (`cancerjev/jev/service.py`): projection registration, cache identity (`projection hash + question hash + pinned model identity + adapter version`, policy version excluded), provider call, validation, persistence, and events; cache hits create a new evaluation with `cache_source_evaluation_id` and zero usage. Cache reuse is only attempted for a pinned/versioned model name whose provider resolution equals that name, so a mutable alias is always evaluated and a divergent resolution is never cached.
 - **Deterministic ranking and admission** (`cancerjev/research/ranking.py`): `baseline-wide-v2` top-three comparison list has no admission authority. `wide-policy-v2` applies completeness/mutation/expression gates before judgments, then explicit thresholds; `ABSTAIN` with zero promotions is valid and `PROMOTION_LIMIT=3` is a maximum. Raw judgments, Choice distributions, applicability and exclusion reasons are persisted.
 - **UI separation**: `DeterministicStatePanel` (measured facts with explicit availability, never a zero for `NOT_OBSERVED`), `WideRankingPanel` (comparison-only baseline and explicit Jev decision/thresholds/exclusions), `WideJudgment` (full judgment vectors with applicability, labeled “not a measurement”), plus the canonical event feed.
 
@@ -85,6 +85,41 @@ in `docs/SOURCE_REVIEW.md`.
   none may compute a measurement.
 - No live GDC/Jev/LLM call was made for this audit; live behavior is from the retained
   2026-09-22 captures.
+
+## Pre-Phase-4 hardening (2026-09-23)
+
+Bounded hardening of Phases 1–3 ahead of the first Phase-4 slice; no Phase 4 runtime was added and
+`wide-v3` semantics, thresholds and routing policy are unchanged.
+
+- **Jev provider failure containment**: provider-response conversion now fails closed as
+  `JevProviderError("PROVIDER_RESPONSE_MALFORMED")`, so a malformed provider response becomes a
+  persisted failed evaluation, the state is deferred and the run continues. The conversion of
+  `response.model` moved inside the guarded region (it previously escaped as a raw `AttributeError`).
+- **GDC attempt finality**: once `gdc_attempt_start()` succeeds, every attempt reaches a terminal
+  status. A publish/registration/persistence failure after the response body was read now finalizes
+  the attempt as `FAILED` (with response hash and error detail) before the original error propagates.
+- **Impossible provider counts fail closed**: a shared `_nonnegative_count` helper rejects negative
+  project case/file counts, aggregation `doc_count`, SSM coverage counts, expression availability
+  counts and provider totals.
+- **Jev model/cache identity**: cache reuse requires a pinned/versioned model name
+  (`is_pinned_model_identity`) and a resolution equal to it; a mutable alias is never treated as an
+  already resolved model, and no cache row is written for a divergent resolution.
+- **Semantic identities**: `question_set_hash()` now covers `applicability_rule`; `gdc_cache` is keyed
+  by `<contract_version>:<canonical request hash>`, so a row written under an older transport contract
+  can no longer block storing the current contract's entry.
+- **Storage ownership restored**: all candidate/state/evaluation/hypothesis/follow-up/dossier SQL moved
+  from `research/*` and `jev/*` into narrow `Repository` registration methods; `JevService` no longer
+  touches `repository.database`. The atomic event + registrations transaction model is unchanged.
+- **Acquisition provenance**: every `StatisticalState` source now carries `request_id`, `attempt_no` and
+  `from_cache` from the transport response, linking the logical request, the current cache/network
+  attempt, the retained response artifact and the scientific locator. Operational fields stay out of
+  `state_hash`.
+- **Expression availability merge**: a gene observed by any batch can no longer also appear in the
+  merged `missing_genes` list.
+- **Jev timeout validation**: `CANCERJEV_JEV_TIMEOUT_SECONDS` uses the existing bounded-seconds pattern;
+  NaN, Infinity, `0`, negative values and values above the 30 s documented cap are rejected.
+- **Relational integrity (schema 4)**: the declared candidate → evidence → follow-up/hypothesis/dossier
+  provenance chain is enforced by foreign keys, so a dangling reference fails the event transaction.
 
 ## Validation hardening (2026-09-23)
 
@@ -154,12 +189,12 @@ baseline-vs-Jev incremental-value evaluation remain open work.
 
 ## Verification record
 
-Verification performed 2026-09-23 on the Phase 3 implementation working tree:
+Verification performed 2026-09-23 (pre-Phase-4 hardening) on the hardened implementation:
 
 | Gate | Command | Result |
 |---|---|---|
 | Python lint | `python -m ruff check cancerjev apps tests` | All checks passed |
-| Offline suite | `python -m pytest -q` | **218 passed**, 0 failed; 2 opt-in live-marked tests deselected (220 collected) |
+| Offline suite | `python -m pytest -q` | **280 passed**, 0 failed; 2 opt-in live-marked tests deselected (282 collected) |
 | Frontend typecheck | `npm run typecheck` | Passed |
 | Frontend build | `npm run build` | Passed (all routes) |
 | Browser E2E | `npm run test:e2e` (API 8010, web 3010; matching localhost origin) | **4 passed** |
@@ -167,7 +202,10 @@ Verification performed 2026-09-23 on the Phase 3 implementation working tree:
 | Live GDC + Jev | `python -m cancerjev run --live --jev` with a fresh data directory and GDC cache disabled | **COMPLETED**, 16 fresh GDC requests, 10 Jev calls/evaluations, 10 states, 0 promotions, explicit `ABSTAIN` |
 | GDC contract probe | `python -m cancerjev probe` | Historical probe: 14 captures, all HTTP 200, anonymous |
 
-On Windows, pytest exited successfully with all 218 offline tests passing but emitted an ignored
+No live GDC, TypeSafe or LLM call was made by the pre-Phase-4 hardening pass or its verification:
+the hardening tests use loopback sockets, the injected fake SDK module, and the replay transport.
+
+On Windows, pytest exited successfully with all 280 offline tests passing but emitted an ignored
 `PermissionError` while cleaning its temporary `pytest-current` symlink at process exit.
 
 ## Provider-use record (cumulative through 2026-09-23)
@@ -191,7 +229,7 @@ On Windows, pytest exited successfully with all 218 offline tests passing but em
 - GDC release atomicity across requests is **UNVERIFIED**; reproducibility means replay from retained responses and hashes.
 - No seed/temperature control exists for Jev; repeated calls may differ. Cache identity binds projection bytes, question bytes, model and adapter version; policy version is excluded so policy experiments do not rerun inference. `wide-policy-v2` thresholds remain provisional and uncalibrated.
 - The TypeSafe price page is documentation, not a contract; cost stays `null`/unknown because the API exposes no cost field.
-- Schema 3 does not migrate schema 1/2 data directories; they must be moved or deleted (the pre-Phase-2 schema-2 database was preserved as `data/cancerjev.schema2.db.bak`).
+- Schema 4 does not migrate schema 1–3 data directories; they must be moved or deleted (the pre-Phase-2 schema-2 database was preserved as `data/cancerjev.schema2.db.bak`). The retained schema-3 live acceptance directory `data/phase3-live-20260923/` no longer boots under this build; its database file and artifacts are untouched and remain readable with SQLite, and the run must be re-served only after moving that directory aside.
 - A post-Phase-3 audit hardening pass fixed the documented safety/evidence defects (overridable GDC ceilings, nested aggregation truncation, cross-project SSM total, selection-artifact zero substitution, unenforced Jev state cap, cache-cap bypass, response byte accounting, page-advance counting, silent ranking-artifact loss, and live-vector UI rendering): `docs/CODEBASE_AUDIT_2026-09-23.md`. Remaining medium/low findings are listed there with severity and location and are not fixed.
 - Local runs used Python 3.14.3 and Node 24.13.1 while CI pins Python 3.12 and Node 22. GitHub Actions run `35784234662` for commit `d1ab646` passed the Python, frontend, and browser jobs.
 

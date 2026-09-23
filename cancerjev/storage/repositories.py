@@ -221,9 +221,11 @@ class Repository:
                  completeness, error, finished_at, request_id),
             )
 
-    def gdc_cache_get(self, request_hash: str) -> dict[str, Any] | None:
+    def gdc_cache_get(self, request_hash: str, contract_version: str) -> dict[str, Any] | None:
         with self.database.read() as connection:
-            row = connection.execute("SELECT * FROM gdc_cache WHERE request_hash=?", (request_hash,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM gdc_cache WHERE cache_key=?", (gdc_cache_key(request_hash, contract_version),),
+            ).fetchone()
             return dict(row) if row else None
 
     def gdc_cache_put(self, *, request_hash: str, method: str, endpoint: str, response_artifact_id: str,
@@ -231,10 +233,19 @@ class Repository:
                       created_at: str) -> None:
         with self.database.connect(write=True) as connection:
             connection.execute(
-                "INSERT INTO gdc_cache(request_hash,method,endpoint,response_artifact_id,response_hash,size_bytes,completeness,contract_version,created_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(request_hash) DO NOTHING",
-                (request_hash, method, endpoint, response_artifact_id, response_hash, size_bytes,
-                 completeness, contract_version, created_at),
+                "INSERT INTO gdc_cache(cache_key,request_hash,method,endpoint,response_artifact_id,response_hash,size_bytes,completeness,contract_version,created_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(cache_key) DO NOTHING",
+                (gdc_cache_key(request_hash, contract_version), request_hash, method, endpoint,
+                 response_artifact_id, response_hash, size_bytes, completeness, contract_version,
+                 created_at),
             )
+
+    def gdc_attempts(self, run_id: str) -> list[dict[str, Any]]:
+        with self.database.read() as connection:
+            rows = connection.execute(
+                "SELECT * FROM gdc_attempts WHERE run_id=? ORDER BY started_at ASC,request_id ASC",
+                (run_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def gdc_run_totals(self, run_id: str) -> dict[str, int]:
         with self.database.read() as connection:
@@ -255,6 +266,112 @@ class Repository:
             "INSERT INTO jev_projections(projection_id,run_id,state_id,projection_version,source_state_hash,projection_hash,artifact_id,fields_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
             (projection_id, run_id, state_id, projection_version, source_state_hash,
              projection_hash, artifact_id, fields_json, created_at),
+        )
+
+    def find_projection(self, state_id: str, projection_version: str) -> dict[str, Any] | None:
+        with self.database.read() as connection:
+            row = connection.execute(
+                "SELECT * FROM jev_projections WHERE state_id=? AND projection_version=?",
+                (state_id, projection_version),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def state_registration(self, *, state_id: str, run_id: str, state_hash: str, artifact_id: str,
+                           disposition: str, summary_json: str,
+                           created_at: str) -> tuple[str, tuple[Any, ...]]:
+        return (
+            "INSERT INTO statistical_states(state_id,run_id,state_hash,artifact_id,disposition,summary_json,created_at) VALUES(?,?,?,?,?,?,?)",
+            (state_id, run_id, state_hash, artifact_id, disposition, summary_json, created_at),
+        )
+
+    def candidate_registration(self, *, candidate_id: str, run_id: str, promotion_slot: int, status: str,
+                               current_stage: str | None, source_state_id: str, entity_json: str,
+                               summary_json: str, created_at: str,
+                               updated_at: str) -> tuple[str, tuple[Any, ...]]:
+        return (
+            "INSERT INTO candidates(candidate_id,run_id,promotion_slot,status,current_stage,source_state_id,entity_json,summary_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (candidate_id, run_id, promotion_slot, status, current_stage, source_state_id,
+             entity_json, summary_json, created_at, updated_at),
+        )
+
+    def candidate_status_registration(self, *, candidate_id: str, status: str, current_stage: str | None,
+                                      updated_at: str, latest_evidence_state_id: str | None = None,
+                                      dossier_id: str | None = None) -> tuple[str, tuple[Any, ...]]:
+        assignments = ["status=?", "current_stage=?", "updated_at=?"]
+        values: list[Any] = [status, current_stage, updated_at]
+        if latest_evidence_state_id is not None:
+            assignments.append("latest_evidence_state_id=?")
+            values.append(latest_evidence_state_id)
+        if dossier_id is not None:
+            assignments.append("dossier_id=?")
+            values.append(dossier_id)
+        values.append(candidate_id)
+        return (
+            f"UPDATE candidates SET {', '.join(assignments)} WHERE candidate_id=?",
+            tuple(values),
+        )
+
+    def candidate_deferred_registration(self, *, candidate_id: str, reason: str,
+                                        updated_at: str) -> tuple[str, tuple[Any, ...]]:
+        return (
+            "UPDATE candidates SET status='DEFERRED',current_stage=NULL,updated_at=?,summary_json=json_set(summary_json,'$.terminal_reason',?) WHERE candidate_id=?",
+            (updated_at, reason, candidate_id),
+        )
+
+    def evidence_state_registration(self, *, evidence_state_id: str, run_id: str, candidate_id: str,
+                                    previous_evidence_state_id: str | None, iteration: int,
+                                    evidence_hash: str, artifact_id: str, summary_json: str,
+                                    created_at: str) -> tuple[str, tuple[Any, ...]]:
+        return (
+            "INSERT INTO evidence_states(evidence_state_id,run_id,candidate_id,previous_evidence_state_id,iteration,evidence_hash,artifact_id,summary_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            (evidence_state_id, run_id, candidate_id, previous_evidence_state_id, iteration,
+             evidence_hash, artifact_id, summary_json, created_at),
+        )
+
+    def hypothesis_registration(self, *, hypothesis_id: str, run_id: str, candidate_id: str,
+                                evidence_state_id: str, artifact_id: str, hypothesis_json: str,
+                                created_at: str) -> tuple[str, tuple[Any, ...]]:
+        return (
+            "INSERT INTO hypotheses(hypothesis_id,run_id,candidate_id,evidence_state_id,artifact_id,hypothesis_json,created_at) VALUES(?,?,?,?,?,?,?)",
+            (hypothesis_id, run_id, candidate_id, evidence_state_id, artifact_id, hypothesis_json,
+             created_at),
+        )
+
+    def followup_execution_registration(self, *, execution_id: str, run_id: str, candidate_id: str,
+                                        action_id: str, action_version: str, input_evidence_hash: str,
+                                        output_evidence_state_id: str | None, slot: int, status: str,
+                                        summary_json: str,
+                                        created_at: str) -> tuple[str, tuple[Any, ...]]:
+        return (
+            "INSERT INTO followup_executions(execution_id,run_id,candidate_id,action_id,action_version,input_evidence_hash,output_evidence_state_id,slot,status,summary_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (execution_id, run_id, candidate_id, action_id, action_version, input_evidence_hash,
+             output_evidence_state_id, slot, status, summary_json, created_at),
+        )
+
+    def dossier_registration(self, *, dossier_id: str, run_id: str, candidate_id: str,
+                             json_artifact_id: str, markdown_artifact_id: str, summary_json: str,
+                             created_at: str) -> tuple[str, tuple[Any, ...]]:
+        return (
+            "INSERT INTO dossiers(dossier_id,run_id,candidate_id,json_artifact_id,markdown_artifact_id,summary_json,created_at) VALUES(?,?,?,?,?,?,?)",
+            (dossier_id, run_id, candidate_id, json_artifact_id, markdown_artifact_id, summary_json,
+             created_at),
+        )
+
+    def jev_evaluation_registration(self, *, evaluation_id: str, run_id: str, candidate_id: str | None,
+                                    input_ref_kind: str, input_ref_id: str, purpose: str,
+                                    artifact_id: str, vector_json: str, model: str,
+                                    created_at: str) -> tuple[str, tuple[Any, ...]]:
+        return (
+            "INSERT INTO jev_evaluations(evaluation_id,run_id,candidate_id,input_ref_kind,input_ref_id,purpose,artifact_id,vector_json,model,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (evaluation_id, run_id, candidate_id, input_ref_kind, input_ref_id, purpose, artifact_id,
+             vector_json, model, created_at),
+        )
+
+    def jev_cache_registration(self, cache_key: str, evaluation_id: str,
+                               created_at: str) -> tuple[str, tuple[Any, ...]]:
+        return (
+            "INSERT INTO jev_cache(cache_key,evaluation_id,created_at) VALUES(?,?,?) ON CONFLICT(cache_key) DO NOTHING",
+            (cache_key, evaluation_id, created_at),
         )
 
     def jev_cache_get(self, cache_key: str) -> str | None:
@@ -301,9 +418,8 @@ class Repository:
                     candidate_id=candidate_id,
                     data={"terminal_state": "DEFERRED", "reason": "INTERRUPTED"},
                     level="warning",
-                    registrations=[(
-                        "UPDATE candidates SET status='DEFERRED',current_stage=NULL,updated_at=?,summary_json=json_set(summary_json,'$.terminal_reason','INTERRUPTED') WHERE candidate_id=?",
-                        (utc_now(), candidate_id),
+                    registrations=[self.candidate_deferred_registration(
+                        candidate_id=candidate_id, reason="INTERRUPTED", updated_at=utc_now(),
                     )],
                 )
             self.append_event(run_id, event_type="RUN_STOPPED", idempotency_key="recovery:interrupted", message="Previous unfinished run preserved and stopped as interrupted.", data={"status": "STOPPED", "reason_code": "INTERRUPTED", "coverage": "PARTIAL"}, level="warning")
@@ -433,6 +549,15 @@ class Repository:
     def heartbeat(self, owner_id: str) -> None:
         with self.database.connect(write=True) as connection:
             connection.execute("INSERT INTO worker_status(singleton,owner_id,heartbeat_at,version) VALUES(1,?,?,?) ON CONFLICT(singleton) DO UPDATE SET owner_id=excluded.owner_id,heartbeat_at=excluded.heartbeat_at,version=excluded.version", (owner_id, utc_now(), "0.1.0"))
+
+
+def gdc_cache_key(request_hash: str, contract_version: str) -> str:
+    """Cache identity is the canonical request hash qualified by the transport contract.
+
+    An entry written under an older contract version stays immutable and readable but
+    can never block storing the current contract's entry for the same request.
+    """
+    return f"{contract_version}:{request_hash}"
 
 
 def _json(value: Any) -> str:

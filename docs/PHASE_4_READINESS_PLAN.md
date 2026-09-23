@@ -15,6 +15,27 @@ incremental value over the deterministic baseline. See `docs/IMPLEMENTATION_STAT
 Phase 4 may proceed to method-contract design, but must not use Jev admission as an autonomous
 execution authority until Phase 3's thresholds and incremental value have been evaluated.
 
+## Pre-Phase-4 structural check (2026-09-23)
+
+The bounded pre-Phase-4 hardening pass removed the engineering blockers that would otherwise be
+baked into Phase 4 and left the provenance chain ready for the first slice:
+
+- Schema 4 declares the relational constraints the slice depends on:
+  `statistical_states → candidates.source_state_id`, `candidates → evidence_states.candidate_id`
+  (with `previous_evidence_state_id` for revisions), and
+  `followup_executions.candidate_id`/`output_evidence_state_id`. A dangling provenance reference now
+  fails the event transaction instead of persisting.
+- Attempts always reach a terminal ledger status, provider failures are contained per state, and
+  `JevService`/`research` no longer own SQL, so an implementing slice inherits the existing atomic
+  event + registrations transaction.
+- `StatisticalState` provenance links each source to its acquisition attempt without putting
+  operational ids into scientific identity.
+
+Still required before implementation, unchanged by this pass: an approved deterministic method
+contract for exactly one follow-up action (`CHECK_MISSINGNESS_V1` is a candidate, not approved), an
+explicitly selected fixture/test candidate rather than provisional `wide-policy-v2` admission, and
+the separate baseline-vs-Jev incremental-value evaluation.
+
 ## Proposed First Slice
 
 Build only `E0 -> one registered deterministic follow-up -> E1` for one explicitly selected

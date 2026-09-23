@@ -98,37 +98,62 @@ class TypeSafeAdapter:
             raise JevProviderError(_provider_error_code(exc), f"{type(exc).__name__}: {exc}") from exc
         latency_ms = int((time.monotonic() - started) * 1000)
 
-        answers: dict[str, dict[str, Any]] = {}
-        for question_id, answer in response.answers.items():
-            kind = getattr(answer, "type", None)
-            if kind == "noul":
-                answers[question_id] = {"kind": "noul", "probability_yes": answer.noul}
-            elif kind == "choice":
-                answers[question_id] = {
-                    "kind": "choice", "choice": answer.choice, "confidence": answer.confidence,
-                    "probabilities": {str(key): value for key, value in dict(answer.probabilities).items()},
-                }
-            elif kind == "score":
-                answers[question_id] = {
-                    "kind": "score", "score": answer.score, "confidence": answer.confidence,
-                    "probabilities": {str(key): value for key, value in dict(answer.probabilities).items()},
-                    "legend": {str(key): value for key, value in dict(answer.legend).items()},
-                }
-            else:
-                raise JevProviderError("UNKNOWN_ANSWER_KIND", f"{question_id}: {kind!r}")
-        request_id = None
-        raw_response = getattr(response, "raw_http_response", None)
-        if raw_response is not None:
-            request_id = raw_response.headers.get("x-typesafe-request-id")
-        usage = {
-            "input_tokens": getattr(response.usage, "input_tokens", None),
-            "output_tokens": getattr(response.usage, "output_tokens", None),
-        }
+        try:
+            answers = _convert_answers(response)
+            resolved_model, request_id, usage = _convert_envelope(response)
+        except JevProviderError:
+            raise
+        except (AttributeError, TypeError, KeyError, ValueError, IndexError) as exc:
+            raise JevProviderError(
+                "PROVIDER_RESPONSE_MALFORMED",
+                f"provider response could not be converted to owned answers: {type(exc).__name__}: {exc}",
+            ) from exc
         return ProviderAnswerSet(
             requested_model=self.model,
-            resolved_model=response.model,
+            resolved_model=resolved_model,
             answers=answers,
             usage=usage,
             latency_ms=latency_ms,
             request_id=request_id,
         )
+
+
+def _convert_answers(response: Any) -> dict[str, dict[str, Any]]:
+    """Convert provider answer objects to plain application data.
+
+    Provider objects are inspected only here. A response whose shape does not
+    match the owned contract raises ``JevProviderError`` so one malformed state
+    becomes a persisted failed evaluation instead of aborting the run.
+    """
+    answers: dict[str, dict[str, Any]] = {}
+    for question_id, answer in response.answers.items():
+        kind = getattr(answer, "type", None)
+        if kind == "noul":
+            answers[question_id] = {"kind": "noul", "probability_yes": answer.noul}
+        elif kind == "choice":
+            answers[question_id] = {
+                "kind": "choice", "choice": answer.choice, "confidence": answer.confidence,
+                "probabilities": {str(key): value for key, value in dict(answer.probabilities).items()},
+            }
+        elif kind == "score":
+            answers[question_id] = {
+                "kind": "score", "score": answer.score, "confidence": answer.confidence,
+                "probabilities": {str(key): value for key, value in dict(answer.probabilities).items()},
+                "legend": {str(key): value for key, value in dict(answer.legend).items()},
+            }
+        else:
+            raise JevProviderError("UNKNOWN_ANSWER_KIND", f"{question_id}: {kind!r}")
+    return answers
+
+
+def _convert_envelope(response: Any) -> tuple[str, str | None, dict[str, int | None]]:
+    resolved_model = response.model
+    request_id = None
+    raw_response = getattr(response, "raw_http_response", None)
+    if raw_response is not None:
+        request_id = raw_response.headers.get("x-typesafe-request-id")
+    usage = {
+        "input_tokens": getattr(response.usage, "input_tokens", None),
+        "output_tokens": getattr(response.usage, "output_tokens", None),
+    }
+    return resolved_model, request_id, usage

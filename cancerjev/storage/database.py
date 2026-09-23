@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 IMMUTABLE_TABLES = (
     "run_events", "artifacts", "statistical_states", "evidence_states",
@@ -45,35 +45,44 @@ CREATE INDEX IF NOT EXISTS idx_states_run ON statistical_states(run_id,created_a
 CREATE TABLE IF NOT EXISTS candidates(
  candidate_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES research_runs(run_id),
  promotion_slot INTEGER NOT NULL, status TEXT NOT NULL, current_stage TEXT,
- source_state_id TEXT NOT NULL, latest_evidence_state_id TEXT, dossier_id TEXT,
+ source_state_id TEXT NOT NULL REFERENCES statistical_states(state_id),
+ latest_evidence_state_id TEXT REFERENCES evidence_states(evidence_state_id), dossier_id TEXT,
  entity_json TEXT NOT NULL, summary_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
  UNIQUE(run_id,promotion_slot)
 );
 CREATE INDEX IF NOT EXISTS idx_candidates_run ON candidates(run_id,promotion_slot);
 CREATE TABLE IF NOT EXISTS evidence_states(
- evidence_state_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, candidate_id TEXT NOT NULL REFERENCES candidates(candidate_id),
- previous_evidence_state_id TEXT, iteration INTEGER NOT NULL, evidence_hash TEXT NOT NULL,
- artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id), summary_json TEXT NOT NULL, created_at TEXT NOT NULL
+ evidence_state_id TEXT PRIMARY KEY, run_id TEXT NOT NULL,
+ candidate_id TEXT NOT NULL REFERENCES candidates(candidate_id),
+ previous_evidence_state_id TEXT REFERENCES evidence_states(evidence_state_id), iteration INTEGER NOT NULL,
+ evidence_hash TEXT NOT NULL, artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id),
+ summary_json TEXT NOT NULL, created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS jev_evaluations(
- evaluation_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, candidate_id TEXT,
+ evaluation_id TEXT PRIMARY KEY, run_id TEXT NOT NULL,
+ candidate_id TEXT REFERENCES candidates(candidate_id),
  input_ref_kind TEXT NOT NULL, input_ref_id TEXT NOT NULL, purpose TEXT NOT NULL,
  artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id),
  vector_json TEXT NOT NULL, model TEXT NOT NULL, created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS hypotheses(
- hypothesis_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, candidate_id TEXT NOT NULL,
- evidence_state_id TEXT NOT NULL, artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id),
+ hypothesis_id TEXT PRIMARY KEY, run_id TEXT NOT NULL,
+ candidate_id TEXT NOT NULL REFERENCES candidates(candidate_id),
+ evidence_state_id TEXT NOT NULL REFERENCES evidence_states(evidence_state_id),
+ artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id),
  hypothesis_json TEXT NOT NULL, created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS followup_executions(
- execution_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, candidate_id TEXT NOT NULL,
+ execution_id TEXT PRIMARY KEY, run_id TEXT NOT NULL,
+ candidate_id TEXT NOT NULL REFERENCES candidates(candidate_id),
  action_id TEXT NOT NULL, action_version TEXT NOT NULL, input_evidence_hash TEXT NOT NULL,
- output_evidence_state_id TEXT, slot INTEGER NOT NULL, status TEXT NOT NULL,
+ output_evidence_state_id TEXT REFERENCES evidence_states(evidence_state_id),
+ slot INTEGER NOT NULL, status TEXT NOT NULL,
  summary_json TEXT NOT NULL, created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS dossiers(
- dossier_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, candidate_id TEXT NOT NULL UNIQUE,
+ dossier_id TEXT PRIMARY KEY, run_id TEXT NOT NULL,
+ candidate_id TEXT NOT NULL UNIQUE REFERENCES candidates(candidate_id),
  json_artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id),
  markdown_artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id),
  summary_json TEXT NOT NULL, created_at TEXT NOT NULL
@@ -92,10 +101,11 @@ CREATE TABLE IF NOT EXISTS gdc_attempts(
 CREATE INDEX IF NOT EXISTS idx_gdc_attempts_run ON gdc_attempts(run_id,started_at);
 CREATE INDEX IF NOT EXISTS idx_gdc_attempts_hash ON gdc_attempts(request_hash);
 CREATE TABLE IF NOT EXISTS gdc_cache(
- request_hash TEXT PRIMARY KEY, method TEXT NOT NULL, endpoint TEXT NOT NULL,
+ cache_key TEXT PRIMARY KEY, request_hash TEXT NOT NULL,
+ method TEXT NOT NULL, endpoint TEXT NOT NULL,
  response_artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id),
  response_hash TEXT NOT NULL, size_bytes INTEGER NOT NULL, completeness TEXT NOT NULL,
- contract_version TEXT NOT NULL, created_at TEXT NOT NULL
+ contract_version TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(request_hash,contract_version)
 );
 CREATE TABLE IF NOT EXISTS jev_projections(
  projection_id TEXT PRIMARY KEY, run_id TEXT NOT NULL,

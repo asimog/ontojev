@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from cancerjev.storage.artifacts import PublishedArtifact
 from cancerjev.storage.ownership import OwnershipError, ResearchOwnership
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -69,14 +70,30 @@ def test_recovery_defers_in_flight_candidates_without_replay(runtime):
     run_id = repository.create_run("old")
     repository.append_event(run_id, event_type="RUN_CREATED", idempotency_key="created", message="created")
     repository.append_event(run_id, event_type="RUN_STARTED", idempotency_key="started", message="started")
+    state_id = str(uuid4())
+    artifact = PublishedArtifact(
+        artifact_id=str(uuid4()), relative_path="statistical_states/recovery-synthetic.json",
+        sha256="a" * 64, size_bytes=2, media_type="application/json", purpose="statistical-state",
+    )
+    repository.register_artifact(artifact, run_id)
+    repository.append_event(
+        run_id, event_type="STATISTICAL_STATE_CREATED", idempotency_key="state", message="state",
+        stage="STATE_GENERATION",
+        registrations=[repository.state_registration(
+            state_id=state_id, run_id=run_id, state_hash="a" * 64, artifact_id=artifact.artifact_id,
+            disposition="PROMOTED", summary_json="{}", created_at="2026-01-01T00:00:00Z",
+        )],
+    )
     candidate_id = str(uuid4())
     repository.append_event(
         run_id, event_type="CANDIDATE_PROMOTED", idempotency_key="promoted", message="promoted",
         stage="JEV_WIDE", candidate_id=candidate_id,
-        data={"candidate_id": candidate_id, "source_state_id": str(uuid4()), "evaluation_id": str(uuid4()), "promotion_slot": 1, "policy_version": "fixture-v1", "reason": "fixture"},
-        registrations=[(
-            "INSERT INTO candidates(candidate_id,run_id,promotion_slot,status,current_stage,source_state_id,entity_json,summary_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (candidate_id, run_id, 1, "WIDE_EVALUATED", "JEV_WIDE", str(uuid4()), "{}", "{}", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+        data={"candidate_id": candidate_id, "source_state_id": state_id, "evaluation_id": str(uuid4()),
+              "promotion_slot": 1, "policy_version": "fixture-v1", "reason": "fixture"},
+        registrations=[repository.candidate_registration(
+            candidate_id=candidate_id, run_id=run_id, promotion_slot=1, status="WIDE_EVALUATED",
+            current_stage="JEV_WIDE", source_state_id=state_id, entity_json="{}", summary_json="{}",
+            created_at="2026-01-01T00:00:00Z", updated_at="2026-01-01T00:00:00Z",
         )],
     )
     original_events = repository.events(run_id, 0, 20)["items"]

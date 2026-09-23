@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from uuid import uuid4
 
 from cancerjev.domain.events import utc_now
 from cancerjev.gdc.endpoints import GDCRequest
@@ -116,7 +117,8 @@ def files_body(project_id: str, *, controlled: bool = False) -> bytes:
                                                         "size": 5, "from": 0, "pages": 1}}})
 
 
-def availability_body(case_ids_requested: list[str], gene_ids: list[str], *, empty: bool = False) -> bytes:
+def availability_body(case_ids_requested: list[str], gene_ids: list[str], *, empty: bool = False,
+                      omit_genes: bool = False) -> bytes:
     has_values = not empty
     return _json({
         "cases": {
@@ -126,8 +128,10 @@ def availability_body(case_ids_requested: list[str], gene_ids: list[str], *, emp
             "without_gene_expression_count": 0,
         },
         "genes": {
-            "details": [{"gene_id": gene_id, "has_gene_expression_values": has_values} for gene_id in gene_ids],
-            "with_gene_expression_count": len(gene_ids) if has_values else 0,
+            "details": [] if omit_genes else [
+                {"gene_id": gene_id, "has_gene_expression_values": has_values} for gene_id in gene_ids
+            ],
+            "with_gene_expression_count": 0 if omit_genes else (len(gene_ids) if has_values else 0),
             "without_gene_expression_count": 0,
         },
     })
@@ -170,6 +174,7 @@ class ReplayTransport:
         self.inconsistent_case_total_after_first = inconsistent_case_total_after_first
         self.inconsistent_case_offset_after_first = inconsistent_case_offset_after_first
         self.requests: list[GDCRequest] = []
+        self.published: list[Any] = []
         self._counter = 0
 
     def _project_of(self, case_ids: list[str]) -> str:
@@ -236,9 +241,11 @@ class ReplayTransport:
         artifact = self.artifacts.publish(
             f"replay/{self.run_id}/{name}-{self._counter}.body", body, media, "gdc-response",
         )
+        self.published.append(artifact)
         return GDCResponse(
             request_hash=request.request_hash(), endpoint=request.path, method=request.method,
             http_status=200, headers={"content-type": media}, body=body,
             body_sha256=artifact.sha256, artifact=artifact, completeness="COMPLETE",
             from_cache=False, retrieved_at=utc_now(), latency_ms=1,
+            request_id=str(uuid4()), attempt_no=1,
         )

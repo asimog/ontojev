@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import math
 
 import pytest
 
+from cancerjev.domain.identity import content_hash, statistical_state_identity_payload
 from cancerjev.gdc.parsers import (
     CaseRecord,
     DiscoveryHit,
@@ -31,9 +33,11 @@ GENE = GeneRecord(gene_id="ENSG00000141510", symbol="TP53", name="tumor protein 
                   biotype="protein_coding", is_cancer_gene_census=True)
 
 
-def _source(artifact_id: str, retrieved_at: str) -> dict:
+def _source(artifact_id: str, retrieved_at: str, *, request_id: str = "request-1",
+            attempt_no: int = 1, from_cache: bool = False) -> dict:
     return {
-        "request_id": None, "response_artifact_id": artifact_id, "response_sha256": "a" * 64,
+        "request_id": request_id, "attempt_no": attempt_no, "from_cache": from_cache,
+        "response_artifact_id": artifact_id, "response_sha256": "a" * 64,
         "endpoint": "/cases", "normalized_request_hash": "r" * 64, "retrieved_at": retrieved_at,
         "source_release": "Data Release 46.0", "release_status": "KNOWN", "parser_version": "gdc-parser-v1",
         "json_pointer_or_table_locator": "/cases", "completeness": "COMPLETE",
@@ -159,6 +163,53 @@ def test_state_identity_excludes_operational_source_fields():
     first = _build(frames, sources=[_source("artifact-a", "2026-09-22T00:00:00Z")])
     second = _build(frames, sources=[_source("artifact-b", "2026-09-23T10:00:00Z")])
     assert first["state_hash"] == second["state_hash"]
+
+
+def test_state_identity_excludes_attempt_and_cache_link_fields():
+    frames = [_frame("P1"), _frame("P2")]
+    fetched = _source("artifact-a", "2026-09-22T00:00:00Z", request_id="req-1", attempt_no=1,
+                      from_cache=False)
+    replayed = _source("artifact-b", "2026-09-23T10:00:00Z", request_id="req-9", attempt_no=3,
+                       from_cache=True)
+    assert _build(frames, sources=[fetched])["state_hash"] == _build(frames, sources=[replayed])["state_hash"]
+
+
+def test_state_identity_excludes_provider_ranking_metadata():
+    frames = [_frame("P1"), _frame("P2")]
+    baseline = _build(frames)
+    reranked = json.loads(json.dumps(baseline))
+    for result in reranked["mutation"]["project_results"]:
+        result["provider_discovery_rank"] = {"rank": 99, "score": 999.0, "note": "selection metadata only"}
+    reranked["generation"]["discovery"] = {"rank": 99, "score": 999.0}
+    assert content_hash(statistical_state_identity_payload(reranked)) == content_hash(
+        statistical_state_identity_payload(baseline)
+    )
+
+
+def test_state_identity_tracks_measurement_and_tested_context_changes():
+    frames = [_frame("P1"), _frame("P2")]
+    baseline = _build(frames)
+    baseline_hash = content_hash(statistical_state_identity_payload(baseline))
+
+    measured = json.loads(json.dumps(baseline))
+    measured["mutation"]["project_results"][0]["affected_case_count"]["value"] += 1
+    assert content_hash(statistical_state_identity_payload(measured)) != baseline_hash
+
+    population = json.loads(json.dumps(baseline))
+    population["populations"][0]["examined_n"] = 41
+    assert content_hash(statistical_state_identity_payload(population)) != baseline_hash
+
+    method = json.loads(json.dumps(baseline))
+    method["expression"]["project_results"][0]["local"]["median"]["unit"] = "other-unit"
+    assert content_hash(statistical_state_identity_payload(method)) != baseline_hash
+
+    universe = json.loads(json.dumps(baseline))
+    universe["tested_context"]["examined_genes_hash"] = "different-universe"
+    assert content_hash(statistical_state_identity_payload(universe)) != baseline_hash
+
+    reference = json.loads(json.dumps(baseline))
+    reference["tested_context"]["examined_genes_ref"] = "other-selection-artifact"
+    assert content_hash(statistical_state_identity_payload(reference)) == baseline_hash
 
 
 def test_absent_bucket_is_not_observed_never_zero():

@@ -9,11 +9,27 @@ from cancerjev.domain.events import canonical_json
 def statistical_state_identity_payload(state: dict[str, Any]) -> dict[str, Any]:
     """Scientific identity of a StatisticalState.
 
-    Operational identity (state_id, run_id) and timestamps are excluded so the
-    same scientific content receives the same content hash in any run. Source
-    refs are projected to their scientific components: request/response hashes,
-    endpoint, parser version, completeness and release, without retrieval times
-    or artifact ids.
+    Identity is deterministic scientific evidence plus scientifically meaningful
+    tested context. Operational metadata and provider-ranking metadata are not
+    scientific truth, so they are excluded:
+
+    * state_id, run_id, created_at and every other clock value;
+    * the acquisition attempt link (request_id, attempt_no, from_cache) and the
+      retained response artifact id/retrieval time, because a cache hit and a
+      network fetch of the same canonical request are the same evidence;
+    * provider discovery rank and provider ``_score``, which stay quarantined as
+      provider metadata in ``generation.discovery`` and
+      ``mutation.project_results[].provider_discovery_rank``;
+    * ``tested_context.examined_genes_ref``, an artifact id for the same context.
+
+    Identity does change when a measurement, population, sample mapping, unit,
+    method/version, missingness, scope or tested-universe context changes.
+    ``tested_context.examined_genes_hash`` is deliberately retained: which genes
+    the run examined (and what selection supplied them) is scientific tested
+    context, so a different examined universe is a different state even when the
+    reported measurement happens to match. Sources are projected to their
+    scientific components only: endpoint, canonical request hash, response hash,
+    parser version, completeness and release.
     """
     if state.get("schema_version") == 2:
         provenance = state["provenance"]

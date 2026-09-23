@@ -87,7 +87,7 @@ def run_wide_evaluation(*, run_id: str, states: list[dict[str, Any]], coverage: 
         },
         artifact_refs=[baseline_artifact.ref(), jev_artifact.ref()],
     )
-    promoted = _promote(run_id, states, evaluations, jev, emit)
+    promoted = _promote(run_id, states, evaluations, jev, emit, repository)
     emit(
         run_id, "JEV_WIDE_COMPLETED", "jev:wide:completed",
         f"Wide Jev evaluation completed: {len(evaluations)} evaluations, admission {jev['admission']['decision']}, "
@@ -111,7 +111,7 @@ def _publish_ranking(run_id: str, filename: str, ranking: dict[str, Any],
 
 
 def _promote(run_id: str, states: list[dict[str, Any]], evaluations: list[dict[str, Any]],
-             jev: dict[str, Any], emit: Callable[..., Any]) -> list[dict[str, Any]]:
+             jev: dict[str, Any], emit: Callable[..., Any], repository: Repository) -> list[dict[str, Any]]:
     by_state = {state["state_id"]: state for state in states}
     by_evaluation = {evaluation["input_ref_id"]: evaluation for evaluation in evaluations}
     promoted: list[dict[str, Any]] = []
@@ -129,10 +129,11 @@ def _promote(run_id: str, states: list[dict[str, Any]], evaluations: list[dict[s
             "wide_evaluation_id": evaluation["evaluation_id"],
             "dimensions": entry["dimensions"],
         }
-        registration = (
-            "INSERT INTO candidates(candidate_id,run_id,promotion_slot,status,current_stage,source_state_id,entity_json,summary_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (candidate_id, run_id, slot, "WIDE_EVALUATED", "JEV_WIDE", state_id,
-             canonical_json(state["entity"]).decode(), canonical_json(summary).decode(), now, now),
+        registration = repository.candidate_registration(
+            candidate_id=candidate_id, run_id=run_id, promotion_slot=slot, status="WIDE_EVALUATED",
+            current_stage="JEV_WIDE", source_state_id=state_id,
+            entity_json=canonical_json(state["entity"]).decode(),
+            summary_json=canonical_json(summary).decode(), created_at=now, updated_at=now,
         )
         emit(
             run_id, "CANDIDATE_PROMOTED", f"candidate:{slot}:promoted",

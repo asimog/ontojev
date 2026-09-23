@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import dataclasses
 
+import pytest
+
 import cancerjev.jev.service as service_module
 from cancerjev.domain.events import canonical_json, utc_now
 from cancerjev.jev.projection import build_projection, projection_hash
 from cancerjev.jev.questions import applicability_map
-from cancerjev.jev.service import JevService
+from cancerjev.jev.service import JevService, is_pinned_model_identity
+from cancerjev.jev.typesafe_adapter import JevProviderError
 from tests.jev.stub_adapter import StubAdapter
 from tests.science.test_methods import _build, _frame
 
@@ -118,6 +121,28 @@ def test_cache_is_shared_across_runs_but_not_across_models(runtime):
     assert other.calls == 1
 
 
+def test_malformed_provider_response_is_a_persisted_failure_not_an_abort(runtime):
+    class MalformedAdapter:
+        model = "jev-1.13.0"
+
+        def evaluate(self, state, definitions):
+            raise JevProviderError(
+                "PROVIDER_RESPONSE_MALFORMED", "provider response could not be converted to owned answers",
+            )
+
+    service, context = _service(runtime, MalformedAdapter())
+    evaluation = service.evaluate(run_id=context["run_id"], state=_state(), emit=context["emit"])
+    assert evaluation["error"]["code"] == "PROVIDER_RESPONSE_MALFORMED"
+    assert evaluation["answers"] == {} and evaluation["resolved_model"] is None
+    repository = context["repository"]
+    stored = repository.get_evaluation(evaluation["evaluation_id"])
+    assert stored is not None, "a malformed provider response must still persist a failed evaluation"
+    assert stored["vector"]["error"]["code"] == "PROVIDER_RESPONSE_MALFORMED"
+    events = [event["type"] for event in repository.events(context["run_id"], 0, 100)["items"]]
+    assert "JEV_EVALUATION_FAILED" in events
+    assert repository.get_run(context["run_id"])["status"] != "FAILED", "one bad state must not abort the run"
+
+
 def test_provider_failure_fails_closed_without_fabricated_defaults(runtime):
     adapter = StubAdapter(fail=True)
     service, context = _service(runtime, adapter)
@@ -199,3 +224,61 @@ def test_failure_recording_reuses_the_projection_without_rebuilding_it(runtime, 
     jev_events = [event for event in events if event["type"].startswith("JEV_")]
     assert [event["type"] for event in jev_events] == ["JEV_PROJECTION_CREATED", "JEV_EVALUATION_FAILED"]
     assert jev_events[1]["idempotency_key"] == f"jev-wide:{evaluation['evaluation_id']}:failed"
+
+
+@pytest.mark.parametrize(
+    ("model", "pinned"),
+    [
+        ("jev-1.13.0", True),
+        ("gpt-4o-2024-08-06", True),
+        ("jev-1.13", True),
+        ("jev-latest", False),
+        ("gpt-4o", False),
+        ("openrouter/deepseek/flash", False),
+        ("", False),
+    ],
+)
+def test_only_pinned_model_identities_are_cache_eligible(model, pinned):
+    assert is_pinned_model_identity(model) is pinned
+
+
+def test_mutable_model_alias_is_never_treated_as_a_resolved_identity(runtime):
+    settings, repository, artifacts = runtime
+    alias_settings = dataclasses.replace(settings, jev_model="jev-latest")
+    adapter = StubAdapter(model="jev-latest")
+    service = JevService(alias_settings, repository, artifacts, adapter_factory=lambda: adapter)
+    run_id = repository.create_run("jev-alias", mode="LIVE", fixture_id=None, fixture_version=None)
+    state = _state()
+    _register_state(artifacts, repository, run_id, state)
+
+    def emit(run_id_arg, event_type, key, message, **kwargs):
+        return repository.append_event(run_id_arg, event_type=event_type, idempotency_key=key,
+                                       message=message, **kwargs)
+
+    first = service.evaluate(run_id=run_id, state=state, emit=emit)
+    second = service.evaluate(run_id=run_id, state=state, emit=emit)
+    assert first["cache_source_evaluation_id"] is None
+    assert second["cache_source_evaluation_id"] is None
+    assert adapter.calls == 2, "a mutable alias must always be evaluated by the provider"
+    with repository.database.read() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM jev_cache").fetchone()[0] == 0
+
+
+def test_divergent_provider_resolution_is_not_cached_under_the_requested_identity(runtime):
+    settings, repository, artifacts = runtime
+    adapter = StubAdapter(model="jev-1.13.0", resolved_model="jev-1.13.0-20260901")
+    service = JevService(settings, repository, artifacts, adapter_factory=lambda: adapter)
+    run_id = repository.create_run("jev-divergent", mode="LIVE", fixture_id=None, fixture_version=None)
+    state = _state()
+    _register_state(artifacts, repository, run_id, state)
+
+    def emit(run_id_arg, event_type, key, message, **kwargs):
+        return repository.append_event(run_id_arg, event_type=event_type, idempotency_key=key,
+                                       message=message, **kwargs)
+
+    first = service.evaluate(run_id=run_id, state=state, emit=emit)
+    assert first["requested_model"] == "jev-1.13.0"
+    assert first["resolved_model"] == "jev-1.13.0-20260901"
+    second = service.evaluate(run_id=run_id, state=state, emit=emit)
+    assert second["cache_source_evaluation_id"] is None
+    assert adapter.calls == 2, "a resolution that diverges from the pinned name must not be reused"

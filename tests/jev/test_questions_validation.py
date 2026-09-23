@@ -25,6 +25,23 @@ def test_current_wide_questions_are_valid():
     assert question_set_hash()
 
 
+def test_question_set_hash_is_stable_for_identical_definitions():
+    assert question_set_hash((_definition(),)) == question_set_hash((_definition(),))
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"applicability_rule": "mutation_observed"},
+        {"instructions": "Decide something else."},
+        {"version": 2},
+        {"criteria": {"true": "yes", "false": "maybe"}},
+    ],
+)
+def test_question_set_hash_covers_semantics(overrides):
+    assert question_set_hash((_definition(),)) != question_set_hash((_definition(**overrides),))
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

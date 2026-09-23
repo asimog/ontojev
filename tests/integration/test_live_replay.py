@@ -7,12 +7,14 @@ from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
 from cancerjev.domain.events import canonical_json
+from cancerjev.gdc.parsers import ResponseMeta, parse_expression_availability
 from cancerjev.jev.service import JevService
-from cancerjev.research.live import LiveOrchestrator
+from cancerjev.jev.typesafe_adapter import JevProviderError
+from cancerjev.research.live import LiveOrchestrator, _merge_expression_availability
 from cancerjev.research.specs import LUAD_RESEARCH_V1, AcquisitionSpec, CohortSpec, ResearchSpec
 from cancerjev.research.wide import run_wide_evaluation
 from cancerjev.science.methods import METHODS
-from tests.integration.replay import GENES, ReplayTransport
+from tests.integration.replay import GENES, ReplayTransport, availability_body
 from tests.jev.stub_adapter import StubAdapter
 from tests.jev.test_service import _register_state
 from tests.science.test_methods import _build, _frame
@@ -514,3 +516,114 @@ def test_run_wide_evaluation_abstains_and_defers_provider_failures(runtime):
     )
     assert ranking_event["data"]["deferred_state_ids"] == [state["state_id"]]
     assert ranking_event["data"]["admission_decision"] == "ABSTAIN"
+
+
+class _MalformedFirstStateAdapter(StubAdapter):
+    """One state gets a malformed provider response; the rest evaluate normally."""
+
+    def evaluate(self, state, definitions):
+        if self.calls == 0:
+            self.calls += 1
+            raise JevProviderError("PROVIDER_RESPONSE_MALFORMED",
+                                   "provider response could not be converted to owned answers")
+        return super().evaluate(state, definitions)
+
+
+def test_one_malformed_provider_response_does_not_abort_the_run(runtime):
+    settings, repository, artifacts = runtime
+    adapter = _MalformedFirstStateAdapter()
+    service = JevService(settings, repository, artifacts, adapter_factory=lambda: adapter)
+    run_id = repository.create_run("wide-malformed", mode="LIVE", fixture_id=None, fixture_version=None)
+    states = [_build([_frame("TCGA-LUAD")], state_id="state-a"),
+              _build([_frame("TCGA-LUAD")], state_id="state-b")]
+    for state in states:
+        _register_state(artifacts, repository, run_id, state)
+
+    def emit(event_run_id, event_type, key, message, **kwargs):
+        return repository.append_event(event_run_id, event_type=event_type, idempotency_key=key,
+                                       message=message, **kwargs)
+
+    def publish_json(pub_run_id, relative_path, payload, purpose):
+        return artifacts.publish(relative_path, canonical_json(payload), "application/json", purpose)
+
+    result = run_wide_evaluation(
+        run_id=run_id, states=states, coverage="COMPLETE_FOR_SCOPE",
+        repository=repository, jev_service=service, emit=emit, publish_json=publish_json,
+    )
+    evaluations = repository.page_child("jev_evaluations", run_id, 10, None, {"purpose": "WIDE"})["items"]
+    by_state = {row["input_ref_id"]: row["vector"] for row in evaluations}
+    assert sorted(by_state) == ["state-a", "state-b"], "both states must be evaluated"
+    failed_state = "state-a" if by_state["state-a"]["error"] else "state-b"
+    healthy_state = "state-b" if failed_state == "state-a" else "state-a"
+    assert by_state[failed_state]["error"]["code"] == "PROVIDER_RESPONSE_MALFORMED"
+    assert by_state[healthy_state]["error"] is None
+    assert len(by_state[healthy_state]["answers"]) == 7
+
+    types = [event["type"] for event in repository.events(run_id, 0, 200)["items"]]
+    assert types.count("JEV_EVALUATION_FAILED") == 1
+    assert types.count("JEV_WIDE_STATE_EVALUATED") == 1
+    assert "WIDE_RANKING_COMPLETED" in types and "JEV_WIDE_COMPLETED" in types
+    assert result["jev"]["admission"]["decision"] == "ADMIT"
+    assert [promotion["state_id"] for promotion in result["promoted"]] == [healthy_state]
+    run = repository.get_run(run_id)
+    assert run["status"] != "FAILED", "the run must continue after one deferred state"
+    assert run["provider_usage"]["jev_calls"] == 2, "a failed provider attempt is still a provider call"
+
+
+def test_live_replay_links_scientific_sources_to_the_responses_that_supplied_them(runtime, monkeypatch):
+    artifacts = runtime[2]
+    orchestrator, holder, repository = _orchestrator(runtime, monkeypatch)
+    run_id = orchestrator.run()
+    assert repository.get_run(run_id)["status"] == "COMPLETED"
+    issued = {request.request_hash() for request in holder["transport"].requests}
+    received = {artifact.sha256 for artifact in holder["transport"].published}
+    assert issued and received
+
+    checked = 0
+    for row in repository.list_table("statistical_states", run_id):
+        state = json.loads(artifacts.read(repository.artifact(row["artifact_id"])["relative_path"]))
+        for source in state["provenance"]["sources"]:
+            assert source["request_id"], "every scientific source must link to its acquisition attempt"
+            assert source["attempt_no"] >= 1
+            assert source["from_cache"] is False
+            assert source["normalized_request_hash"] in issued, "the logical request must be a request the run issued"
+            assert source["response_sha256"] in received, "the source must name a response the run received"
+            checked += 1
+    assert checked >= len(repository.list_table("statistical_states", run_id))
+
+
+def _response_meta(endpoint: str) -> ResponseMeta:
+    return ResponseMeta(endpoint=endpoint, method="POST", request_hash="h", response_sha256="s",
+                        artifact_id=None, retrieved_at="2026-09-23T00:00:00Z", source_release=None,
+                        completeness="COMPLETE")
+
+
+def test_expression_availability_merge_keeps_observed_and_missing_genes_disjoint():
+    case_ids = ["P1-case-1", "P1-case-2"]
+    gene_ids = list(GENES)
+    first = parse_expression_availability(
+        availability_body(case_ids[:1], gene_ids), _response_meta("/gene_expression/availability"),
+        expected_cases=case_ids[:1], expected_genes=gene_ids,
+    )
+    second = parse_expression_availability(
+        availability_body(case_ids[1:], gene_ids, omit_genes=True),
+        _response_meta("/gene_expression/availability"),
+        expected_cases=case_ids[1:], expected_genes=gene_ids,
+    )
+    assert second.missing_genes == gene_ids, "the second batch omitted every gene detail"
+
+    merged = _merge_expression_availability(case_ids, gene_ids,
+                                            [(case_ids[:1], first), (case_ids[1:], second)])
+    assert merged.genes == {gene_id: True for gene_id in gene_ids}
+    assert merged.missing_genes == [], "a gene observed by any batch is not a missing gene"
+    assert set(merged.genes) & set(merged.missing_genes) == set()
+    assert merged.missing_cases == []
+
+    absent = parse_expression_availability(
+        availability_body(case_ids, gene_ids, omit_genes=True),
+        _response_meta("/gene_expression/availability"),
+        expected_cases=case_ids, expected_genes=gene_ids,
+    )
+    merged_absent = _merge_expression_availability(case_ids, gene_ids, [(case_ids, absent)])
+    assert merged_absent.genes == {}
+    assert merged_absent.missing_genes == gene_ids, "a gene absent from every batch stays missing"

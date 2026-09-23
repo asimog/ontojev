@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import time
 
@@ -20,7 +21,12 @@ from cancerjev.gdc.endpoints import (
     status_request,
     top_mutated_genes_request,
 )
-from cancerjev.gdc.transport import BudgetCaps, TransportError, TransportErrorCode
+from cancerjev.gdc.transport import (
+    TRANSPORT_CONTRACT_VERSION,
+    BudgetCaps,
+    TransportError,
+    TransportErrorCode,
+)
 
 STATUS_BODY = json.dumps({
     "commit": "8f7c2a51ab0084b216ad1b62a3fae8b945439c53",
@@ -342,8 +348,71 @@ def test_usage_counters_update_from_transport_events(runtime, loopback, transpor
                                        idempotency_key=key, message=message, **kwargs)
 
     transport.emit = emit
-    transport.request(status_request())
+    response = transport.request(status_request())
     run = repository.get_run(transport.run_id)
     assert run["provider_usage"]["gdc_requests"] == 1
     assert run["provider_usage"]["gdc_bytes"] == len(STATUS_BODY)
     assert run["provider_usage"]["gdc_cache_hits"] == 0
+    attempts = repository.gdc_attempts(transport.run_id)
+    assert [attempt["status"] for attempt in attempts] == ["COMPLETED"]
+    assert response.request_id == attempts[0]["request_id"], "the response must name its own attempt"
+    assert response.attempt_no == attempts[0]["attempt_no"] == 1
+    assert attempts[0]["request_hash"] == response.request_hash
+    assert attempts[0]["response_hash"] == response.body_sha256
+
+
+def test_received_body_storage_failure_leaves_no_reserved_attempt(runtime, loopback, transport_builder, monkeypatch):
+    _, repository, _ = runtime
+    loopback.json("/status", STATUS_BODY)
+    transport = transport_builder()
+    events: list[dict] = []
+
+    def emit(event_type, key, message, **kwargs):
+        event = repository.append_event(transport.run_id, event_type=event_type,
+                                        idempotency_key=key, message=message, **kwargs)
+        events.append(event)
+        return event
+
+    transport.emit = emit
+
+    def failing_register(artifact, run_id):
+        raise OSError("artifact registry unavailable")
+
+    monkeypatch.setattr(repository, "register_artifact", failing_register)
+    with pytest.raises(OSError, match="artifact registry unavailable"):
+        transport.request(status_request())
+
+    attempts = repository.gdc_attempts(transport.run_id)
+    assert [attempt["status"] for attempt in attempts] == ["FAILED"]
+    assert attempts[0]["finished_at"] is not None
+    assert "RESPONSE_STORAGE_FAILED" in attempts[0]["error"]
+    assert attempts[0]["response_hash"] == hashlib.sha256(STATUS_BODY).hexdigest()
+    assert [event["type"] for event in events] == ["GDC_REQUEST_STARTED", "GDC_REQUEST_FAILED"]
+
+
+def test_stale_contract_version_cache_row_cannot_block_a_new_entry(runtime, loopback, transport_builder):
+    _, repository, artifacts = runtime
+    loopback.json("/status", STATUS_BODY)
+    request = status_request()
+    request_hash = request.request_hash()
+    run_id = repository.create_run("stale-cache")
+    stale_artifact = artifacts.publish("gdc/stale.body", STATUS_BODY, "application/json", "gdc-response")
+    repository.register_artifact(stale_artifact, run_id)
+    repository.gdc_cache_put(
+        request_hash=request_hash, method="GET", endpoint="/status",
+        response_artifact_id=stale_artifact.artifact_id, response_hash=stale_artifact.sha256,
+        size_bytes=len(STATUS_BODY), completeness="COMPLETE", contract_version="gdc-transport-v0",
+        created_at="2026-01-01T00:00:00Z",
+    )
+
+    fresh_transport = transport_builder(caps=BudgetCaps(max_requests=5, max_bytes=1_000_000))
+    fresh = fresh_transport.request(request)
+    assert fresh.from_cache is False, "an older contract version must not be replayed as current evidence"
+    assert len(loopback.requests) == 1
+
+    cached_transport = transport_builder(caps=BudgetCaps(max_requests=5, max_bytes=1_000_000))
+    cached = cached_transport.request(request)
+    assert cached.from_cache is True
+    assert len(loopback.requests) == 1, "the current contract version entry must be storable"
+    assert repository.gdc_cache_get(request_hash, TRANSPORT_CONTRACT_VERSION)["completeness"] == "COMPLETE"
+    assert repository.gdc_cache_get(request_hash, "gdc-transport-v0")["created_at"] == "2026-01-01T00:00:00Z"

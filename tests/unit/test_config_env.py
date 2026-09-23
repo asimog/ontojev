@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from cancerjev.config import Settings, load_local_env
+from cancerjev.config import JEV_TIMEOUT_SECONDS_HARD_CAP, Settings, load_local_env
 
 
 def test_loads_values_and_ignores_comments_blanks_and_invalid_names(tmp_path, monkeypatch):
@@ -54,12 +54,27 @@ def test_above_hard_cap_settings_are_rejected(monkeypatch):
         "CANCERJEV_GDC_PER_RESPONSE_BYTES": str(5 * 1024 * 1024 + 1),
         "CANCERJEV_GDC_TIMEOUT_SECONDS": "31",
         "CANCERJEV_JEV_MAX_STATES": "1001",
+        "CANCERJEV_JEV_TIMEOUT_SECONDS": str(JEV_TIMEOUT_SECONDS_HARD_CAP + 1),
     }
     for name, value in overrides.items():
         monkeypatch.setenv(name, value)
         with pytest.raises(ValueError):
             Settings.from_env()
         monkeypatch.delenv(name)
+
+
+@pytest.mark.parametrize("value", ["nan", "NaN", "inf", "-inf", "Infinity", "0", "-0.5", "-30"])
+def test_impossible_jev_timeouts_are_rejected(monkeypatch, value):
+    monkeypatch.setenv("CANCERJEV_NO_DOTENV", "1")
+    monkeypatch.setenv("CANCERJEV_JEV_TIMEOUT_SECONDS", value)
+    with pytest.raises(ValueError):
+        Settings.from_env()
+
+
+def test_lowered_jev_timeout_is_accepted_and_effective(monkeypatch):
+    monkeypatch.setenv("CANCERJEV_NO_DOTENV", "1")
+    monkeypatch.setenv("CANCERJEV_JEV_TIMEOUT_SECONDS", "12.5")
+    assert Settings.from_env().jev_timeout_seconds == 12.5
 
 
 def test_lowering_hard_caps_is_allowed_and_effective(monkeypatch):

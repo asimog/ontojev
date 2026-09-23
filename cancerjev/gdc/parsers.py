@@ -219,6 +219,24 @@ def _finite(value: Any, context: str) -> float | None:
     return number
 
 
+def _nonnegative_count(value: Any, context: str) -> int:
+    """A provider count is a non-negative integer; an impossible count fails closed."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ParserError("INVALID_COUNT", f"{context}: count must be a non-negative integer")
+    return value
+
+
+def _optional_count(document: dict[str, Any], path: str, context: str) -> int | None:
+    value = _optional(document, path, (int,), context)
+    if value is None:
+        return None
+    return _nonnegative_count(value, f"{context}: {path}")
+
+
+def _required_count(document: dict[str, Any], path: str, context: str) -> int:
+    return _nonnegative_count(_require(document, path, (int,), context), f"{context}: {path}")
+
+
 def _string_list(document: dict[str, Any], path: str, context: str) -> list[str]:
     value = _optional(document, path, (list,), context)
     if not value:
@@ -322,8 +340,8 @@ def parse_projects(body: bytes, meta: ResponseMeta) -> list[ProjectRecord]:
             program_name=_optional(hit, "program.name", (str,), "projects"),
             primary_site=_string_list(hit, "primary_site", "projects"),
             disease_type=_string_list(hit, "disease_type", "projects"),
-            case_count=_optional(hit, "summary.case_count", (int,), "projects"),
-            file_count=_optional(hit, "summary.file_count", (int,), "projects"),
+            case_count=_optional_count(hit, "summary.case_count", "projects"),
+            file_count=_optional_count(hit, "summary.file_count", "projects"),
             data_categories=_nested_string_list(hit, "summary.data_categories", "data_category", "projects"),
         ))
     return records
@@ -441,12 +459,12 @@ def parse_gene_case_counts(body: bytes, meta: ResponseMeta) -> GeneCaseCounts:
                 raise ParserError("MALFORMED_JSON", "counts: gene bucket is not an object")
             gene_id = _require(gene_bucket, "key", (str,), "counts")
             reasons += _nested_aggregation_reasons(gene_bucket, f"counts.project[{project_id}].gene[{gene_id}]")
-            doc_count = _require(gene_bucket, "doc_count", (int,), "counts")
+            doc_count = _required_count(gene_bucket, "doc_count", "counts")
             if gene_id in counts:
                 raise ParserError("DUPLICATE_ID", f"counts: duplicate gene bucket {project_id}/{gene_id}")
             counts[gene_id] = doc_count
         projects[project_id] = counts
-    hits_total = _optional(document, "hits.total.value", (int,), "counts")
+    hits_total = _optional_count(document, "hits.total.value", "counts")
     return GeneCaseCounts(projects=projects, hits_total=hits_total, complete=not reasons,
                           partial_reasons=reasons, warnings=_warnings(document))
 
@@ -471,7 +489,9 @@ def parse_mutated_cases_count(body: bytes, meta: ResponseMeta) -> ProjectCoverag
         )
         if project_id in coverage:
             raise ParserError("DUPLICATE_ID", f"coverage: duplicate project bucket {project_id}")
-        coverage[project_id] = _require(bucket, "case_summary.case_with_ssm.doc_count", (int,), "coverage")
+        coverage[project_id] = _required_count(
+            bucket, "case_summary.case_with_ssm.doc_count", "coverage",
+        )
     return ProjectCoverage(case_with_ssm=coverage, complete=not reasons,
                            partial_reasons=reasons, warnings=_warnings(document))
 
@@ -503,8 +523,8 @@ def parse_expression_availability(body: bytes, meta: ResponseMeta, *, expected_c
         genes[gene_id] = bool(_require(detail, "has_gene_expression_values", (bool,), "availability"))
     return ExpressionAvailability(
         cases=cases, genes=genes,
-        with_count=_optional(document, "cases.with_gene_expression_count", (int,), "availability"),
-        without_count=_optional(document, "cases.without_gene_expression_count", (int,), "availability"),
+        with_count=_optional_count(document, "cases.with_gene_expression_count", "availability"),
+        without_count=_optional_count(document, "cases.without_gene_expression_count", "availability"),
         missing_cases=[case_id for case_id in expected_cases if case_id not in cases],
         missing_genes=[gene_id for gene_id in expected_genes if gene_id not in genes],
         warnings=_warnings(document),

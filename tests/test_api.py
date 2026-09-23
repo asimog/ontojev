@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
 from cancerjev.research.orchestrator import DemoOrchestrator
+from cancerjev.storage.database import SCHEMA_VERSION
 
 
 def test_api_incremental_events_and_errors(runtime, monkeypatch):
@@ -16,7 +17,7 @@ def test_api_incremental_events_and_errors(runtime, monkeypatch):
     pending_id = repository.create_run("pagination-test")
     client = TestClient(create_app())
     health = client.get("/health")
-    assert health.json() == {"status": "ok", "schema_version": 3}
+    assert health.json() == {"status": "ok", "schema_version": SCHEMA_VERSION}
     assert health.headers["cache-control"] == "no-store"
     assert client.get("/api/system").json()["providers"] == {"gdc": True, "jev": False, "llm": False}
     first_page = client.get("/api/runs?limit=1").json()
@@ -103,7 +104,7 @@ def test_system_reports_live_configuration(runtime, monkeypatch):
     system = client.get("/api/system").json()
     assert system["data"]["directory"] == settings.data_dir.name
     assert system["data"]["artifact_files"] > 0
-    assert system["versions"] == {"api": "2.0.0", "schema": 3, "worker": "0.1.0"}
+    assert system["versions"] == {"api": "2.0.0", "schema": SCHEMA_VERSION, "worker": "0.1.0"}
     assert system["budget_defaults"]["gdc_requests"] == 150
     assert system["budget_defaults"]["per_response_bytes"] == 5 * 1024 * 1024
     assert system["budget_defaults"]["max_case_ids"] == 250

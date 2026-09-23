@@ -6,7 +6,7 @@ List envelope: `{items:[...], next_cursor:string|null, has_more:boolean}`. Opaqu
 
 | Method/path | Parameters | Response |
 |---|---|---|
-| GET `/health` | none | `{status:"ok",schema_version:3}` if DB readable; 503 otherwise; does not claim worker healthy; `Cache-Control: no-store` |
+| GET `/health` | none | `{status:"ok",schema_version:4}` if DB readable; 503 otherwise; does not claim worker healthy; `Cache-Control: no-store` |
 | GET `/api/system` | none | worker heartbeat/freshness, active run, live/fixture modes, effective budget defaults and limits, cursor summary, cache stats (entries, bytes, hit rate), versions; secret values omitted |
 | GET `/api/runs` | cursor?, limit?, status? | RunSummary list, descending `(created_at,run_id)`; no embedded event arrays |
 | GET `/api/runs/{run_id}` | UUID | ResearchRun projection, last_sequence, stage occurrences, embedded candidate rows and budget/usage snapshots |

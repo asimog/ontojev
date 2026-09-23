@@ -106,6 +106,11 @@ def _merge_expression_availability(
     case_ids: list[str], gene_ids: list[str],
     parts: list[tuple[list[str], ExpressionAvailability]],
 ) -> ExpressionAvailability:
+    """Merge per-batch availability into one cohort-wide record.
+
+    A gene returned by any batch is observed even when another batch omitted it,
+    so merged observed and missing genes stay disjoint exactly as they are per batch.
+    """
     expected_cases = set(case_ids)
     expected_genes = set(gene_ids)
     cases: dict[str, bool] = {}
@@ -142,6 +147,7 @@ def _merge_expression_availability(
         raise LiveRunError("INCOMPLETE_EXPRESSION_BATCHES", "expression batches do not cover the cohort case frame")
     missing_cases.update(expected_cases - set(cases))
     missing_genes.update(expected_genes - set(genes))
+    missing_genes -= set(genes)
     return ExpressionAvailability(
         cases={case_id: cases[case_id] for case_id in case_ids if case_id in cases},
         genes={gene_id: genes[gene_id] for gene_id in gene_ids if gene_id in genes},
@@ -257,8 +263,18 @@ class LiveOrchestrator:
         )
 
     def _source(self, response: GDCResponse, *, locator: str, release: str | None) -> dict[str, Any]:
+        """Scientific provenance for one response, linked to its GDC attempt.
+
+        ``normalized_request_hash`` is the logical request; ``request_id`` and
+        ``attempt_no`` identify the current cache/network attempt that supplied the
+        bytes; the artifact id and response hash identify the retained response; and
+        ``json_pointer_or_table_locator`` is the scientific locator inside it.
+        Operational fields stay out of scientific identity.
+        """
         return {
-            "request_id": None,
+            "request_id": response.request_id,
+            "attempt_no": response.attempt_no,
+            "from_cache": response.from_cache,
             "response_artifact_id": response.artifact.artifact_id,
             "response_sha256": response.body_sha256,
             "endpoint": response.endpoint,
@@ -730,10 +746,10 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
             }
             registrations = [
                 self.repository.artifact_registration(artifact, run_id),
-                (
-                    "INSERT INTO statistical_states(state_id,run_id,state_hash,artifact_id,disposition,summary_json,created_at) VALUES(?,?,?,?,?,?,?)",
-                    (state_id, run_id, state["state_hash"], artifact.artifact_id, "GENERATED",
-                     canonical_json(summary).decode(), utc_now()),
+                self.repository.state_registration(
+                    state_id=state_id, run_id=run_id, state_hash=state["state_hash"],
+                    artifact_id=artifact.artifact_id, disposition="GENERATED",
+                    summary_json=canonical_json(summary).decode(), created_at=utc_now(),
                 ),
             ]
             self._event(

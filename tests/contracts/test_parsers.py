@@ -374,3 +374,55 @@ def test_files_record_without_explicit_open_access_is_not_open():
     assert provenance.files_seen == 2
     assert provenance.non_open_records == 1
     assert provenance.workflows == ["STAR - Counts"]
+
+
+@pytest.mark.parametrize(
+    ("body", "parser", "endpoint", "kwargs"),
+    [
+        ({"data": {"hits": [{"project_id": "P1", "summary": {"case_count": -1}}]}},
+         parse_projects, "/projects", {}),
+        ({"data": {"hits": [{"project_id": "P1", "summary": {"file_count": -2}}]}},
+         parse_projects, "/projects", {}),
+        ({"hits": {"total": {"value": -5}}, "aggregations": {"projects": {"buckets": []}}},
+         parse_gene_case_counts, "/analysis/top_cases_counts_by_genes", {}),
+        ({"aggregations": {"projects": {"buckets": [
+            {"key": "P1", "genes": {"my_genes": {"gene_id": {"buckets": [
+                {"key": "ENSG1", "doc_count": -3},
+            ]}}}},
+        ]}}}, parse_gene_case_counts, "/analysis/top_cases_counts_by_genes", {}),
+        ({"hits": {"total": {"value": -1}}, "aggregations": {"projects": {"buckets": [
+            {"key": "P1", "case_summary": {"case_with_ssm": {"doc_count": -7}}},
+        ]}}}, parse_mutated_cases_count, "/analysis/mutated_cases_count_by_project", {}),
+        ({"cases": {"details": [{"case_id": "case-a", "has_gene_expression_values": True}],
+                    "with_gene_expression_count": -4, "without_gene_expression_count": 0},
+          "genes": {"details": [{"gene_id": "ENSG1", "has_gene_expression_values": True}],
+                    "with_gene_expression_count": 1, "without_gene_expression_count": 0}},
+         parse_expression_availability, "/gene_expression/availability",
+         {"expected_cases": ["case-a"], "expected_genes": ["ENSG1"]}),
+        ({"cases": {"details": [{"case_id": "case-a", "has_gene_expression_values": True}],
+                    "with_gene_expression_count": 1, "without_gene_expression_count": -4},
+          "genes": {"details": [{"gene_id": "ENSG1", "has_gene_expression_values": True}],
+                    "with_gene_expression_count": 1, "without_gene_expression_count": 0}},
+         parse_expression_availability, "/gene_expression/availability",
+         {"expected_cases": ["case-a"], "expected_genes": ["ENSG1"]}),
+    ],
+)
+def test_negative_provider_counts_fail_closed(body, parser, endpoint, kwargs):
+    with pytest.raises(ParserError) as exc:
+        parser(json.dumps(body).encode(), meta_for(endpoint), **kwargs)
+    assert exc.value.code == "INVALID_COUNT"
+
+
+def test_observed_zero_counts_are_still_accepted():
+    counts = parse_gene_case_counts(
+        json.dumps({"aggregations": {"projects": {"buckets": [
+            {"key": "P1", "genes": {"my_genes": {"gene_id": {"buckets": [{"key": "ENSG1", "doc_count": 0}]}}}},
+        ]}}}).encode(),
+        meta_for("/analysis/top_cases_counts_by_genes"),
+    )
+    assert counts.projects["P1"]["ENSG1"] == 0
+    projects = parse_projects(
+        json.dumps({"data": {"hits": [{"project_id": "P1", "summary": {"case_count": 0}}]}}).encode(),
+        meta_for("/projects"),
+    )
+    assert projects[0].case_count == 0

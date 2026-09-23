@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
+import cancerjev
 from cancerjev.domain.events import REGISTERED_EVENT_TYPES
 from cancerjev.research.orchestrator import DemoOrchestrator
-from cancerjev.storage.database import IMMUTABLE_TABLES, Database
+from cancerjev.storage.artifacts import PublishedArtifact
+from cancerjev.storage.database import IMMUTABLE_TABLES, SCHEMA_VERSION, Database
 
 IMMUTABLE_ROW_COUNTS = {
     "run_events": "SELECT COUNT(*) FROM run_events",
@@ -64,7 +68,7 @@ def test_bootstrap_is_idempotent_and_closes_its_connection(tmp_path):
         Database(path).bootstrap()
     with Database(path).read() as connection:
         assert connection.execute("SELECT COUNT(*) FROM schema_info").fetchone()[0] == 1
-        assert connection.execute("SELECT version FROM schema_info").fetchone()[0] == 3
+        assert connection.execute("SELECT version FROM schema_info").fetchone()[0] == SCHEMA_VERSION
     path.unlink()  # fails on Windows if bootstrap leaked an open handle
 
 
@@ -98,3 +102,79 @@ def test_registered_vocabulary_covers_orchestrator_emissions(runtime):
     emitted: list[dict] = []
     DemoOrchestrator(settings, repository, artifacts, emitted.append).run()
     assert {event["type"] for event in emitted} <= REGISTERED_EVENT_TYPES
+
+
+def test_dangling_candidate_evidence_and_followup_provenance_is_rejected(runtime):
+    _, repository, artifacts = runtime
+    run_id = repository.create_run("dangling-provenance")
+    repository.append_event(run_id, event_type="RUN_CREATED", idempotency_key="created", message="created")
+    state_artifact = PublishedArtifact(
+        artifact_id=str(uuid4()), relative_path="statistical_states/dangling-synthetic.json",
+        sha256="b" * 64, size_bytes=2, media_type="application/json", purpose="statistical-state",
+    )
+    repository.register_artifact(state_artifact, run_id)
+    state_id = str(uuid4())
+    repository.append_event(
+        run_id, event_type="STATISTICAL_STATE_CREATED", idempotency_key="state", message="state",
+        stage="STATE_GENERATION",
+        registrations=[repository.state_registration(
+            state_id=state_id, run_id=run_id, state_hash="b" * 64,
+            artifact_id=state_artifact.artifact_id, disposition="GENERATED", summary_json="{}",
+            created_at="2026-01-01T00:00:00Z",
+        )],
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+        repository.append_event(
+            run_id, event_type="CANDIDATE_PROMOTED", idempotency_key="dangling-state",
+            message="promoted", stage="JEV_WIDE",
+            registrations=[repository.candidate_registration(
+                candidate_id=str(uuid4()), run_id=run_id, promotion_slot=1, status="WIDE_EVALUATED",
+                current_stage="JEV_WIDE", source_state_id=str(uuid4()), entity_json="{}",
+                summary_json="{}", created_at="2026-01-01T00:00:00Z", updated_at="2026-01-01T00:00:00Z",
+            )],
+        )
+
+    candidate_id = str(uuid4())
+    repository.append_event(
+        run_id, event_type="CANDIDATE_PROMOTED", idempotency_key="promoted", message="promoted",
+        stage="JEV_WIDE", candidate_id=candidate_id,
+        registrations=[repository.candidate_registration(
+            candidate_id=candidate_id, run_id=run_id, promotion_slot=1, status="WIDE_EVALUATED",
+            current_stage="JEV_WIDE", source_state_id=state_id, entity_json="{}", summary_json="{}",
+            created_at="2026-01-01T00:00:00Z", updated_at="2026-01-01T00:00:00Z",
+        )],
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+        repository.append_event(
+            run_id, event_type="EVIDENCE_STATE_CREATED", idempotency_key="dangling-previous",
+            message="evidence", stage="EVIDENCE_BUILD", candidate_id=candidate_id,
+            registrations=[repository.evidence_state_registration(
+                evidence_state_id=str(uuid4()), run_id=run_id, candidate_id=candidate_id,
+                previous_evidence_state_id=str(uuid4()), iteration=1, evidence_hash="c" * 64,
+                artifact_id=state_artifact.artifact_id, summary_json="{}",
+                created_at="2026-01-01T00:00:00Z",
+            )],
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+        repository.append_event(
+            run_id, event_type="FOLLOWUP_COMPLETED", idempotency_key="dangling-candidate",
+            message="followup", stage="FOLLOWUP",
+            registrations=[repository.followup_execution_registration(
+                execution_id=str(uuid4()), run_id=run_id, candidate_id=str(uuid4()),
+                action_id="ACTION", action_version="1", input_evidence_hash="d" * 64,
+                output_evidence_state_id=None, slot=1, status="COMPLETED", summary_json="{}",
+                created_at="2026-01-01T00:00:00Z",
+            )],
+        )
+
+
+def test_research_and_jev_modules_own_no_persistence_sql():
+    root = Path(cancerjev.__file__).parent
+    modules = sorted((root / "research").glob("*.py")) + sorted((root / "jev").glob("*.py"))
+    assert modules
+    for module in modules:
+        source = module.read_text(encoding="utf-8")
+        assert "INSERT INTO" not in source, module
+        assert "SELECT " not in source, module
+        assert "UPDATE " not in source, module
+        assert "repository.database" not in source, module

@@ -124,6 +124,8 @@ class GDCResponse:
     from_cache: bool
     retrieved_at: str
     latency_ms: int
+    request_id: str = ""
+    attempt_no: int = 0
 
 
 class GDCTransport:
@@ -168,15 +170,16 @@ class GDCTransport:
             canonical_json(request.body)
         request_hash = request.request_hash()
         if self.cache_enabled:
-            cached = self._cache_get(request_hash, spec)
+            cached = self._cache_get(request_hash, spec, request.logical_query_id)
             if cached is not None:
                 return cached
         return self._dispatch_with_retries(spec, request, request_hash)
 
     # ---------------------------------------------------------------- cache
 
-    def _cache_get(self, request_hash: str, spec: EndpointSpec) -> GDCResponse | None:
-        row = self.repository.gdc_cache_get(request_hash)
+    def _cache_get(self, request_hash: str, spec: EndpointSpec,
+                   logical_query_id: str) -> GDCResponse | None:
+        row = self.repository.gdc_cache_get(request_hash, TRANSPORT_CONTRACT_VERSION)
         if row is None:
             return None
         if row.get("completeness") != "COMPLETE":
@@ -198,7 +201,7 @@ class GDCTransport:
         request_id = str(uuid4())
         now = utc_now()
         self.repository.gdc_attempt_start(
-            request_id=request_id, run_id=self.run_id, logical_query_id="cache",
+            request_id=request_id, run_id=self.run_id, logical_query_id=logical_query_id,
             attempt_no=1, method=spec.method, endpoint=spec.path, request_hash=request_hash,
             reserved_bytes=0, started_at=now,
         )
@@ -229,6 +232,7 @@ class GDCTransport:
                 media_type=metadata["media_type"], purpose=metadata["purpose"],
             ),
             completeness=row["completeness"], from_cache=True, retrieved_at=now, latency_ms=0,
+            request_id=request_id, attempt_no=1,
         )
 
     # ------------------------------------------------------------- dispatch
@@ -289,15 +293,31 @@ class GDCTransport:
                 },
             )
             raise
+        except Exception as exc:
+            self.repository.gdc_attempt_finish(
+                request_id=request_id, status="FAILED", bytes_read=0, http_status=None,
+                response_artifact_id=None, response_hash=None, completeness="FAILED",
+                error=f"{type(exc).__name__}: {exc}", finished_at=utc_now(),
+            )
+            raise
         latency = int((time.monotonic() - started) * 1000)
         body_sha = _sha256(body)
-        artifact = self.artifacts.publish(
-            f"gdc/{request_hash}/{body_sha}.body", body,
-            "application/json" if request.accept == "application/json" else "text/tab-separated-values",
-            "gdc-response",
-        )
-        self.budget.charge(len(body))
-        self.repository.register_artifact(artifact, self.run_id)
+        artifact: PublishedArtifact | None = None
+        try:
+            artifact = self.artifacts.publish(
+                f"gdc/{request_hash}/{body_sha}.body", body,
+                "application/json" if request.accept == "application/json" else "text/tab-separated-values",
+                "gdc-response",
+            )
+            self.budget.charge(len(body))
+            self.repository.register_artifact(artifact, self.run_id)
+        except Exception as exc:
+            self._finalize_unstored_response(
+                request_id=request_id, spec=spec, attempt_no=attempt_no, http_status=status,
+                bytes_read=len(body), response_hash=body_sha, artifact=artifact,
+                latency_ms=latency, exc=exc,
+            )
+            raise
         self.repository.gdc_attempt_finish(
             request_id=request_id, status="COMPLETED", bytes_read=len(body), http_status=status,
             response_artifact_id=artifact.artifact_id, response_hash=body_sha,
@@ -325,7 +345,41 @@ class GDCTransport:
             request_hash=request_hash, endpoint=spec.path, method=spec.method, http_status=status,
             headers=headers, body=body, body_sha256=body_sha, artifact=artifact,
             completeness="COMPLETE", from_cache=False, retrieved_at=started_at, latency_ms=latency,
+            request_id=request_id, attempt_no=attempt_no,
         )
+
+    def _finalize_unstored_response(self, *, request_id: str, spec: EndpointSpec, attempt_no: int,
+                                    http_status: int, bytes_read: int, response_hash: str,
+                                    artifact: PublishedArtifact | None, latency_ms: int,
+                                    exc: Exception) -> None:
+        """Make an attempt terminal when its received body could not be stored.
+
+        The ledger write happens first, so an attempt can never remain RESERVED
+        after a successful read. Emitting the failure event is best effort: the
+        original storage error is re-raised by the caller and must not be replaced
+        by a second storage failure during failure reporting.
+        """
+        self.repository.gdc_attempt_finish(
+            request_id=request_id, status="FAILED", bytes_read=bytes_read, http_status=http_status,
+            response_artifact_id=artifact.artifact_id if artifact is not None else None,
+            response_hash=response_hash, completeness="FAILED",
+            error=f"RESPONSE_STORAGE_FAILED: {type(exc).__name__}: {exc}", finished_at=utc_now(),
+        )
+        try:
+            self.emit(
+                "GDC_REQUEST_FAILED", f"gdc:{request_id}:failed",
+                f"GDC {spec.method} {spec.path} response could not be stored.",
+                stage=None, level="error", data={
+                    "request_id": request_id, "endpoint": spec.path, "method": spec.method,
+                    "attempt_no": attempt_no, "error_code": "RESPONSE_STORAGE_FAILED",
+                    "detail": f"{type(exc).__name__}: {exc}", "http_status": http_status,
+                    "bytes_read": bytes_read, "latency_ms": latency_ms,
+                    "requests_total": self.budget.requests_started,
+                    "bytes_total": self.budget.bytes_read,
+                },
+            )
+        except Exception:
+            return
 
     def _connection(self) -> http.client.HTTPConnection:
         if self.connection_factory is not None:

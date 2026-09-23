@@ -197,6 +197,11 @@ validate_definitions(WIDE_QUESTIONS)
 
 
 def question_set_hash(definitions: tuple[QuestionDefinition, ...] = WIDE_QUESTIONS) -> str:
+    """Semantic identity of a question set.
+
+    Covers wording, criteria, primitive, version and applicability rule, because a
+    changed applicability rule changes which judgments a stored evaluation holds.
+    """
     payload = {
         "version": WIDE_QUESTION_SET_VERSION,
         "questions": [
@@ -206,6 +211,7 @@ def question_set_hash(definitions: tuple[QuestionDefinition, ...] = WIDE_QUESTIO
                 "version": definition.version,
                 "instructions": definition.instructions,
                 "criteria": definition.criteria,
+                "applicability_rule": definition.applicability_rule,
             }
             for definition in definitions
         ],

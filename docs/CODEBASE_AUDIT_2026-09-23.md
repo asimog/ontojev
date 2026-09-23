@@ -2,9 +2,11 @@
 
 Audit date: 2026-09-23  
 Audited base commit: `d1ab646` (`main`, pushed to `origin/main`)  
-Hardening pass: safety/science and UI defects below are fixed in the working tree with
-provider-free regression tests; the remaining findings are listed with severity and location and
-are **not** fixed.
+Hardening pass: the first hardening pass fixed AUD-01 through AUD-11 below with provider-free
+regression tests; those changes are committed. A second, pre-Phase-4 hardening pass then fixed the
+provider-containment, attempt-finality, provenance, cache-identity, storage-ownership and
+tested-universe items recorded as AUD-12 through AUD-19. The findings still listed under
+**Remaining Findings (not fixed)** remain open, with the deliberately deferred items named.
 
 ## Executive Summary
 
@@ -125,43 +127,149 @@ policy, schema, or external provider behavior were changed; the fixes tighten fa
   continuation loop commits each page before advancing its cursor, so a later-page failure no
   longer skips earlier pages.
 
+## Fixed Findings (pre-Phase-4 hardening pass, 2026-09-23)
+
+Dispositions below are verified against current `HEAD` (each item was reproduced first).
+
+### AUD-12: A malformed TypeSafe response could abort the whole live run
+
+- **Severity:** Medium (run containment). **Disposition:** CONFIRMED → fixed.
+- **Root cause:** response-to-answer conversion (including `response.model`) ran outside the guarded
+  region, so a shape mismatch escaped as a raw `AttributeError`/`TypeError` instead of a typed
+  provider error.
+- **Smallest fix:** conversion and envelope extraction moved into `_convert_answers`/`_convert_envelope`
+  behind a `JevProviderError` boundary; a malformed shape raises
+  `PROVIDER_RESPONSE_MALFORMED`, which `JevService` already persists as a failed evaluation and
+  `run_wide_evaluation` already defers. Unrelated programming defects are not converted.
+- **Regression coverage:** `test_malformed_provider_responses_become_typed_provider_errors`,
+  `test_malformed_provider_response_is_a_persisted_failure_not_an_abort`,
+  `test_one_malformed_provider_response_does_not_abort_the_run`.
+
+### AUD-13: A storage failure after a received body left the attempt unresolved
+
+- **Severity:** Medium (ledger integrity). **Disposition:** CONFIRMED → fixed.
+- **Root cause:** `publish()`/`register_artifact()` ran before `gdc_attempt_finish`, so a failure
+  there left the attempt `RESERVED` with no failure event.
+- **Smallest fix:** the post-body region is wrapped; a failure finalizes the attempt as `FAILED` with
+  the response hash, bytes read and error detail before the original storage error propagates, and
+  emits `GDC_REQUEST_FAILED`. A generic guard also finalizes any other post-reserve exception. No
+  lease or job framework was added.
+- **Regression coverage:** `test_received_body_storage_failure_leaves_no_reserved_attempt`;
+  `test_usage_counters_update_from_transport_events` asserts the response names its own attempt.
+
+### AUD-14: Impossible negative provider counts were accepted
+
+- **Severity:** Medium (evidence integrity). **Disposition:** CONFIRMED → fixed.
+- **Root cause:** count fields were validated only for type, not for sign.
+- **Smallest fix:** one shared `_nonnegative_count` helper (`_optional_count`/`_required_count`)
+  applied to project case/file counts, aggregation `doc_count`, `hits.total.value`, SSM coverage
+  counts and expression availability counts. An observed zero stays valid.
+- **Regression coverage:** `test_negative_provider_counts_fail_closed`,
+  `test_observed_zero_counts_are_still_accepted`.
+
+### AUD-15: Jev cache identity treated a requested model alias as resolved
+
+- **Severity:** Medium (reproducibility). **Disposition:** CONFIRMED → fixed.
+- **Root cause:** the cache key was computed from the configured model name before the provider was
+  called, so a mutable alias could reuse an earlier resolution's judgments.
+- **Smallest fix:** cache reuse requires a pinned/versioned model identity
+  (`is_pinned_model_identity`) and a provider resolution equal to it; nothing is cached otherwise.
+  Requested and resolved model identity stay distinct in the persisted evaluation.
+- **Regression coverage:** `test_only_pinned_model_identities_are_cache_eligible`,
+  `test_mutable_model_alias_is_never_treated_as_a_resolved_identity`,
+  `test_divergent_provider_resolution_is_not_cached_under_the_requested_identity`.
+
+### AUD-16: `question_set_hash()` ignored the applicability rule
+
+- **Severity:** Medium (semantic identity). **Disposition:** CONFIRMED → fixed.
+- **Root cause:** the hash covered wording, criteria, primitive and version only, so a changed
+  applicability rule left cached judgments semantically stale.
+- **Smallest fix:** `applicability_rule` added to the question-set hash payload (wide-v3 wording and
+  question IDs are unchanged; only the cache identity moves).
+- **Regression coverage:** `test_question_set_hash_covers_semantics`.
+
+### AUD-17: An old `contract_version` cache row permanently blocked new storage
+
+- **Severity:** Medium (cache correctness). **Disposition:** CONFIRMED → fixed.
+- **Root cause:** `gdc_cache` was keyed by request hash alone with `ON CONFLICT DO NOTHING`, so a row
+  written under an older transport contract could never be replaced, making the request a permanent
+  cache miss.
+- **Smallest fix:** the cache key is `<contract_version>:<canonical request hash>` (schema 4), so an
+  older entry stays immutable while the current contract's entry stores normally.
+- **Regression coverage:** `test_stale_contract_version_cache_row_cannot_block_a_new_entry`.
+
+### AUD-18: Persistence leaked out of `storage`
+
+- **Severity:** Medium (ownership). **Disposition:** CONFIRMED → fixed.
+- **Root cause:** `research/*` and `jev/*` contained raw INSERT/UPDATE/SELECT statements, and
+  `JevService` read `repository.database` directly.
+- **Smallest fix:** narrow `Repository` registration/lookup methods for states, candidates, evidence
+  states, hypotheses, follow-up executions, dossiers, Jev evaluations/cache and projections; callers
+  register records inside the existing event + registrations transaction. No ORM/DAO/service layer
+  and no second repository was introduced.
+- **Regression coverage:** `test_research_and_jev_modules_own_no_persistence_sql`.
+
+### AUD-19: StatisticalState sources could not identify their acquisition; tested-universe identity undocumented
+
+- **Severity:** Medium (provenance). **Disposition:** CONFIRMED → fixed (documented and tested).
+- **Root cause:** every source carried `request_id: None` and omitted cache status; the identity rule
+  covering attempt/cache fields and `examined_genes_hash` was implicit.
+- **Smallest fix:** `GDCResponse` carries `request_id`/`attempt_no`; sources now record
+  `request_id`, `attempt_no` and `from_cache` alongside the logical request hash, response artifact,
+  response hash and scientific locator. `docs/` and `statistical_state_identity_payload` now state the
+  identity rule explicitly: scientific evidence plus tested context define identity; an observed
+  measurement, population/method/unit change and a changed examined gene universe change it, while
+  attempt links, artifact ids, timestamps, provider rank and provider `_score` do not.
+- **Regression coverage:** `test_live_replay_links_scientific_sources_to_the_responses_that_supplied_them`,
+  `test_state_identity_excludes_attempt_and_cache_link_fields`,
+  `test_state_identity_excludes_provider_ranking_metadata`,
+  `test_state_identity_tracks_measurement_and_tested_context_changes`.
+
+Additionally fixed in the same pass (no prior audit entry):
+
+- **Expression availability merge** could list a gene as both observed and missing after merging
+  batches (`cancerjev/research/live.py`); merged observed and missing genes are now disjoint, with
+  the per-batch parse → merge path covered by
+  `test_expression_availability_merge_keeps_observed_and_missing_genes_disjoint`.
+- **`CANCERJEV_JEV_TIMEOUT_SECONDS`** bypassed the bounded-seconds pattern
+  (`cancerjev/config.py`); NaN, Infinity, `0`, negative values and values above the 30 s cap are now
+  rejected (`test_impossible_jev_timeouts_are_rejected`,
+  `test_lowered_jev_timeout_is_accepted_and_effective`).
+- **Dangling candidate/evidence/follow-up/hypothesis provenance** was accepted
+  (`cancerjev/storage/database.py`); schema 4 declares the relational constraints, covered by
+  `test_dangling_candidate_evidence_and_followup_provenance_is_rejected`.
+
 ## Remaining Findings (not fixed)
 
-- **Medium — a storage failure after a received body leaves the attempt unresolved**
-  (`cancerjev/gdc/transport.py`): `publish()`/persistence errors after a successful read are outside
-  the typed failure path, so the attempt can remain `RESERVED` with no failure event.
-- **Medium — StatisticalState sources cannot identify the request or cache origin**
-  (`cancerjev/research/live.py`): every source has `request_id: None` and omits cache status and the
-  original acquisition time.
-- **Medium — a malformed TypeSafe response can abort the whole live run**
-  (`cancerjev/jev/typesafe_adapter.py`, `research/wide.py`): conversion errors outside the provider
-  call are not converted to a persisted per-state failure/deferral.
-- **Medium — Jev cache identity uses the requested model string, not the resolved model**
-  (`cancerjev/jev/service.py`): a mutable alias can reuse judgments from an earlier resolution.
 - **Medium — RunEvent payload shape is not validated per event type** (`cancerjev/domain/events.py`):
   a registered event can be persisted with `data={}`; `message` uses character count, not UTF-8
-  bytes.
-- **Medium — database does not enforce documented candidate/evidence relationships**
-  (`cancerjev/storage/database.py`): dangling references are accepted.
+  bytes. Deferred: no current correctness defect requires per-event typed payload classes.
 - **Medium — default Playwright origin conflicts with the default API CORS origin**
-  (`apps/web/playwright.config.ts`, `cancerjev/config.py`, `apps/api/main.py`).
+  (`apps/web/playwright.config.ts`, `cancerjev/config.py`, `apps/api/main.py`). Deferred:
+  local-development polish; the verified E2E procedure uses matching `localhost` origins.
 - **Low — repeated identical GDC cache hits collapse into one RunEvent**
   (`cancerjev/gdc/transport.py`): idempotency key uses only the request hash.
-- **Low — `show --events` silently stops at 500 events** (`cancerjev/cli/main.py`).
+- **Low — `show --events` silently stops at 500 events** (`cancerjev/cli/main.py`). Deferred:
+  CLI event pagination.
 - **Low — artifact responses omit `X-Artifact-Id`/`X-Artifact-SHA256`** (`apps/api/routes.py`).
+  Deferred: generic response-header polish.
 - **Low — wrongly typed cursor fields can produce a storage 503 instead of a 422**
-  (`cancerjev/storage/repositories.py`).
+  (`cancerjev/storage/repositories.py`). Deferred: cursor-validation edge cleanup.
 - **Low — OpenAPI metadata version disagrees with `/api/system` and omits response DTOs**
-  (`apps/api/main.py`).
+  (`apps/api/main.py`). Deferred: OpenAPI cleanup.
 - **Low — a Playwright process-exit wait can miss the `close` event**
-  (`apps/web/tests/phase1.spec.ts`).
+  (`apps/web/tests/phase1.spec.ts`). Deferred: Playwright test harness polish.
 - **RISK — whole-attempt deadlines are not implemented** (`cancerjev/gdc/transport.py`): a peer
-  sending data before the socket timeout can keep an attempt alive for a long time.
+  sending data before the socket timeout can keep an attempt alive for a long time. Deferred: no
+  concrete correctness defect requires whole-request deadlines yet; the per-attempt terminal ledger
+  status and per-response byte caps bound the damage.
 
 ## Environment and Non-Bug Findings
 
 - GitHub Actions run `35784234662` for `d1ab646` succeeded for the Python, frontend, and browser
-  jobs. This validates the pushed base, not this uncommitted hardening pass.
+  jobs. This validates the pushed base commit; the two hardening passes were verified locally
+  (Ruff, offline pytest, frontend typecheck/build, Playwright against a local fixture API) with no
+  live provider call.
 - `npm audit --omit=dev --audit-level=moderate` found zero production frontend vulnerabilities.
 - `python -m pip check` reports that the shared interpreter's unrelated `hermes-agent 0.7.0`
   requires `pydantic>=2.12.5`, while `pydantic 2.12.4` is installed. This is not a repository
@@ -183,7 +291,9 @@ policy, schema, or external provider behavior were changed; the fixes tighten fa
 
 1. Complete the baseline-vs-Jev evaluation with a predefined labeled/decision-quality protocol;
    do not lower thresholds merely to obtain promotions.
-2. Work the remaining medium findings (attempt finalization, source provenance, TypeSafe failure
-   containment, resolved-model cache identity) before Phase 4 introduces action side effects.
+2. ~~Work the remaining medium findings (attempt finalization, source provenance, TypeSafe failure
+   containment, resolved-model cache identity) before Phase 4~~ **DONE (2026-09-23)**: AUD-12 through
+   AUD-19 fixed attempt finalization, source provenance, provider-failure containment, pinned cache
+   identity, tested-universe identity, cache versioning, impossible counts and storage ownership.
 3. Keep Phase 4 execution gated on a cohort-applicable deterministic method contract and immutable
    evidence provenance. See `docs/PHASE_4_READINESS_PLAN.md`.

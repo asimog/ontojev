@@ -7,6 +7,7 @@ validation, persistence and events. Science modules never import provider types.
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -30,6 +31,15 @@ from cancerjev.jev.questions import (
 from cancerjev.jev.typesafe_adapter import ADAPTER_VERSION, JevProviderError, TypeSafeAdapter
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
+
+# A cacheable model identity must be pinned/versioned, for example ``jev-1.13.0``
+# or a date-suffixed snapshot name. A mutable alias can resolve to a different
+# model later, so it is never treated as an already resolved identity.
+_PINNED_MODEL_PATTERN = re.compile(r"-\d+(?:\.\d+)*$")
+
+
+def is_pinned_model_identity(model: str) -> bool:
+    return bool(_PINNED_MODEL_PATTERN.search((model or "").strip()))
 
 
 @dataclass
@@ -73,12 +83,7 @@ class JevService:
 
     def _register_projection(self, *, run_id: str, state: dict[str, Any], projection: dict[str, Any],
                              emit: Callable[..., Any]) -> tuple[str, str, Any]:
-        existing = None
-        with self.repository.database.read() as connection:
-            existing = connection.execute(
-                "SELECT * FROM jev_projections WHERE state_id=? AND projection_version=?",
-                (state["state_id"], PROJECTION_VERSION),
-            ).fetchone()
+        existing = self.repository.find_projection(state["state_id"], PROJECTION_VERSION)
         if existing is not None:
             metadata = self.repository.artifact(existing["artifact_id"])
             return existing["projection_id"], existing["projection_hash"], metadata
@@ -114,20 +119,22 @@ class JevService:
         applicability = applicability_map(projection)
         question_artifact = self._ensure_question_artifact(run_id)
         requested_model = self.settings.jev_model
-        cache_key = hashlib.sha256(canonical_json({
-            "projection_hash": p_hash,
-            "question_set_hash": question_set_hash(),
-            "resolved_model": requested_model,
-            "adapter_version": ADAPTER_VERSION,
-        })).hexdigest()
-        cached_id = self.repository.jev_cache_get(cache_key)
-        if cached_id is not None:
-            source = self.repository.get_evaluation(cached_id)
-            if source is not None:
-                evaluation = self._cached_evaluation(state, source, projection_id, p_hash, question_artifact,
-                                                     applicability)
-                return self._persist_evaluation(run_id, state, evaluation, emit, cache_key=cache_key,
-                                                provider_attempted=False)
+        cache_key: str | None = None
+        if is_pinned_model_identity(requested_model):
+            cache_key = hashlib.sha256(canonical_json({
+                "projection_hash": p_hash,
+                "question_set_hash": question_set_hash(),
+                "resolved_model": requested_model,
+                "adapter_version": ADAPTER_VERSION,
+            })).hexdigest()
+            cached_id = self.repository.jev_cache_get(cache_key)
+            if cached_id is not None:
+                source = self.repository.get_evaluation(cached_id)
+                if source is not None:
+                    evaluation = self._cached_evaluation(state, source, projection_id, p_hash,
+                                                         question_artifact, applicability)
+                    return self._persist_evaluation(run_id, state, evaluation, emit, cache_key=cache_key,
+                                                    provider_attempted=False)
         adapter = (
             self.adapter_factory() if self.adapter_factory is not None
             else TypeSafeAdapter(model=requested_model, timeout=self.settings.jev_timeout_seconds)
@@ -138,6 +145,8 @@ class JevService:
         except (JevProviderError, JevContractError) as exc:
             return self._record_failure(run_id, state, projection_id, p_hash, question_artifact, applicability,
                                         exc, emit, provider_attempted=True)
+        if cache_key is not None and answer_set.resolved_model != requested_model:
+            cache_key = None
         evaluation = {
             "evaluation_id": str(uuid4()),
             "mode": "LIVE",
@@ -170,6 +179,12 @@ class JevService:
     def _cached_evaluation(self, state: dict[str, Any], source: dict[str, Any], projection_id: str,
                            p_hash: str, question_artifact: Any,
                            applicability: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        """Reuse a stored judgment. Only reachable for a pinned model identity.
+
+        Cache identity requires a pinned/versioned model name, so the requested
+        name is the resolved identity the origin evaluation was recorded under;
+        no mutable alias is ever treated as an already resolved model.
+        """
         return {
             "evaluation_id": str(uuid4()),
             "mode": "LIVE",
@@ -198,23 +213,22 @@ class JevService:
         }
 
     def _persist_evaluation(self, run_id: str, state: dict[str, Any], evaluation: dict[str, Any],
-                            emit: Callable[..., Any], *, cache_key: str,
+                            emit: Callable[..., Any], *, cache_key: str | None,
                             provider_attempted: bool) -> dict[str, Any]:
         evaluation_id = evaluation["evaluation_id"]
         artifact = self._publish_json(run_id, f"runs/{run_id}/jev/{evaluation_id}.json", evaluation,
                                       "jev-evaluation")
-        registration = (
-            "INSERT INTO jev_evaluations(evaluation_id,run_id,candidate_id,input_ref_kind,input_ref_id,purpose,artifact_id,vector_json,model,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (evaluation_id, run_id, None, "STATISTICAL_STATE", state["state_id"], "WIDE",
-             artifact.artifact_id, canonical_json(evaluation).decode(), evaluation["resolved_model"],
-             utc_now()),
+        registration = self.repository.jev_evaluation_registration(
+            evaluation_id=evaluation_id, run_id=run_id, candidate_id=None,
+            input_ref_kind="STATISTICAL_STATE", input_ref_id=state["state_id"], purpose="WIDE",
+            artifact_id=artifact.artifact_id, vector_json=canonical_json(evaluation).decode(),
+            model=evaluation["resolved_model"], created_at=utc_now(),
         )
         registrations = [self.repository.artifact_registration(artifact, run_id), registration]
-        if not evaluation["cache_source_evaluation_id"]:
-            registrations.append((
-                "INSERT INTO jev_cache(cache_key,evaluation_id,created_at) VALUES(?,?,?) ON CONFLICT(cache_key) DO NOTHING",
-                (cache_key, evaluation_id, utc_now()),
-            ))
+        if cache_key is not None and not evaluation["cache_source_evaluation_id"]:
+            registrations.append(
+                self.repository.jev_cache_registration(cache_key, evaluation_id, utc_now()),
+            )
         emit(
             run_id, "JEV_WIDE_STATE_EVALUATED", f"jev-wide:{evaluation_id}",
             f"Jev wide judgment recorded for {state['entity']['gene_symbol']}.",
@@ -268,11 +282,11 @@ class JevService:
         evaluation_id = evaluation["evaluation_id"]
         artifact = self._publish_json(run_id, f"runs/{run_id}/jev/{evaluation_id}.json", evaluation,
                                       "jev-evaluation")
-        registration = (
-            "INSERT INTO jev_evaluations(evaluation_id,run_id,candidate_id,input_ref_kind,input_ref_id,purpose,artifact_id,vector_json,model,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (evaluation_id, run_id, None, "STATISTICAL_STATE", state["state_id"], "WIDE",
-             artifact.artifact_id, canonical_json(evaluation).decode(),
-             evaluation["requested_model"], utc_now()),
+        registration = self.repository.jev_evaluation_registration(
+            evaluation_id=evaluation_id, run_id=run_id, candidate_id=None,
+            input_ref_kind="STATISTICAL_STATE", input_ref_id=state["state_id"], purpose="WIDE",
+            artifact_id=artifact.artifact_id, vector_json=canonical_json(evaluation).decode(),
+            model=evaluation["requested_model"], created_at=utc_now(),
         )
         emit(
             run_id, "JEV_EVALUATION_FAILED", f"jev-wide:{evaluation_id}:failed",
