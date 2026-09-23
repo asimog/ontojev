@@ -12,10 +12,10 @@ API and CLI invoke the same idempotent schema bootstrap before serving/starting,
 | candidates | candidate_id PK; run FK; UNIQUE(run_id,promotion_slot), unique investigation context; projection only |
 | artifacts | artifact_id PK; relative path, sha256, byte size, media type, purpose, schema version |
 | statistical_states | state_id PK; run FK, content hash, artifact FK, selection disposition |
-| evidence_states | evidence_state_id PK; candidate FK, parent FK, iteration, content hash, artifact FK |
+| evidence_states | evidence_state_id PK; candidate FK, parent revision FK (null for the baseline E0), iteration 0..2, evidence hash, artifact FK, summary JSON. One immutable revision per accepted baseline or deterministic follow-up, written with its `EVIDENCE_STATE_CREATED` event. |
 | jev_evaluations | id PK; candidate FK (nullable for state-level evaluations); explicit input reference kind/id (`STATISTICAL_STATE`/`EVIDENCE_STATE`/`HYPOTHESIS`), purpose, artifact FK, full evaluation JSON, model; the evaluation JSON holds mode, question/model/cache identity |
 | hypotheses | id PK; candidate FK, originating evidence FK, artifact FK; <=6 lifetime enforced at admission |
-| followup_executions | id PK; candidate FK, action/version/input hash, slot, status, result refs |
+| followup_executions | execution_id PK; candidate FK, action id/version, input evidence hash, output evidence revision FK (null on failure), slot, status (`COMPLETED`/`FAILED`), summary JSON |
 | dossiers | dossier_id PK; candidate_id UNIQUE, run FK, JSON and Markdown artifact FKs |
 | worker_status | one row; owner ID, heartbeat timestamp, version; informational |
 | gdc_attempts | operational GDC ledger: one row per dispatch or cache hit with `request_id` PK, run/logical-query refs, attempt number, method/endpoint, canonical request hash, `RESERVED`/`COMPLETED`/`FAILED`/`CACHE_HIT` status, reserved allowance, charged bytes, HTTP status, response artifact/hash, completeness, error, timestamps. Mutable only through the transport's own ledger functions; the RunEvent stream remains the authority and this table is never a second status source. Every attempt that started reaches a terminal status. |

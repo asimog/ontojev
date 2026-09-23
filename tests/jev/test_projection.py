@@ -11,9 +11,11 @@ from cancerjev.jev.projection import (
     projection_hash,
 )
 from cancerjev.jev.questions import (
+    WIDE_QUESTION_SET_VERSION,
     WIDE_QUESTIONS,
     applicability_map,
     question_set_hash,
+    wide_question_set_hash,
 )
 from tests.science.test_methods import GENE, _build, _frame
 
@@ -113,7 +115,7 @@ def test_applicability_rules_follow_the_evidence():
 
 
 def test_question_set_hash_changes_with_wording():
-    baseline = question_set_hash()
+    baseline = wide_question_set_hash()
     assert len(baseline) == 64
     from cancerjev.jev.questions import QuestionDefinition
 
@@ -121,7 +123,7 @@ def test_question_set_hash_changes_with_wording():
         QuestionDefinition(**{**definition.__dict__, "instructions": definition.instructions + " "})
         for definition in WIDE_QUESTIONS
     )
-    assert question_set_hash(altered) != baseline
+    assert question_set_hash(altered, WIDE_QUESTION_SET_VERSION) != baseline
 
 
 def test_every_question_has_full_semantics():

@@ -3,10 +3,15 @@ from __future__ import annotations
 import pytest
 
 from cancerjev.jev.questions import (
+    DEEP_QUESTION_SET_VERSION,
+    DEEP_QUESTIONS,
+    WIDE_QUESTION_SET_VERSION,
     WIDE_QUESTIONS,
     QuestionDefinition,
+    deep_question_set_hash,
     question_set_hash,
     validate_definitions,
+    wide_question_set_hash,
 )
 from cancerjev.jev.typesafe_adapter import _provider_error_code
 
@@ -20,13 +25,26 @@ def _definition(**overrides):
     return QuestionDefinition(**base)
 
 
-def test_current_wide_questions_are_valid():
+def test_current_question_sets_are_valid():
     validate_definitions(WIDE_QUESTIONS)
-    assert question_set_hash()
+    validate_definitions(DEEP_QUESTIONS)
+    assert wide_question_set_hash() and deep_question_set_hash()
+    assert wide_question_set_hash() != deep_question_set_hash()
+
+
+def test_question_set_hash_requires_an_explicit_version():
+    with pytest.raises(ValueError):
+        question_set_hash((_definition(),), "")
 
 
 def test_question_set_hash_is_stable_for_identical_definitions():
-    assert question_set_hash((_definition(),)) == question_set_hash((_definition(),))
+    assert question_set_hash((_definition(),), "v1") == question_set_hash((_definition(),), "v1")
+
+
+def test_question_set_hash_covers_the_set_version():
+    assert question_set_hash((_definition(),), "v1") != question_set_hash((_definition(),), "v2")
+    assert question_set_hash(WIDE_QUESTIONS, WIDE_QUESTION_SET_VERSION) == wide_question_set_hash()
+    assert question_set_hash(DEEP_QUESTIONS, DEEP_QUESTION_SET_VERSION) == deep_question_set_hash()
 
 
 @pytest.mark.parametrize(
@@ -39,7 +57,7 @@ def test_question_set_hash_is_stable_for_identical_definitions():
     ],
 )
 def test_question_set_hash_covers_semantics(overrides):
-    assert question_set_hash((_definition(),)) != question_set_hash((_definition(**overrides),))
+    assert question_set_hash((_definition(),), "v1") != question_set_hash((_definition(**overrides),), "v1")
 
 
 @pytest.mark.parametrize(

@@ -79,9 +79,31 @@ never combined. Zero Jev and zero LLM calls.
 `jev-state-projection-v2` → one Jev request per state with the `wide-v3` question set → fail-closed
 validation → cache → deterministic baseline and explicit Jev admission rankings → at most three
 candidate promotions. The deterministic gate may exclude incomplete or unobserved evidence, and
-the Jev policy may return `ABSTAIN` with zero promotions. Baseline top-3 is comparison-only. No
-deep analysis, hypotheses, follow-ups, or LLM are reachable from this path. Changed ranking is not
-evidence of improved research decision quality; that remains a separate evaluation.
+the Jev policy may return `ABSTAIN` with zero promotions. Baseline top-3 is comparison-only.
+Changed ranking is not evidence of improved research decision quality; that remains a separate
+evaluation.
+
+**Live Phase 4 first slice (IMPLEMENTED, 2026-09-23):** only when the operator names one promoted
+candidate explicitly (`--deep-candidate`), the same run continues through `DEEP_ANALYSIS` → accept
+the candidate's immutable StatisticalState as E0 (verify the retained artifact hash and recorded
+`state_hash`) → record the baseline EvidenceState revision → Python computes the eligible registered
+deterministic actions → execute exactly one selected action over retained evidence → record the
+immutable EvidenceState revision E1 whose parent is E0. Nothing is acquired from GDC and no model is
+called. Wide admission never dispatches a follow-up; zero eligible actions, an exhausted budget, an
+already-executed action or an unmatched selection record a typed abstention, and a deterministic
+failure leaves E0 and the candidate unchanged. When wide admission selects nothing, the operator may
+instead name a wide-evaluated state (`gene:<SYMBOL>`/`state:<STATE_ID>`); that creates the candidate
+with recorded `operator-selection-v1` provenance and still consumes a promotion slot.
+
+**Live Phase 4 deep fan-out (IMPLEMENTED, 2026-09-23):** after E1 is recorded, one Deep Jev fan-out
+judges the revision plus the eligible registered action set with the versioned `deep-v1` question set
+(`JEV_DEEP_STARTED`, one evaluation per revision recorded as `purpose=DEEP` /
+`input_ref_kind=EVIDENCE_STATE` via `JEV_DEEP_EVIDENCE_JUDGED`), and the Python next-move policy
+(`deep-policy-v1`) records one typed move (`COMPLETE`/`FOLLOW_UP`/`ABSTAIN`) with its dimensions and
+reason. Jev judges; Python decides: a judgment never selects, authorizes or executes an action, and
+the recorded move is deliberately not dispatched. Deep Jev judgment over a second revision,
+hypotheses and multi-candidate iteration remain unimplemented; the autonomous loop below is
+unchanged.
 
 ## Simplification review
 

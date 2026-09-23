@@ -14,6 +14,7 @@ from typing import Any
 from cancerjev.domain.events import canonical_json
 
 PROJECTION_VERSION = "jev-state-projection-v2"
+EVIDENCE_PROJECTION_VERSION = "jev-evidence-projection-v1"
 PROJECTION_BYTE_CAP = 65_536
 
 INCLUDED_FIELDS = (
@@ -159,3 +160,147 @@ def build_projection(state: dict[str, Any]) -> dict[str, Any]:
 
 def projection_hash(projection: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_json(projection)).hexdigest()
+
+
+EVIDENCE_INCLUDED_FIELDS = (
+    "projection_version",
+    "entity.gene_id",
+    "entity.symbol",
+    "revision.iteration",
+    "revision.source_state_hash",
+    "revision.evidence_present",
+    "revision.integrity_observed",
+    "revision.verified_checks",
+    "revision.contradicted_checks",
+    "revision.not_observed_checks",
+    "action.action_id",
+    "action.version",
+    "action.method_id",
+    "action.method_version",
+    "action.title",
+    "action.unit",
+    "action.required_evidence",
+    "action.limitations",
+    "observations[].check_id",
+    "observations[].outcome",
+    "observations[].availability",
+    "observations[].n_effective",
+    "observations[].missingness.count",
+    "observations[].notes",
+    "project_evidence[]",
+    "missing_evidence[]",
+    "quality",
+    "provenance",
+    "eligible_actions[]",
+    "limitations[]",
+)
+
+
+def build_evidence_projection(evidence: dict[str, Any], eligible_actions: list[dict[str, Any]], *,
+                              evidence_hash: str) -> dict[str, Any]:
+    """Project one immutable EvidenceState revision plus the eligible action set.
+
+    Only fields that already exist in the revision and in the action registry are
+    copied; nothing is recomputed and no operational id (revision id, run id,
+    candidate id, artifact id, timestamp, request id) enters the projection, so the
+    same revision content projects to the same bytes and can reuse inference.
+    """
+    if evidence.get("schema_version") != 2:
+        raise ProjectionError("UNSUPPORTED_EVIDENCE_SCHEMA", f"schema {evidence.get('schema_version')!r}")
+    observations = []
+    integrity_observed = False
+    evidence_present = False
+    for observation in evidence.get("deterministic_observations", []):
+        check_id = observation.get("check_id")
+        availability = observation.get("availability")
+        observed = availability == "OBSERVED"
+        evidence_present = evidence_present or observed
+        if check_id in {"RESPONSE_ARTIFACT_INTEGRITY", "TESTED_UNIVERSE_REPRODUCIBLE"} and observed:
+            integrity_observed = True
+        observations.append({
+            "check_id": check_id or observation.get("method_id"),
+            "method_id": observation.get("method_id"),
+            "method_version": observation.get("method_version"),
+            "outcome": observation.get("outcome"),
+            "availability": availability,
+            "n_effective": observation.get("n_effective"),
+            "observed": observation.get("observed"),
+            "missingness": observation.get("missingness"),
+            "notes": list(observation.get("notes", [])),
+            "limitations": list(observation.get("limitations", [])),
+        })
+    project_evidence = []
+    for row in evidence.get("project_level_evidence", []):
+        entry = {"project_id": row.get("project_id")}
+        for key in ("affected_case_count", "examined_cases", "project_case_with_ssm",
+                    "cases_with_expression", "missing_measurements"):
+            metric = row.get(key) or {}
+            entry[key] = metric.get("value")
+            entry[f"{key}_availability"] = metric.get("availability")
+        project_evidence.append(entry)
+        evidence_present = evidence_present or entry.get("affected_case_count_availability") == "OBSERVED"
+        evidence_present = evidence_present or entry.get("cases_with_expression_availability") == "OBSERVED"
+    quality = evidence.get("quality_and_fragility", {})
+    provenance = evidence.get("provenance", {})
+    input_artifacts = provenance.get("input_artifacts", [])
+    projection = {
+        "projection_version": EVIDENCE_PROJECTION_VERSION,
+        "entity": {
+            "gene_id": (evidence.get("entity") or {}).get("gene_id"),
+            "symbol": (evidence.get("entity") or {}).get("gene_symbol"),
+        },
+        "revision": {
+            "iteration": evidence.get("iteration_number"),
+            "source_state_hash": (evidence.get("source_statistical_state") or {}).get("state_identity_hash"),
+            "evidence_present": bool(evidence_present),
+            "integrity_observed": bool(integrity_observed),
+            "verified_checks": quality.get("checks_verified"),
+            "contradicted_checks": quality.get("checks_contradicted"),
+            "not_observed_checks": quality.get("checks_not_observed"),
+        },
+        "action": evidence.get("action"),
+        "observations": observations,
+        "project_evidence": project_evidence,
+        "missing_evidence": [
+            {"needed_evidence": item.get("needed_evidence"), "availability": item.get("availability")}
+            for item in evidence.get("missing_evidence", [])
+        ],
+        "quality": {
+            "checks_total": quality.get("checks_total"),
+            "checks_verified": quality.get("checks_verified"),
+            "checks_contradicted": quality.get("checks_contradicted"),
+            "checks_not_observed": quality.get("checks_not_observed"),
+            "warnings": list(quality.get("warnings", [])),
+        },
+        "provenance": {
+            "gdc_release": provenance.get("gdc_release"),
+            "response_source_count": len(provenance.get("sources", [])),
+            "selection_artifact_sha256": provenance.get("selection_artifact_sha256"),
+            "input_artifacts_total": len(input_artifacts),
+            "input_artifacts_verified": sum(1 for item in input_artifacts if item.get("verified") is True),
+            "action_registry_version": provenance.get("action_registry_version"),
+        },
+        "eligible_actions": [
+            {
+                "action_id": action.get("action_id"),
+                "version": action.get("version"),
+                "title": action.get("title"),
+                "question": action.get("question"),
+                "unit": action.get("unit"),
+                "required_evidence": list(action.get("required_evidence", [])),
+            }
+            for action in eligible_actions
+        ],
+        "limitations": (
+            list((evidence.get("action") or {}).get("limitations", []))
+            + [
+                "The revision is deterministic evidence about recorded GDC evidence, not biological evidence.",
+                "A single cohort is examined and the examined gene set is selection-biased.",
+            ]
+        ),
+    }
+    projection["revision"]["evidence_hash"] = evidence_hash
+    encoded = canonical_json(projection)
+    if len(encoded) > PROJECTION_BYTE_CAP:
+        raise ProjectionError("PROJECTION_TOO_LARGE", f"{len(encoded)} bytes exceeds cap {PROJECTION_BYTE_CAP}")
+    return projection

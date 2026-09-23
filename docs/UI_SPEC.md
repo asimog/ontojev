@@ -12,7 +12,7 @@ Use current stable Next.js/React/TypeScript pinned at Phase 1 implementation tim
 |---|---|
 | `/` | SystemStatus, active RunCard, recent RunFeed, BudgetSummary, recent dossier links; includes worker stale/offline state |
 | `/runs` | RunFeed → RunCard; initial loading/empty/error states; 8-second polling while visible; every autonomous run appears without a start button; cursor "Load more runs" keeps all durable history reachable |
-| `/runs/[runId]` | RunDetail, Pipeline, BudgetSummary, DeterministicStatePanel, WideRanking, CandidateList, EventFeed, JudgmentVector; run header with version/time/status/mode (`FAKE`/`LIVE`); candidate and iteration filters; run-scoped state remounts when the routed run changes |
+| `/runs/[runId]` | RunDetail, Pipeline, BudgetSummary, DeterministicStatePanel, DeepEvidencePanel, WideRanking, CandidateList, EventFeed, JudgmentVector; run header with version/time/status/mode (`FAKE`/`LIVE`); candidate and iteration filters; run-scoped state remounts when the routed run changes |
 | `/dossiers` | Paginated archive; entity, puzzle, creation time, run/candidate, prominent synthetic badge in fake mode; the load-more control disappears permanently once the final page reports no cursor |
 | `/dossiers/[dossierId]` | DossierView separating observed facts, Jev judgments and generated hypotheses; provenance references (artifact id and served SHA-256) and downloadable authoritative JSON/derived Markdown |
 | `/system` | Worker heartbeat, data path summary, version, provider modes, effective GDC/Jev budget limits, real usage counters, cursor and cache summary (entries, bytes, hit rate); poll every 15 seconds |
@@ -40,4 +40,14 @@ Auto-follow only when the user is already at the bottom; otherwise show a new-ev
 
 Pipeline displays run-wide discovery stages and selected candidate stage occurrences. It must represent skipped, incomplete, repeated and deferred work; a stage seen once is not automatically complete for every candidate. UI never reproduces lifecycle transition logic. Structured API state drives badges and counters.
 
-No standalone `/autonomous-logs` is needed: EventFeed within run detail provides the useful behavior from that reference without duplicating a product surface. Global event search, `/candidates`, `/evaluations`, animations and extensive charting are deferred. Deep evidence, hypotheses and dossier panels remain available for fixture runs and become populated for live runs only when Phase 4/6 are approved.
+No standalone `/autonomous-logs` is needed: EventFeed within run detail provides the useful behavior from that reference without
+duplicating a product surface. Global event search, `/candidates`, `/evaluations`, animations and extensive charting are deferred. Deep evidence,
+hypotheses and dossier panels remain available for fixture runs; for live runs the deep evidence panel is populated only when an operator
+explicitly selected a candidate (`--deep-candidate`), and the hypothesis/dossier panels stay empty until later phases are approved.
+
+**DeepEvidencePanel** lists the run's immutable evidence revisions (iteration, parent revision, action, per-check verified/contradicted/not-observed
+counts, evidence hash, and the deep Jev judgment attached to each revision) and expands one revision through `/api/evidence/{id}` to show each
+deterministic check outcome, its claim, its `n_effective` and its availability. Wide and deep judgments are separated by `purpose`, so a deep
+judgment is never rendered in the wide judgment panel, and no judgment is rendered as a measurement. A check outcome is never displayed as a
+probability or confidence, `NOT_OBSERVED` is displayed explicitly rather than as a zero, and the panel states that the deep judgment is an input
+to the Python next-move policy (recorded in the event stream as `NEXT_MOVE_SELECTED`) and that wide admission never dispatches a follow-up itself.

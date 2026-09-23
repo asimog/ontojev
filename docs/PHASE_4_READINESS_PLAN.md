@@ -1,8 +1,9 @@
 # Phase 4 Readiness Plan
 
-Status: **CONDITIONAL READINESS PLAN; Phase 4 is not implemented or approved for live execution.**
-This document sequences one bounded deterministic follow-up vertical slice. It does not authorize
-new endpoints, expand budgets, or create a runtime workflow framework.
+Status: **FIRST SLICE AND DEEP FAN-OUT IMPLEMENTED (2026-09-23); the rest of Phase 4 is not
+implemented or approved for live execution.** This document sequences one bounded deterministic
+follow-up vertical slice. It does not authorize new endpoints, expand budgets, or create a runtime
+workflow framework.
 
 ## Completion Status
 
@@ -14,6 +15,62 @@ incremental value over the deterministic baseline. See `docs/IMPLEMENTATION_STAT
 
 Phase 4 may proceed to method-contract design, but must not use Jev admission as an autonomous
 execution authority until Phase 3's thresholds and incremental value have been evaluated.
+
+## First slice implemented (2026-09-23)
+
+The blockers recorded above are resolved for one narrow vertical slice, and only that slice is
+implemented: `Candidate → accepted immutable evidence E0 → one explicitly selected registered
+deterministic action → immutable E1`.
+
+- **Blocker (a) no approved deterministic method contract** — RESOLVED for one action:
+  `CHECK_EVIDENCE_INTEGRITY_V1` (`EVIDENCE_INTEGRITY_V1` v1) is registered with an explicit question,
+  falsifiable interpretation, analysis unit, required evidence, missingness rule and limitations
+  (`cancerjev/science/actions.py`). It is an evidence-integrity/reproducibility check, not a new
+  biological measurement: it produces `VERIFIED`/`CONTRADICTED`/`NOT_OBSERVED` per check and no
+  effect estimate, interval or p-value.
+- **Blocker (b) provisional `wide-policy-v2` must not dispatch** — RESOLVED by construction: wide
+  admission never selects a follow-up. The operator names one promoted candidate explicitly
+  (`run --live --jev --deep-candidate <gene-symbol|slot:N>`, optional `--deep-action`), the rule is
+  recorded in `RUN_STARTED`, and an unmatched selection records `DEEP_SELECTION_UNAVAILABLE` instead
+  of falling back to policy.
+- **Blocker (c) baseline-vs-Jev incremental value unverified** — NOT a blocker for this slice and
+  still open: the slice makes no scientific superiority claim and does not depend on Jev admission.
+  Keep the evaluation as a separate task.
+- **Gates 2–4** are satisfied: E0 is verified against the retained artifact hash and recorded
+  `state_hash`; E1 records action/method refs, input artifact hashes, source requests/hashes,
+  examined population, observed values, missingness and completeness; budgets
+  (`FOLLOWUP_LIMIT = 3`, `EVIDENCE_ITERATION_LIMIT = 2`), idempotency, typed abstention and typed
+  failure are Python-owned and event-reduced.
+- **Gate 6** is satisfied offline: end-to-end tests cover E0 → eligibility → action → E1, immutability,
+  idempotency, failure, abstention and the API/UI representation with zero provider calls.
+
+Still required before the next step, unchanged by this pass: Deep Jev over an E1 revision requires
+its own versioned question set (a new versioned task, never a conditional subset of `wide-v3`), and
+the Python next-move policy requires an approved selection rule. `CHECK_MISSINGNESS_V1`,
+`STRATIFY_BY_PROJECT_V1`, `OUTLIER_SENSITIVITY_V1` and the other documented follow-up IDs remain
+unapproved placeholders; a second registered action should be added only when a concrete need
+exists.
+
+## Next stage: deep fan-out and next-move decision (IMPLEMENTED 2026-09-23)
+
+After E1, one Deep Jev fan-out judges the revision plus the eligible registered action set with the
+versioned `deep-v1` question set, and the Python next-move policy (`deep-policy-v1`) records one typed
+move. Implemented and live-validated as described in `docs/IMPLEMENTATION_STATUS.md`; the operator
+may also name a wide-evaluated state explicitly when the provisional policy selects nothing
+(`gene:<SYMBOL>`/`state:<STATE_ID>`), which creates the candidate with recorded
+`operator-selection-v1` provenance and consumes a promotion slot.
+
+Still open for a later slice, unchanged in intent:
+
+- a **second registered deterministic action**, so a recorded `FOLLOW_UP` has something to dispatch
+  (today every warranted step with no distinct action is recorded as `NO_FURTHER_REGISTERED_ACTION`);
+- dispatching a recorded move, which must stay an explicit operator/later-phase decision and must
+  respect the existing `followup_count ≤ 3` / `iteration ≤ 2` caps;
+- judging further revisions, multi-candidate iteration and hypothesis generation;
+- a separately approved bounded live acceptance for any new action, plus the still-open
+  baseline-vs-Jev incremental-value evaluation.
+
+`deep-policy-v1` thresholds are provisional. Do not lower them to force a `FOLLOW_UP`.
 
 ## Pre-Phase-4 structural check (2026-09-23)
 
@@ -31,10 +88,10 @@ baked into Phase 4 and left the provenance chain ready for the first slice:
 - `StatisticalState` provenance links each source to its acquisition attempt without putting
   operational ids into scientific identity.
 
-Still required before implementation, unchanged by this pass: an approved deterministic method
-contract for exactly one follow-up action (`CHECK_MISSINGNESS_V1` is a candidate, not approved), an
-explicitly selected fixture/test candidate rather than provisional `wide-policy-v2` admission, and
-the separate baseline-vs-Jev incremental-value evaluation.
+Still required before implementation of anything further, unchanged by this pass: an approved
+deterministic method contract for any *second* follow-up action (the documented IDs are candidates,
+not approved), and the separate baseline-vs-Jev incremental-value evaluation. The first slice itself
+uses an explicitly selected candidate rather than provisional `wide-policy-v2` admission.
 
 ## Proposed First Slice
 
@@ -43,18 +100,24 @@ candidate and the existing `TCGA-LUAD` cohort. Python owns input validation, eli
 budgets, stopping, persistence, and failure handling. Jev may judge supplied evidence only after a
 valid `E1` exists; it does not select arbitrary computations or write measured fields.
 
+This slice was implemented as described in "First slice implemented" above, with
+`CHECK_EVIDENCE_INTEGRITY_V1` as the one registered action. The action IDs named below remain
+proposals for later actions.
+
 Candidate action contracts currently named in the repository include `STRATIFY_BY_PROJECT_V1`,
 `LEAVE_ONE_PROJECT_OUT_V1`, `CHECK_MISSINGNESS_V1`, `OUTLIER_SENSITIVITY_V1`, and
 `COMPARE_MODALITIES_V1`. These are proposals, not registered executable actions. Because the only
 production scope is one project (`TCGA-LUAD`), project-stratification and leave-one-project-out
 actions are **NOT APPLICABLE** to the current cohort and must not be selected as the first slice.
 
-`CHECK_MISSINGNESS_V1` is a candidate for contract review, not yet approved. Before selecting it,
-verify which retained response artifacts and case/gene mappings permit an independently
-reproducible check beyond the missingness already recorded in `StatisticalState`. Do not add a
-ratio, imputation, new measurement, or follow-up merely to make the action appear novel. If no
-non-redundant test is supportable from held evidence, stop and revise the candidate action before
-implementation.
+`CHECK_MISSINGNESS_V1` is a candidate for contract review, not yet approved; its intended
+non-redundant form (recomputing case-level missingness from retained responses and reconciling it
+against the recorded state) is partly covered today by the `EXPRESSION_COVERAGE_ARITHMETIC` check of
+the implemented `CHECK_EVIDENCE_INTEGRITY_V1`. Before registering it separately, verify which
+retained response artifacts and case/gene mappings permit an independently reproducible check beyond
+the missingness already recorded in `StatisticalState`. Do not add a ratio, imputation, new
+measurement, or follow-up merely to make the action appear novel. If no non-redundant test is
+supportable from held evidence, stop and revise the candidate action before implementation.
 
 ## Readiness Gates
 
@@ -121,14 +184,16 @@ implementation.
 ## Implementation Sequence
 
 1. Review the candidate action against the current single-cohort evidence and choose one action
-   whose inputs are already retained and whose output is not redundant.
-2. Write and approve its scientific method contract and deterministic eligibility tests.
+   whose inputs are already retained and whose output is not redundant. **DONE:** `CHECK_EVIDENCE_INTEGRITY_V1`.
+2. Write and approve its scientific method contract and deterministic eligibility tests. **DONE.**
 3. Implement one small registered function, immutable evidence revision persistence, and the
-   minimal RunEvent transitions required to record it.
-4. Verify offline fixture/API/UI behavior, idempotency, and all stop/failure paths.
+   minimal RunEvent transitions required to record it. **DONE.**
+4. Verify offline fixture/API/UI behavior, idempotency, and all stop/failure paths. **DONE** for the
+   first action; repeat for any later action.
 5. Reassess Phase 3 threshold calibration and baseline-vs-Jev incremental value before enabling any
-   live automatic candidate selection.
+   live automatic candidate selection. **OPEN.**
 6. Run a separately approved bounded live check only if it is needed to validate a GDC contract.
+   **NOT RUN** for the deep slice; it is provider-free and verified offline.
 
 ## Exit Criteria
 

@@ -10,6 +10,16 @@ instructions override implementation steps embedded in reference documents.
 - Phase 2 real open-access GDC evidence and deterministic StatisticalStates exist.
 - Phase 3 single-cohort Wide Jev integration exists: `jev-state-projection-v2`, `wide-v3`,
   deterministic admission/abstention, baseline/Jev rankings, and bounded candidate promotion.
+- The Phase 4 first deterministic slice exists: `CHECK_EVIDENCE_INTEGRITY_V1` on a promoted
+  candidate's accepted StatisticalState E0 produces an immutable EvidenceState revision E1. It is
+  reachable only through an explicit operator selection (`run --live --jev --deep-candidate
+  <gene|gene:SYM|state:ID|slot:N>`); wide admission never dispatches a follow-up, and the slice
+  acquires no evidence and calls no model.
+- One Deep Jev fan-out over E1 exists (`deep-v1`, `jev-evidence-projection-v1`), followed by the
+  deterministic Python next-move policy (`deep-policy-v1`) which records exactly one typed move
+  (`COMPLETE`/`FOLLOW_UP`/`ABSTAIN`) and never dispatches it. Jev judges; Python decides.
+- Still absent: a second registered action (so a recorded `FOLLOW_UP` can be dispatched), hypothesis
+  generation, multi-candidate iteration, further evidence revisions and live dossiers.
 - `LUAD_RESEARCH_V1` (`domain=lung cancer`, `cohort_id=TCGA-LUAD`, `project_id=TCGA-LUAD`)
   is the only production `ResearchSpec`. TCGA-LUAD and TCGA-LUSC are never pooled.
 - `wide-v2` is retained only for historical evaluations. Do not silently change `wide-v3` semantics;
@@ -29,7 +39,14 @@ instructions override implementation steps embedded in reference documents.
   eligibility, budgets. Jev owns narrow atomic semantic judgment and never computes a
   measurement. LLM hypothesis generation is future work and never writes measured fields.
 - Python owns loops, routing, state transitions, budgets, side effects, action eligibility,
-  stopping and abstention. Jev/LLM outputs are inputs to Python policy, never control flow.
+  stopping and abstention. Jev/LLM outputs are inputs to Python policy, never control flow. A Jev
+  judgment never selects, authorizes or executes an action, and a recorded next move is never
+  dispatched by the policy that recorded it.
+- Deterministic follow-up actions are registered in code with an explicit contract (question,
+  falsifiable interpretation, method/version, unit, required evidence, limitations). They acquire no
+  data, call no model, compute no new biological quantity and never rewrite the evidence they read;
+  an action failure is a typed outcome that promotes nothing. New actions require a concrete
+  operation, not foresight.
 - `storage` is the only layer that writes SQL. `research` and `jev` register records through
   narrow `Repository` methods inside the same event + registrations transaction; they must not
   contain raw SQL or touch `repository.database`. No ORM, DAO hierarchy or second repository.

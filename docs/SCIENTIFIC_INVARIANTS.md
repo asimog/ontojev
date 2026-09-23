@@ -52,7 +52,57 @@ Minimum n above is a computational eligibility condition, not a claim of biologi
 
 Survival remains targeted exploratory work. Define time origin, censoring, sample eligibility, duplicate diagnoses/follow-ups, group assignment, missingness and negative-time handling before registering a local estimator. Never average batched survival curves/p-values or present GDC overallStats as a confirmed covariate-adjusted hazard estimate.
 
-For inferential families, freeze the complete tested universe and correction rule before examining selected results. BH adjustment applies to the recorded family of testable hypotheses, not just significant/promoted hits. Keep selection bias explicit: adaptive exploration is not confirmatory validation. New follow-ups get new family records and do not rewrite prior q-values. No genome-wide FDR claim from a top-k candidate list.
+For inferential families, freeze the complete tested universe and correction rule before examining selected results. 
+BH adjustment applies to the recorded family of testable hypotheses, not just significant/promoted hits. Keep selection bias explicit: adaptive 
+exploration is not confirmatory validation. New follow-ups get new family records and do not rewrite prior q-values. No genome-wide FDR claim from a 
+top-k candidate list.
+
+## Deterministic follow-up actions (Phase 4 first slice)
+
+A registered action is a bounded, reproducible computation over evidence that already exists. It
+acquires no data, calls no model, computes no new biological quantity and never rewrites the
+evidence it reads. Its contract (`ACTION_REGISTRY`) declares the question, the falsifiable
+interpretation, the method id/version, the analysis unit, required evidence and limitations.
+
+- Eligibility is deterministic and fail-closed: what cannot be verified from retained evidence is
+  `NOT_OBSERVED`, never a silent pass, and an ineligible action refuses to execute.
+- Every observation records an explicit outcome (`VERIFIED` / `CONTRADICTED` / `NOT_OBSERVED`),
+  the evidence it used and its missingness. A check outcome is provenance/consistency evidence, not
+  a measurement: `inference_status` is `NOT_APPLICABLE` and no effect estimate, interval or p-value
+  is fabricated.
+- `CHECK_EVIDENCE_INTEGRITY_V1` verifies the candidate's recorded evidence against its retained
+  selection and response artifacts: lane examined-frame agreement, expression coverage arithmetic,
+  mutation count scope, tested-universe reproducibility from retained bytes, and response-artifact
+  integrity including the acquisition-attempt link.
+- Revisions are immutable: each follow-up writes a new EvidenceState whose parent is the previous
+  revision (`source_statistical_state` names the accepted StatisticalState). Evidence identity
+  excludes operational ids, artifact ids, timestamps and attempt links.
+- Python owns selection, budget (`followup_count ≤ 3`, `iteration ≤ 2`), idempotency
+  (one execution per candidate/action/input-evidence hash), stopping and abstention. A failure is a
+  typed outcome: it promotes nothing, advances nothing and preserves the prior revision.
+
+## Deep Jev judgment and the next-move policy (Phase 4 next stage)
+
+One Deep Jev fan-out judges the current immutable revision together with the eligible registered
+action set, using its own versioned question set (`deep-v1`). The boundary is explicit:
+
+- The supplied projection carries only recorded revision content and registry facts; no measured
+  field is written from a judgment, and a judgment is never evidence.
+- Applicability is decided by code from the revision's recorded checks, so a question that cannot be
+  grounded is marked inapplicable and the evaluation records that.
+- Provider or validation failure is a persisted `JEV_EVALUATION_FAILED`; the revision stands and the
+  run continues. There is no fabricated default answer.
+- The Python next-move policy (`deep-policy-v1`) maps the recorded checks and the judgment to exactly
+  one typed move (`COMPLETE`, `FOLLOW_UP`, `ABSTAIN`) with named thresholds. A contradicted
+  integrity check abstains before any judgment dimension is consulted; a missing or failed judgment
+  abstains as `DEEP_JUDGMENT_UNAVAILABLE`.
+- The recorded move is never dispatched by the policy: `executed` is always false, and a warranted
+  step with no distinct eligible action is reported as `NO_FURTHER_REGISTERED_ACTION` rather than
+  dropped. Jev does not select, authorize or execute a computation, and no loop is driven by a
+  judgment.
+- Deep thresholds are provisional and must not be tuned to force a move; a `COMPLETE` decision is a
+  statement about remaining deterministic work, not a biological conclusion.
+
 
 Scientific identity includes exact input hashes, population and sample mapping, units, method/version/parameters, tested universe, environment and results. Exclude scheduler, Jev, UI and clock state. Evidence revisions are new immutable records linked to their parent; semantic judgments never overwrite measurements.
 

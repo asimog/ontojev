@@ -8,6 +8,9 @@ export type RunCounts = {
   candidates_promoted: number;
   hypotheses_created: number;
   followups_started: number;
+  followups_completed?: number;
+  followups_failed?: number;
+  evidence_revisions?: number;
   dossiers_created: number;
   candidates_failed: number;
   candidates_deferred: number;
@@ -141,6 +144,36 @@ export type RunEvent = {
 
 export type Envelope<T> = { items: T[]; next_cursor: string | null; has_more: boolean };
 export type ChildRecord = Record<string, unknown>;
+
+export type DeepObservation = {
+  result_id: string;
+  method_id: string;
+  method_version: string;
+  check_id?: string;
+  claim?: string;
+  outcome?: "VERIFIED" | "CONTRADICTED" | "NOT_OBSERVED";
+  n_effective: number | null;
+  availability: string;
+  observed?: { value?: number | string | null; unit?: string };
+  notes?: string[];
+  limitations?: string[];
+};
+
+export type EvidenceRevision = {
+  schema_version: number;
+  mode?: string;
+  evidence_state_id: string;
+  iteration_number: number;
+  previous_evidence_state_id?: string | null;
+  research_puzzle?: { origin?: string; question?: string; interpretation?: string; proposed_action_ids?: string[] };
+  research_only_notice?: string;
+  action?: { action_id?: string; version?: string; title?: string; method_id?: string; method_version?: string } | null;
+  deterministic_observations?: DeepObservation[];
+  project_level_evidence?: Array<Record<string, unknown>>;
+  missing_evidence?: Array<{ needed_evidence: string; availability: string; reason?: string | null }>;
+  quality_and_fragility?: Record<string, unknown>;
+  provenance?: Record<string, unknown>;
+};
 
 export type SystemStatus = {
   schema_version: number;

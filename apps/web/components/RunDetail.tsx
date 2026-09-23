@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BudgetSummary } from "@/components/BudgetSummary";
+import { DeepEvidencePanel } from "@/components/DeepEvidencePanel";
 import { DeterministicStatePanel } from "@/components/DeterministicStatePanel";
 import { EventFeed } from "@/components/EventFeed";
 import { JudgmentVector } from "@/components/JudgmentVector";
@@ -23,6 +24,8 @@ type DetailData = {
   projections: ChildRecord[];
   hypotheses: ChildRecord[];
   dossiers: ChildRecord[];
+  evidence: ChildRecord[];
+  followups: ChildRecord[];
   rankings: { baseline: WideRanking | null; jev: WideRanking | null };
 };
 
@@ -42,7 +45,7 @@ export function RunDetail({ runId }: { runId: string }) {
 
   const poll = useCallback(async (signal: AbortSignal) => {
     try {
-      const [run, candidates, states, evaluations, projections, hypotheses, dossiers, rankings] = await Promise.all([
+      const [run, candidates, states, evaluations, projections, hypotheses, dossiers, rankings, evidence, followups] = await Promise.all([
         api<ResearchRun>(`/api/runs/${runId}`, signal),
         api<Envelope<ChildRecord>>(`/api/runs/${runId}/candidates`, signal),
         api<Envelope<ChildRecord>>(`/api/runs/${runId}/states`, signal),
@@ -51,6 +54,8 @@ export function RunDetail({ runId }: { runId: string }) {
         api<Envelope<ChildRecord>>(`/api/runs/${runId}/hypotheses`, signal),
         api<Envelope<ChildRecord>>(`/api/runs/${runId}/dossiers`, signal),
         api<{ baseline: WideRanking | null; jev: WideRanking | null }>(`/api/runs/${runId}/rankings`, signal),
+        api<Envelope<ChildRecord>>(`/api/runs/${runId}/evidence`, signal),
+        api<Envelope<ChildRecord>>(`/api/runs/${runId}/followups`, signal),
       ]);
       let hasMore = true;
       while (hasMore) {
@@ -62,7 +67,7 @@ export function RunDetail({ runId }: { runId: string }) {
         cursor.current = page.next_after_sequence;
         hasMore = page.has_more;
       }
-      setDetail({ run, candidates: candidates.items, states: states.items, evaluations: evaluations.items, projections: projections.items, hypotheses: hypotheses.items, dossiers: dossiers.items, rankings });
+      setDetail({ run, candidates: candidates.items, states: states.items, evaluations: evaluations.items, projections: projections.items, hypotheses: hypotheses.items, dossiers: dossiers.items, evidence: evidence.items, followups: followups.items, rankings });
       failures.current = 0;
       setError(null);
       setUpdatedAt(new Date().toISOString());
@@ -113,17 +118,20 @@ export function RunDetail({ runId }: { runId: string }) {
   const run = detail.run;
   const live = run.mode === "LIVE";
   const fixtureVectors = detail.evaluations
+    .filter((entry) => (entry.purpose ?? "WIDE") === "WIDE")
     .map((entry) => entry.vector as Record<string, unknown>)
     .filter((vector) => vector && !isLiveVector(vector));
   const statesById = new Map(detail.states.map((state) => [String(state.state_id), state]));
-  const liveVectors = detail.evaluations.flatMap((evaluation) => {
-    const vector = evaluation.vector as Record<string, unknown> | null;
-    if (!vector || !isLiveVector(vector)) return [];
-    const stateId = String(evaluation.input_ref_id ?? "unknown");
-    const state = statesById.get(stateId);
-    const geneSymbol = String((state?.entity as Record<string, unknown> | undefined)?.gene_symbol ?? "Unknown gene");
-    return [{ vector, stateId, geneSymbol }];
-  });
+  const liveVectors = detail.evaluations
+    .filter((evaluation) => (evaluation.purpose ?? "WIDE") === "WIDE")
+    .flatMap((evaluation) => {
+      const vector = evaluation.vector as Record<string, unknown> | null;
+      if (!vector || !isLiveVector(vector)) return [];
+      const stateId = String(evaluation.input_ref_id ?? "unknown");
+      const state = statesById.get(stateId);
+      const geneSymbol = String((state?.entity as Record<string, unknown> | undefined)?.gene_symbol ?? "Unknown gene");
+      return [{ vector, stateId, geneSymbol }];
+    });
   return (
     <>
       <StatusBanner error={error} updatedAt={updatedAt} />
@@ -174,9 +182,13 @@ export function RunDetail({ runId }: { runId: string }) {
                   );
                 })}
               </div>
-              <p className="fine">Deep analysis, evidence states and follow-ups are Phase 4 and are not implemented; these candidates stop here.</p>
+              {detail.evidence.length === 0 && (
+                <p className="fine">Candidates stop at wide admission until an operator names one explicitly; wide admission never dispatches a follow-up on its own.</p>
+              )}
             </section>
           )}
+          <DeepEvidencePanel revisions={detail.evidence} executions={detail.followups}
+                             judgments={detail.evaluations.filter((entry) => entry.purpose === "DEEP")} />
           <WideRankingPanel baseline={detail.rankings.baseline} jev={detail.rankings.jev} />
           {detail.projections.length > 0 && (
             <section className="panel">

@@ -28,6 +28,12 @@ def parser() -> argparse.ArgumentParser:
         mode.add_argument("--live", action="store_true", help="real bounded open-access GDC sweep")
         command.add_argument("--jev", action="store_true",
                              help="Phase 3 wide Jev evaluation over real states (requires TYPESAFE_API_KEY)")
+        command.add_argument("--deep-candidate", default=None,
+                             help="explicitly selected candidate for the deterministic deep slice: gene symbol, "
+                                  "gene:<SYMBOL>, state:<STATE_ID> (wide-evaluated states) or slot:N "
+                                  "(policy-promoted candidates); requires --live --jev")
+        command.add_argument("--deep-action", default=None,
+                             help="explicitly selected registered action id for the deep slice (optional)")
     probe = commands.add_parser("probe", help="bounded anonymous GDC contract capture")
     probe.add_argument("--capture-dir", default=None)
     show = commands.add_parser("show")
@@ -75,6 +81,25 @@ def _probe(settings: Settings, repository: Repository, artifacts: ArtifactStore,
 
 def main(argv: list[str] | None = None) -> None:
     args = parser().parse_args(argv)
+    live = bool(getattr(args, "live", False))
+    jev_requested = bool(getattr(args, "jev", False))
+    deep_candidate = getattr(args, "deep_candidate", None)
+    deep_action = getattr(args, "deep_action", None)
+    if jev_requested and not live:
+        raise SystemExit("--jev requires --live (Jev evaluates real GDC states only).")
+    if jev_requested and not os.getenv("TYPESAFE_API_KEY"):
+        raise SystemExit("--jev requires the TYPESAFE_API_KEY environment variable (server-side only).")
+    if deep_candidate and not (live and jev_requested):
+        raise SystemExit("--deep-candidate requires --live --jev (a deep slice needs a wide-evaluated candidate).")
+    if deep_action:
+        from cancerjev.science.actions import ACTION_REGISTRY
+
+        if not deep_candidate:
+            raise SystemExit("--deep-action requires --deep-candidate (an action is selected for one candidate).")
+        if deep_action not in ACTION_REGISTRY:
+            raise SystemExit(f"Unknown action id: {deep_action}. Registered: {', '.join(sorted(ACTION_REGISTRY))}")
+    if args.command in {"run", "worker"} and not live and getattr(args, "fixture", None) != "demo":
+        raise SystemExit("Choose --fixture demo for the offline demonstration or --live for a real open-access GDC sweep.")
     settings = Settings.from_env()
     repository, artifacts = _services(settings)
     if args.command == "show":
@@ -95,12 +120,6 @@ def main(argv: list[str] | None = None) -> None:
         except OwnershipError as exc:
             raise SystemExit(str(exc)) from exc
         return
-    live = bool(getattr(args, "live", False))
-    jev_requested = bool(getattr(args, "jev", False))
-    if jev_requested and not live:
-        raise SystemExit("--jev requires --live (Jev evaluates real GDC states only).")
-    if not live and args.fixture != "demo":
-        raise SystemExit("Choose --fixture demo for the offline demonstration or --live for a real open-access GDC sweep.")
     try:
         with ResearchOwnership(settings.lock_path):
             recovered = repository.recover_interrupted()
@@ -111,11 +130,11 @@ def main(argv: list[str] | None = None) -> None:
                 if jev_requested:
                     from cancerjev.jev.service import JevService
 
-                    if not os.getenv("TYPESAFE_API_KEY"):
-                        raise SystemExit("--jev requires the TYPESAFE_API_KEY environment variable (server-side only).")
                     jev_service = JevService(settings, repository, artifacts)
                 orchestrator = LiveOrchestrator(settings, repository, artifacts, render_event,
-                                                jev_service=jev_service)
+                                                jev_service=jev_service,
+                                                deep_selection=deep_candidate,
+                                                deep_action_id=deep_action)
             else:
                 orchestrator = DemoOrchestrator(settings, repository, artifacts, render_event)
             if args.command == "run":

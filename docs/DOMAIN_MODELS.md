@@ -141,38 +141,74 @@ contains an `admission` record with `ADMIT`/`ABSTAIN`, thresholds, promotion lim
 or exclusion reason for every state. Both rankings cover the same states. Jev never replaces the
 baseline.
 
-## EvidenceState (PROVISIONAL, Phase 4+)
+## EvidenceState
 
-Evidence revisions are immutable (`E0 → E1 → E2`). The exact fields below are provisional; choose
-the smallest representation compatible with the existing repository when Phase 4 begins.
+Evidence revisions are immutable (`E0 → E1 → E2`). Two contracts exist:
+
+**Live deterministic evidence (schema 2, IMPLEMENTED first slice).** `E0` is the accepted baseline
+derived from the candidate's StatisticalState; each follow-up produces the next revision whose parent
+is the previous one. Fields actually written today:
 
 ```text
-EvidenceState
-  evidence_state_id, schema_version, evidence_hash, created_at
-  run_id, candidate_id, entity, scope_hash
-  source_statistical_state: {state_identity_hash}
-  previous_evidence_state_id?, iteration_number: 0..2
-  research_puzzle: {observed_pattern_refs[], unresolved_questions[],
-                    origin: DETERMINISTIC_TEMPLATE}
-  deterministic_observations: MethodResult[]
-  project_level_evidence: {project_id, result_refs[], population_refs[]}[]
-  cross_project_patterns: {result_refs[], limitations[]}
-  cross_modal_patterns: {result_refs[], mapping_status, limitations[]}
-  contradictory_evidence: {observation_refs[], comparison_rule_id, reason}[]
+EvidenceState (schema_version 2, mode LIVE)
+  evidence_state_id, evidence_hash, created_at, run_id, candidate_id, iteration_number: 0..2
+  previous_evidence_state_id?           (null for the baseline; the revision link)
+  entity
+  source_statistical_state: {state_id, state_identity_hash, state_artifact_id, state_artifact_sha256}
+  research_puzzle: {origin, question, interpretation, proposed_action_ids[]}
+  research_only_notice
+  action: {action_id, version, method_id, method_version, parameters_hash, title, unit,
+           required_evidence[], limitations[]} | null
+  deterministic_observations: CheckObservation[]
+  project_level_evidence: {project_id, affected_case_count, examined_cases,
+                           project_case_with_ssm, cases_with_expression, missing_measurements}[]
+  cross_project_patterns: {status: NOT_APPLICABLE, limitations[]}
   missing_evidence: {needed_evidence, availability, reason}[]
-  unavailable_evidence: {needed_evidence, availability, reason}[]
-  quality_and_fragility: {sample_sizes, missingness, dominance,
-                          sensitivity_results[], warnings[]}
-  methods_used: MethodRef[]
-  provenance: {sources: SourceRef[], input_artifact_hashes[], environment_hash}
-  tested_context: {families[], selection_history_ref, exploratory: true}
+  quality_and_fragility: {checks_total, checks_verified, checks_contradicted,
+                          checks_not_observed, warnings[]}
+  provenance: {gdc_release, sources[], methods[], environment_hash,
+               action_registry_version, selection_artifact_sha256, input_artifacts[]}
 ```
+
+`CheckObservation = {result_id, method_id, method_version, check_id, claim, outcome:
+VERIFIED|CONTRADICTED|NOT_OBSERVED, n_effective|null, availability, observed, expected, notes[],
+missingness:{count, reason|null}, inference_status: NOT_APPLICABLE, limitations[]}`. A check outcome is
+not a measurement: it records whether recorded evidence is reproducible and self-consistent, so
+`inference_status` is `NOT_APPLICABLE` and no p-value, interval or effect estimate is produced.
+`NOT_OBSERVED` means the recorded evidence does not permit verification; it never passes by default.
+
+The synthetic Phase 1 lane keeps its own schema-1 evolution contract (`fixture_notice`,
+`project_level_evidence` with `effect_like_value`), unchanged.
+
+Identity (`evidence_state_identity_payload`) excludes `evidence_state_id`, `run_id`, `candidate_id`,
+`previous_evidence_state_id`, `created_at`, response/selection artifact ids and attempt-link fields,
+per-observation `result_id`, and the source state's artifact id *and artifact byte hash* (its JSON
+carries run timestamps); it retains the source revision's scientific `state_identity_hash`, observed
+outcomes, measured values, populations, units, missingness, action/method version, provenance
+response hashes and the iteration number, so identical evidence keeps one identity across runs.
+
+The deep judgment over a revision is a normal JevEvaluation with `purpose="DEEP"`,
+`input_ref_kind="EVIDENCE_STATE"`, `input_ref_id=<evidence_state_id>`, `source_evidence_hash`, the
+producing `action_id`, the `deep-v1` question-set version/hash and the full answers/applicability.
+Its projection is `jev-evidence-projection-v1`: the revision's recorded checks, copied project-level
+evidence, missing evidence, provenance counts and the eligible registered action set. A judgment is
+an input to `deep-policy-v1`, which records one next move; it never selects or executes an action.
+
+Not yet used by the live slice: `cross_modal_patterns`, `contradictory_evidence`,
+`unavailable_evidence`, correction families, intervals and inference fields. They remain planned.
+
+Planned result vocabulary for later phases (not written today):
 
 `MethodResult = {result_id, method_id, method_version, parameters, population_refs[], input_artifact_refs[], eligibility, n_effective, exclusions, observations: Metric[], effect:{name,value,unit}|null, interval:{method,level,lower,upper}|null, p_value|null, q_value|null, inference_status, family_id|null, limitations[], provenance, result_hash}`. Missing CI or unavailable inference has a reason; it is not replaced by 0 or a model estimate.
 
 `CorrectionFamily = {family_id, definition, method_id, tested_hypotheses_ref, tested_universe_hash, attempted_n, testable_n, excluded_reasons, adjustment_method, selection_history, locked_at}`. A follow-up family is a new recorded family, not a silent recomputation that overwrites old q-values.
 
 EvidenceState has no writable Jev answer or hypothesis fields. A Jev request envelope may contain separately named `deterministic_evidence`, `prior_semantic_judgment`, and `generated_hypothesis`; default deep evaluation sends evidence alone.
+
+Candidate lifecycle used by the live deep slice: `WIDE_EVALUATED` (wide admission) →
+`DEEP_ANALYSIS` (baseline E0 accepted; eligibility computed) → `DEEP_ANALYZED` (E1 recorded) with
+`latest_evidence_state_id` naming the current revision. A follow-up failure leaves the candidate at
+`DEEP_ANALYSIS` with no new revision.
 
 ## Other records
 

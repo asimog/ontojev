@@ -20,13 +20,14 @@ from tests.jev.test_service import _register_state
 from tests.science.test_methods import _build, _frame
 
 
-def _orchestrator(runtime, monkeypatch, *, jev_adapter=None, research_spec=None, **replay_options):
+def _orchestrator(runtime, monkeypatch, *, jev_adapter=None, research_spec=None,
+                  deep_selection=None, deep_action_id=None, **replay_options):
     settings, repository, artifacts = runtime
     monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))
     holder: dict[str, ReplayTransport] = {}
 
     def factory(repo, artifact_store, budget, run_id, emit):
-        transport = ReplayTransport(artifact_store, run_id, **replay_options)
+        transport = ReplayTransport(artifact_store, run_id, repository=repo, **replay_options)
         holder["transport"] = transport
         return transport
 
@@ -35,7 +36,8 @@ def _orchestrator(runtime, monkeypatch, *, jev_adapter=None, research_spec=None,
         service = JevService(settings, repository, artifacts, adapter_factory=lambda: jev_adapter)
     orchestrator = LiveOrchestrator(settings, repository, artifacts, lambda event: None,
                                     jev_service=service, transport_factory=factory,
-                                    research_spec=research_spec or LUAD_RESEARCH_V1)
+                                    research_spec=research_spec or LUAD_RESEARCH_V1,
+                                    deep_selection=deep_selection, deep_action_id=deep_action_id)
     return orchestrator, holder, repository
 
 

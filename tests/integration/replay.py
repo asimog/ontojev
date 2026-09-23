@@ -157,7 +157,8 @@ def values_body(case_ids_requested: list[str], gene_ids: list[str], *, drop_colu
 class ReplayTransport:
     """Network-boundary test double: real artifacts, real shapes, no sockets."""
 
-    def __init__(self, artifacts: ArtifactStore, run_id: str, *, controlled_files: bool = False,
+    def __init__(self, artifacts: ArtifactStore, run_id: str, *, repository: Any = None,
+                 controlled_files: bool = False,
                   incomplete_frame: bool = False, empty_expression_projects: set[str] | None = None,
                   drop_value_columns: int = 0, project_case_counts: dict[str, int] | None = None,
                   duplicate_case_across_pages: bool = False,
@@ -175,6 +176,7 @@ class ReplayTransport:
         self.inconsistent_case_offset_after_first = inconsistent_case_offset_after_first
         self.requests: list[GDCRequest] = []
         self.published: list[Any] = []
+        self.repository = repository
         self._counter = 0
 
     def _project_of(self, case_ids: list[str]) -> str:
@@ -242,6 +244,8 @@ class ReplayTransport:
             f"replay/{self.run_id}/{name}-{self._counter}.body", body, media, "gdc-response",
         )
         self.published.append(artifact)
+        if self.repository is not None:
+            self.repository.register_artifact(artifact, self.run_id)
         return GDCResponse(
             request_hash=request.request_hash(), endpoint=request.path, method=request.method,
             http_status=200, headers={"content-type": media}, body=body,

@@ -287,6 +287,100 @@ Additionally fixed in the same pass (no prior audit entry):
 - **Still unverified:** question quality, threshold calibration, decision usefulness, and
   baseline-vs-Jev incremental value.
 
+## Audit pass 3 (2026-09-23, Phase 4 deep Jev fan-out)
+
+Performed while implementing and live-validating the next stage (operator-approved candidate
+selection → E0/E1 → one Deep Jev fan-out → Python next-move decision). Two of the five defects below
+were found only by the bounded live run; each is fixed with regression coverage.
+
+### AUD-20: the deep judgment's provider call was missing from provider usage
+
+- **Severity:** Medium (usage accounting). **Disposition:** CONFIRMED live → fixed.
+- **Root cause:** the usage reducer counted `JEV_WIDE_STATE_EVALUATED`, `JEV_DEEP_COMPLETED` and
+  `JEV_EVALUATION_FAILED`; the live deep fan-out records `JEV_DEEP_EVIDENCE_JUDGED`, so the live deep
+  call and its tokens never reached `provider_usage` (the retained run showed `jev_calls: 1` for two
+  provider calls; the deep tokens were visible only inside the run's `deep` summary).
+- **Smallest fix:** add `JEV_DEEP_EVIDENCE_JUDGED` to the counted set
+  (`cancerjev/storage/repositories.py`).
+- **Regression coverage:** the operator-selection integration test asserts
+  `provider_usage["jev_calls"] == wide + 1` and `jev_input_tokens` includes the deep usage.
+
+### AUD-21: EvidenceState identity bound the source state's artifact byte hash
+
+- **Severity:** Medium (identity and cache correctness). **Disposition:** CONFIRMED live → fixed.
+- **Root cause:** the schema-2 evidence identity payload included
+  `source_statistical_state.state_artifact_sha256`. That hash covers the StatisticalState artifact
+  *bytes*, which contain run timestamps, so two runs with identical scientific state produced
+  different E1 identities (live: `bdad32c4…` vs `7f1a042f…`) and the deep projection therefore missed
+  its cache. It also contradicted the documented rule that timestamps never define identity.
+- **Smallest fix:** bind the source revision by its scientific `state_identity_hash` only; the
+  artifact byte hash stays in E1 provenance as an operational record
+  (`cancerjev/domain/identity.py`).
+- **Live confirmation:** the same content then produced one identity, and a subsequent bounded run
+  reused 10/10 wide judgments *and* the deep judgment with `jev_calls: 0`.
+- **Regression coverage:** `test_evidence_identity_excludes_operational_fields_and_tracks_outcomes`
+  now mutates `state_artifact_sha256` too; `test_projection_is_deterministic_and_operational_id_free`
+  asserts revision-content projections hash equally.
+
+### AUD-22: `--deep-action` without `--deep-candidate` was silently ignored
+
+- **Severity:** Low (operator interface). **Disposition:** CONFIRMED (reproduced) → fixed.
+- **Root cause:** the action id was validated against the registry, but the deep slice only runs for
+  an explicit candidate, so the flag had no effect.
+- **Smallest fix:** `--deep-action` now requires `--deep-candidate` (`cancerjev/cli/main.py`).
+- **Regression coverage:** exercised by the CLI validation path (the flag combination now exits with a
+  typed message).
+
+### AUD-23: acceptance input artifact recorded `verified: None`
+
+- **Severity:** Low (evidence provenance clarity). **Disposition:** CONFIRMED (code reading) → fixed.
+- **Root cause:** `execute()` recorded the StatisticalState input artifact with `verified: None`
+  although E0 acceptance verifies the artifact hash and the recorded `state_hash` before use.
+- **Smallest fix:** record `verified: True` for that verified input (`cancerjev/science/actions.py`),
+  so a reader can distinguish verified from unverifiable inputs.
+
+### AUD-24: duplicate reducer mapping would have shadowed a counter
+
+- **Severity:** Medium (would have been a regression). **Disposition:** CONFIRMED during the change →
+  fixed before commit.
+- **Root cause:** adding `JEV_WIDE_STATE_EVALUATED → jev_evaluations` to the increments map created a
+  second key for the same event type, shadowing `states_evaluated` (later keys win) and
+  double-counting wide evaluations with the existing special-case increment.
+- **Smallest fix:** keep one mapping per event type and let `JEV_DEEP_EVIDENCE_JUDGED` be the single
+  deep-evaluation record (`cancerjev/storage/repositories.py`); the live deep fan-out stops emitting
+  the fixture-lane `JEV_DEEP_COMPLETED` summary so no evaluation is counted twice.
+
+### Observations (not defects)
+
+- `states_evaluated` counts successful wide evaluations while `jev_evaluations` counts every
+  evaluation record (including failures and deep judgments). The names are intentional: a failed
+  judgment leaves a state without a judgment. Live run `a167190d` showed `states_evaluated: 9` with
+  `jev_evaluations: 10` for exactly this reason.
+- The wide projection's `eligible_followups` field is always empty; the deep projection supplies the
+  real eligible action set. Populating it in the wide projection would change `wide-v3` inputs and
+  therefore requires a new versioned question/projection task.
+- Deep projections are published as immutable artifacts and recorded by `JEV_PROJECTION_CREATED`, but
+  are not rows in `jev_projections` (that table indexes `(state_id, projection_version)` for wide
+  reuse). Adding an `input_ref` pair there is a schema change deferred until another change requires
+  one; the cache, not the table, provides deep reuse.
+- Live provider behaviour: one `wide-v3` judgment failed validation with
+  `INVALID_DISTRIBUTION` (a Choice distribution summed to 0.99). Containment worked: the state was
+  deferred, the failure persisted, and the run continued to `ABSTAIN`. The identical request
+  succeeded on a later run, so this is provider variance, not a deterministic defect.
+
+### AUD-25: CLI opened the database and lock before refusing a missing Jev key
+
+- **Severity:** Low (hygiene; no correctness impact). **Disposition:** CONFIRMED (reproduced: an
+  empty schema-4 database and a zero-byte `research.lock` were created in the default data directory
+  by a refused `--live --jev` invocation) → fixed.
+- **Root cause:** flag validation ran after `Settings.from_env()`, `Database.bootstrap()` and lock
+  acquisition, so a run that could never proceed still created state (and the key check was duplicated
+  inside the lock scope).
+- **Smallest fix:** all flag requirements (including the `TYPESAFE_API_KEY` requirement) are validated
+  before any service is constructed (`cancerjev/cli/main.py`); `show`/`probe` keep their behaviour and
+  the duplicate check is removed.
+- **Verification:** the same refused invocation now leaves `data/` untouched.
+
 ## Recommended Follow-Up
 
 1. Complete the baseline-vs-Jev evaluation with a predefined labeled/decision-quality protocol;

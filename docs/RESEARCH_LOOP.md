@@ -55,17 +55,39 @@ specification `LUAD_RESEARCH_V1`:
    request per state with `wide-v3`, validation, persistence, deterministic baseline and Jev
    admission rankings, and at most three candidate promotions. Incomplete/unobserved evidence is
    excluded deterministically; a valid zero-admission result is recorded as `ABSTAIN`.
-5. `RUN_COMPLETED` with `coverage = COMPLETE_FOR_SCOPE` or `PARTIAL`, real GDC/Jev usage counters,
-   and zero LLM calls.
+5. `DEEP_ANALYSIS` + `FOLLOWUP` (Phase 4 first slice, same run, only when the operator passes
+   `--deep-candidate <gene-symbol|slot:N>`): accept the selected promoted candidate's immutable
+   StatisticalState as E0 (verify the artifact hash and the recorded `state_hash`), record the
+   baseline EvidenceState revision (iteration 0), compute the eligible registered deterministic
+   actions in Python, execute exactly one selected action over retained evidence, and record the
+   result as a new immutable EvidenceState revision E1 whose parent is E0. Nothing is acquired from
+   GDC and no model is called. Wide admission never dispatches a follow-up on its own: a selection
+   that matches no promoted candidate records `DEEP_SELECTION_UNAVAILABLE`, and zero eligible
+   actions, an already-executed action or an exhausted budget record `FOLLOWUP_ABSTAINED` or
+   `FOLLOWUP_SKIPPED`. A deterministic action failure records `FOLLOWUP_FAILED` and leaves E0 and the
+   candidate unchanged.
+6. `JEV_DEEP` (Phase 4 next stage, same run): one Deep Jev fan-out over the new revision plus the
+   eligible registered action set with the versioned `deep-v1` question set, persisted as a normal
+   evaluation with `purpose=DEEP` and `input_ref_kind=EVIDENCE_STATE`; then the deterministic Python
+   next-move policy (`deep-policy-v1`) records one typed move (`COMPLETE`/`FOLLOW_UP`/`ABSTAIN`) with
+   its dimensions and thresholds. The judgment is an input and the move is recorded, not dispatched:
+   Jev never selects, authorizes or executes an action.
+7. `RUN_COMPLETED` with `coverage = COMPLETE_FOR_SCOPE` or `PARTIAL`, real GDC/Jev usage counters,
+   the deep-slice summary when it ran, and zero LLM calls.
 
 Failure discipline: any budget exhaustion, transport failure or parser rejection stops admission
 for the affected lane, is recorded as a typed event, and leaves the run COMPLETED/PARTIAL or
-FAILED with the reason — never a silent skip. Deep stages remain Phase 4+ and are not reachable
-from the live loop.
+FAILED with the reason — never a silent skip. Hypothesis generation and multi-candidate iteration
+remain Phase 4+, and nothing in the live loop dispatches a follow-up from a recorded next move.
 
-## Planned candidate investigation (Phase 4+, not implemented)
+## Planned candidate investigation (Phase 4+, first slices IMPLEMENTED)
 
-This is the approved conceptual direction, deliberately minimal. A next move is a Python result
+This is the approved conceptual direction, deliberately minimal. Three slices are implemented: the
+deterministic E0 → one registered action → E1 revision, one Deep Jev fan-out over that revision, and
+the Python next-move decision record. Remaining work: a second registered action (so a recorded
+`FOLLOW_UP` can be dispatched), repeated judging of further revisions, and multi-candidate
+iteration. A next
+move is a Python result
 (`FOLLOW_UP`, `GENERATE_HYPOTHESES`, `TEST_HYPOTHESIS`, `NEXT_CANDIDATE`, `COMPLETE`, `ABSTAIN`),
 not a persisted planner object. Candidate selection can remain
 `candidate = next_eligible_candidate(...)`; a GDC refresh is normally another bounded

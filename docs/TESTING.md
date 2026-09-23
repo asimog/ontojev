@@ -1,6 +1,6 @@
 # Verification strategy
 
-This is the test plan for the implemented phases. Phase 1 (offline fixture slice), Phase 2 (real open GDC evidence) and Phase 3 (real Jev wide evaluation) are implemented; Phase 4+ remains a plan. Use focused tests first, then the full relevant offline checks. No default test, build or CI command contacts GDC, TypeSafe or an LLM. Executed results live in IMPLEMENTATION_STATUS.md.
+This is the test plan for the implemented phases. Phase 1 (offline fixture slice), Phase 2 (real open GDC evidence), Phase 3 (real Jev wide evaluation) and the Phase 4 deterministic first slice plus its deep Jev fan-out and next-move decision record are implemented; the rest of Phase 4+ remains a plan. Use focused tests first, then the full relevant offline checks. No default test, build or CI command contacts GDC, TypeSafe or an LLM. Executed results live in IMPLEMENTATION_STATUS.md.
 
 ## Default offline boundary
 
@@ -43,6 +43,11 @@ The autouse test guard denies every outbound socket connection whose host is not
 | Config | `.env.local` loads only names absent from the real environment; comments, blanks, `export`, quoted values and invalid names handled; blank values inert; `CANCERJEV_NO_DOTENV=1` disables; missing file inert; values never logged |
 | Cache | Identity binds projection bytes + question bytes + `question_set_hash` (wording, criteria, primitive, version and applicability rule) + pinned model identity + adapter version; policy version excluded; reuse requires a pinned/versioned model name whose provider resolution equals that name, so a mutable alias is always evaluated and a divergent resolution is never cached; cache hit creates an evaluation with `cache_source_evaluation_id` and zero usage; `FAKE` and `LIVE` caches disjoint |
 | Ranking | Baseline and Jev rankings persisted for the same states; policy deterministic for identical stored evaluations; raw dimensions preserved; promotion bounded; a Jev error defers the state rather than scoring it |
+| Deterministic actions (Phase 4 first slice) | Registered action contract complete (question, interpretation, method/version, unit, required evidence, limitations); eligibility is fail-closed with explicit reasons; each integrity check is exercised as `VERIFIED`, `CONTRADICTED` and `NOT_OBSERVED`; tampered selection bytes, unlinked attempts and absent retained artifacts never pass; execution is deterministic and leaves the input snapshot byte-identical; an ineligible action refuses to execute |
+| Deep slice | E0 acceptance verifies the retained artifact hash and recorded `state_hash`; the baseline revision (iteration 0) and E1 (parent E0) are recorded with deterministic ids; the selected action, input artifact hashes, checks, missingness and provenance are persisted; replaying the same evidence records `FOLLOWUP_SKIPPED` and creates no duplicate revision; a selection matching no promoted candidate records `DEEP_SELECTION_UNAVAILABLE`; a requested ineligible action, exhausted follow-up limit and exhausted revision limit record typed `FOLLOWUP_ABSTAINED`; an action failure records `FOLLOWUP_FAILED`, writes a `FAILED` execution row, creates no revision and leaves the candidate and E0 unchanged; wide admission never dispatches a follow-up |
+| Operator-approved selection | `slot:N`/gene symbol resolve only to policy-promoted candidates; a wide-evaluated state can be named by `<SYMBOL>`, `gene:<SYMBOL>` or `state:<STATE_ID>`; the created candidate records `operator-selection-v1`, `OPERATOR_APPROVED_SELECTION`, the raw selection and `auto_dispatched: false`; an unevaluated state is refused as `STATE_NOT_EVALUATED`; the promotion cap is enforced; an ambiguous gene symbol is refused; wide admission still selects nothing on its own |
+| Deep Jev fan-out | The evidence projection is deterministic and free of operational ids, tracks check outcomes/evidence hashes and rejects other evidence schemas; deep applicability follows the recorded checks; one evaluation per revision is persisted with `purpose=DEEP`/`input_ref_kind=EVIDENCE_STATE` plus full answers/applicability; a second run with identical revision content reuses the judgment from cache; a provider or validation failure is a persisted `JEV_EVALUATION_FAILED` that leaves the revision intact; `provider_usage` counts the deep provider call exactly once and adds its tokens |
+| Next-move policy | One typed move per revision with named thresholds and `executed: false`; contradicted checks, an unreliable revision, a failed judgment and a warranted step without a distinct action each produce their named reason; a conservative fallback abstains; the policy is deterministic and echoes its dimensions |
 | Owning boundary | `research/*` and `jev/*` contain no persistence SQL and `JevService` never touches `repository.database`; every persistence write goes through a narrow `Repository` method inside the atomic event + registrations transaction; dangling candidate/evidence/follow-up/hypothesis provenance fails the event transaction; a `StatisticalState` source links to the attempt that supplied the response while operational attempt/cache/artifact fields never change scientific identity |
 | UI | Deterministic facts and Jev judgments visibly separated; judgment vectors render full probabilities; no LLM content exists anywhere in the run |
 
@@ -60,8 +65,11 @@ Live tests stay separate behind explicit `live_gdc` and `live_jev` opt-in marker
 resource ceilings: `live_gdc` performs the small bounded contract probe (≤30 requests, ≤8 MiB);
 `live_jev` evaluates one state with the pinned model and records usage. A full live acceptance run
 uses the existing `python -m cancerjev run --live --jev` bounded LUAD path, which exercises the
-anonymous GDC API and the configured Jev provider together. `live_llm` is reserved for Phase 6 and
-is not implemented.
+anonymous GDC API and the configured Jev provider together. The Phase 4 deterministic deep slice
+adds no provider and therefore no live marker: it is verified offline end-to-end with the replay
+transport and stub adapter, and an optional operator-selected live acceptance
+(`--deep-candidate`) is a separately approved run, not part of CI. `live_llm` is reserved for
+Phase 6 and is not implemented.
 
 ## Later budget/contract tests
 

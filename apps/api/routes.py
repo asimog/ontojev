@@ -182,6 +182,34 @@ def run_dossiers(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=
     return child_list("dossiers", run_id, request, limit, cursor, {})
 
 
+@router.get("/api/runs/{run_id}/evidence")
+def evidence_revisions(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None, candidate_id: str | None = None):
+    return child_list("evidence_states", run_id, request, limit, cursor, {"candidate_id": candidate_id})
+
+
+@router.get("/api/evidence/{evidence_state_id}")
+def evidence_detail(evidence_state_id: UUID, request: Request):
+    repository, artifacts = services(request)
+    row = repository.get_evidence_state(str(evidence_state_id))
+    if not row:
+        raise HTTPException(404, detail="evidence revision not found")
+    metadata = repository.artifact(row["artifact_id"])
+    if not metadata:
+        raise HTTPException(503, detail="evidence artifact metadata missing")
+    try:
+        content = artifacts.read(metadata["relative_path"], metadata["sha256"])
+    except (OSError, ValueError) as exc:
+        raise HTTPException(503, detail="evidence artifact unavailable or corrupt") from exc
+    headers = {"ETag": f'"{metadata["sha256"]}"', "X-Artifact-Id": metadata["artifact_id"], "X-Artifact-SHA256": metadata["sha256"]}
+    return JSONResponse(json.loads(content), headers=headers)
+
+
+@router.get("/api/runs/{run_id}/followups")
+def followup_executions(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None, candidate_id: str | None = None, status: str | None = None):
+    return child_list("followup_executions", run_id, request, limit, cursor,
+                      {"candidate_id": candidate_id, "status": status})
+
+
 @router.get("/api/dossiers")
 def dossiers(request: Request, limit: Annotated[int, Query(ge=1, le=100)] = 20, cursor: str | None = None):
     repository, _ = services(request)

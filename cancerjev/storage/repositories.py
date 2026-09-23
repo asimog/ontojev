@@ -15,6 +15,7 @@ EMPTY_COUNTERS = {
     "projects_attempted": 0, "projects_completed": 0, "states_generated": 0,
     "states_valid": 0, "states_selected": 0, "states_evaluated": 0,
     "candidates_promoted": 0, "hypotheses_created": 0, "followups_started": 0,
+    "followups_completed": 0, "followups_failed": 0, "evidence_revisions": 0,
     "dossiers_created": 0, "candidates_failed": 0, "candidates_deferred": 0,
     "jev_evaluations": 0,
 }
@@ -31,6 +32,7 @@ CHILD_TABLES = {
     "jev_projections": "projection_id",
     "hypotheses": "hypothesis_id",
     "followup_executions": "execution_id",
+    "evidence_states": "evidence_state_id",
     "dossiers": "dossier_id",
 }
 CHILD_FILTERS = {
@@ -39,7 +41,8 @@ CHILD_FILTERS = {
     "jev_evaluations": frozenset({"candidate_id", "purpose"}),
     "jev_projections": frozenset(),
     "hypotheses": frozenset({"candidate_id"}),
-    "followup_executions": frozenset({"status"}),
+    "followup_executions": frozenset({"status", "candidate_id"}),
+    "evidence_states": frozenset({"candidate_id"}),
     "dossiers": frozenset(),
 }
 
@@ -137,12 +140,16 @@ class Repository:
         run["stages_json"] = _json(stages)
         counters = json.loads(run["counters_json"])
         increments = {
-            "STATISTICAL_STATE_CREATED": "states_generated", "JEV_WIDE_STATE_EVALUATED": "states_evaluated",
+            "STATISTICAL_STATE_CREATED": "states_generated",
+            "JEV_WIDE_STATE_EVALUATED": "states_evaluated",
             "CANDIDATE_PROMOTED": "candidates_promoted", "HYPOTHESES_GENERATED": "hypotheses_created",
             "FOLLOWUP_STARTED": "followups_started", "DOSSIER_CREATED": "dossiers_created",
+            "FOLLOWUP_COMPLETED": "followups_completed", "FOLLOWUP_FAILED": "followups_failed",
+            "EVIDENCE_STATE_CREATED": "evidence_revisions",
             "CANDIDATE_DEFERRED": "candidates_deferred", "CANDIDATE_FAILED": "candidates_failed",
             "JEV_DEEP_COMPLETED": "jev_evaluations", "HYPOTHESIS_EVALUATED": "jev_evaluations",
             "JEV_EVALUATION_FAILED": "jev_evaluations",
+            "JEV_DEEP_EVIDENCE_JUDGED": "jev_evaluations",
         }
         key = increments.get(event["type"])
         if key:
@@ -162,7 +169,8 @@ class Repository:
             usage["gdc_bytes"] += int(event["data"].get("bytes_read", 0))
         elif event["type"] == "GDC_CACHE_HIT":
             usage["gdc_cache_hits"] += 1
-        elif event["type"] in {"JEV_WIDE_STATE_EVALUATED", "JEV_DEEP_COMPLETED", "JEV_EVALUATION_FAILED"}:
+        elif event["type"] in {"JEV_WIDE_STATE_EVALUATED", "JEV_DEEP_COMPLETED",
+                               "JEV_DEEP_EVIDENCE_JUDGED", "JEV_EVALUATION_FAILED"}:
             data = event["data"]
             if data.get("provider_attempted") is True and not data.get("cache"):
                 usage["jev_calls"] += 1
@@ -275,6 +283,31 @@ class Repository:
                 (state_id, projection_version),
             ).fetchone()
         return dict(row) if row else None
+
+    # ------------------------------------------------------- deterministic deep slice
+
+    def evidence_revisions(self, candidate_id: str) -> list[dict[str, Any]]:
+        with self.database.read() as connection:
+            rows = connection.execute(
+                "SELECT * FROM evidence_states WHERE candidate_id=? ORDER BY iteration ASC,created_at ASC",
+                (candidate_id,),
+            ).fetchall()
+        return [_decode_row(row) for row in rows]
+
+    def get_evidence_state(self, evidence_state_id: str) -> dict[str, Any] | None:
+        with self.database.read() as connection:
+            row = connection.execute(
+                "SELECT * FROM evidence_states WHERE evidence_state_id=?", (evidence_state_id,),
+            ).fetchone()
+        return _decode_row(row) if row else None
+
+    def followup_executions_for(self, candidate_id: str) -> list[dict[str, Any]]:
+        with self.database.read() as connection:
+            rows = connection.execute(
+                "SELECT * FROM followup_executions WHERE candidate_id=? ORDER BY created_at ASC,execution_id ASC",
+                (candidate_id,),
+            ).fetchall()
+        return [_decode_row(row) for row in rows]
 
     def state_registration(self, *, state_id: str, run_id: str, state_hash: str, artifact_id: str,
                            disposition: str, summary_json: str,
@@ -483,7 +516,8 @@ class Repository:
         return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
 
     def list_table(self, table: str, run_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
-        allowed = {"candidates", "statistical_states", "jev_evaluations", "hypotheses", "followup_executions", "dossiers"}
+        allowed = {"candidates", "statistical_states", "jev_evaluations", "hypotheses", "followup_executions",
+                   "evidence_states", "dossiers"}
         if table not in allowed:
             raise ValueError("invalid table")
         clause = " WHERE run_id=?" if run_id else ""

@@ -15,6 +15,7 @@ from typing import Any
 from cancerjev.domain.events import canonical_json
 
 WIDE_QUESTION_SET_VERSION = "wide-v3"
+DEEP_QUESTION_SET_VERSION = "deep-v1"
 
 NOUL_TRUE_CRITERION = (
     "The stated proposition is supported by the supplied observations and their stated quality context."
@@ -152,8 +153,97 @@ WIDE_QUESTIONS: tuple[QuestionDefinition, ...] = (
 
 WIDE_QUESTIONS_BY_ID = {definition.question_id: definition for definition in WIDE_QUESTIONS}
 
+DEEP_LIMITATION_ROSTER = {
+    "EVIDENCE_GAPS": "The revision records missing or unobserved evidence that limits the next step.",
+    "SCOPE_LIMITS": "The single-cohort scope or the selection-biased examined gene set limits what this revision can support.",
+    "INTEGRITY_CONCERNS": "A recorded integrity or reproducibility check was contradicted, or could not be observed from retained artifacts.",
+    "NO_FURTHER_ACTION": "No further registered deterministic action is available for this evidence revision.",
+    "NONE": "No listed limitation dominates.",
+    "OTHER": "A limitation outside the listed options dominates.",
+}
+
+DEEP_QUESTIONS: tuple[QuestionDefinition, ...] = (
+    QuestionDefinition(
+        question_id="revision_reliable",
+        primitive="NOUL",
+        version=1,
+        instructions=(
+            "You are reviewing one immutable deterministic evidence revision for a single gene in one "
+            "TCGA-LUAD cohort. The revision states which registered deterministic action produced it, the "
+            "per-check outcome (VERIFIED, CONTRADICTED or NOT_OBSERVED) of each integrity/reproducibility "
+            "check with the numbers it used, the project-level evidence it copied, its missing evidence, and "
+            "the response-artifact provenance counts. Decide whether this revision can be relied on as the "
+            "basis for one further bounded deterministic step. Rely on it only when the checks that could be "
+            "observed are consistent, no check was contradicted, and any not-observed check does not remove "
+            "the evidence the next step would rest on. A contradiction means the recorded numbers cannot all "
+            "hold and must not be worked around."
+        ),
+        criteria={"true": NOUL_TRUE_CRITERION, "false": NOUL_FALSE_CRITERION},
+        applicability_rule="integrity_observed",
+    ),
+    QuestionDefinition(
+        question_id="evidence_sufficient_for_next_step",
+        primitive="NOUL",
+        version=1,
+        instructions=(
+            "Using the revision's observed check numbers and its copied project-level evidence, decide whether "
+            "the evidence actually held in this revision is sufficient to support one further bounded "
+            "deterministic step, rather than stopping for lack of usable observations. Sufficiency means the "
+            "step would rest on observed measurements with stated missingness, not on absent or unobserved "
+            "data. Biological novelty is not required."
+        ),
+        criteria={"true": NOUL_TRUE_CRITERION, "false": NOUL_FALSE_CRITERION},
+        applicability_rule="revision_evidence_present",
+    ),
+    QuestionDefinition(
+        question_id="next_step_warranted",
+        primitive="NOUL",
+        version=1,
+        instructions=(
+            "Decide whether spending further bounded budget on one more deterministic step for this candidate "
+            "is justified now, given what this revision already establishes, the eligible registered actions "
+            "listed in the revision, and the limitations it records. A further step is a small registered "
+            "computation over already-retained evidence, not a clinical action and not a new data acquisition "
+            "strategy. A low value here should not be read as biological irrelevance; it means the next "
+            "deterministic step is not the best use of the remaining budget."
+        ),
+        criteria={"true": NOUL_TRUE_CRITERION, "false": NOUL_FALSE_CRITERION},
+        applicability_rule="revision_evidence_present",
+    ),
+    QuestionDefinition(
+        question_id="stopping_more_honest",
+        primitive="NOUL",
+        version=1,
+        instructions=(
+            "Decide whether stopping this candidate's deterministic investigation here would be the more "
+            "scientifically honest choice than continuing it, because the remaining uncertainty cannot be "
+            "reduced by any further registered deterministic step over the retained evidence. Treat a "
+            "candidate that has already established a verified, self-consistent revision as legitimately "
+            "complete; do not demand more work merely for completeness."
+        ),
+        criteria={"true": NOUL_TRUE_CRITERION, "false": NOUL_FALSE_CRITERION},
+        applicability_rule="revision_evidence_present",
+    ),
+    QuestionDefinition(
+        question_id="dominant_limitation",
+        primitive="CHOICE",
+        version=1,
+        instructions=(
+            "Which single limitation most dominates the interpretation of this evidence revision? Choose the "
+            "one best-fitting option, or NONE when no listed limitation dominates."
+        ),
+        criteria=dict(DEEP_LIMITATION_ROSTER),
+        applicability_rule="revision_evidence_present",
+    ),
+)
+
+DEEP_QUESTIONS_BY_ID = {definition.question_id: definition for definition in DEEP_QUESTIONS}
+
 _PRIMITIVES = frozenset({"NOUL", "CHOICE", "SCORE"})
-_APPLICABILITY_RULES = frozenset({"any_observation", "mutation_observed", "expression_observed"})
+_APPLICABILITY_RULES = frozenset({
+    "any_observation", "mutation_observed", "expression_observed",
+    "revision_evidence_present", "integrity_observed",
+})
 
 
 def validate_definitions(definitions: tuple[QuestionDefinition, ...]) -> None:
@@ -194,16 +284,21 @@ def validate_definitions(definitions: tuple[QuestionDefinition, ...]) -> None:
 
 
 validate_definitions(WIDE_QUESTIONS)
+validate_definitions(DEEP_QUESTIONS)
 
 
-def question_set_hash(definitions: tuple[QuestionDefinition, ...] = WIDE_QUESTIONS) -> str:
+def question_set_hash(definitions: tuple[QuestionDefinition, ...], version: str) -> str:
     """Semantic identity of a question set.
 
-    Covers wording, criteria, primitive, version and applicability rule, because a
-    changed applicability rule changes which judgments a stored evaluation holds.
+    Covers the set version plus wording, criteria, primitive, version and
+    applicability rule, because a changed applicability rule changes which
+    judgments a stored evaluation holds. The version is explicit so two sets can
+    never share an identity by accident.
     """
+    if not version:
+        raise ValueError("question_set_hash requires an explicit question-set version")
     payload = {
-        "version": WIDE_QUESTION_SET_VERSION,
+        "version": version,
         "questions": [
             {
                 "question_id": definition.question_id,
@@ -219,8 +314,17 @@ def question_set_hash(definitions: tuple[QuestionDefinition, ...] = WIDE_QUESTIO
     return hashlib.sha256(canonical_json(payload)).hexdigest()
 
 
+def wide_question_set_hash() -> str:
+    return question_set_hash(WIDE_QUESTIONS, WIDE_QUESTION_SET_VERSION)
+
+
+def deep_question_set_hash() -> str:
+    return question_set_hash(DEEP_QUESTIONS, DEEP_QUESTION_SET_VERSION)
+
+
 def applicability(definition: QuestionDefinition, projection: dict[str, Any]) -> tuple[bool, str]:
     cohort = projection.get("cohort", {})
+    revision = projection.get("revision", {})
     mutation_observed = cohort.get("mutation_observed") is True
     expression_observed = cohort.get("expression_observed") is True
     rule = definition.applicability_rule
@@ -231,10 +335,18 @@ def applicability(definition: QuestionDefinition, projection: dict[str, Any]) ->
         return mutation_observed, f"MUTATION_OBSERVED={mutation_observed}"
     if rule == "expression_observed":
         return expression_observed, f"EXPRESSION_OBSERVED={expression_observed}"
+    if rule == "revision_evidence_present":
+        present = revision.get("evidence_present") is True
+        return present, f"EVIDENCE_PRESENT={present}"
+    if rule == "integrity_observed":
+        observed = revision.get("integrity_observed") is True
+        return observed, f"INTEGRITY_OBSERVED={observed}"
     raise ValueError(f"unknown applicability rule {rule}")
 
 
-def applicability_map(projection: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def applicability_map(projection: dict[str, Any],
+                      definitions: tuple[QuestionDefinition, ...] = WIDE_QUESTIONS,
+                      ) -> dict[str, dict[str, Any]]:
     return {
         definition.question_id: {
             "applicable": applicable,
@@ -242,6 +354,6 @@ def applicability_map(projection: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "rule": definition.applicability_rule,
         }
         for definition, applicable, reason in (
-            (definition, *applicability(definition, projection)) for definition in WIDE_QUESTIONS
+            (definition, *applicability(definition, projection)) for definition in definitions
         )
     }
