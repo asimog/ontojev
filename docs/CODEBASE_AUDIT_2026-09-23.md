@@ -491,6 +491,80 @@ recorded so the checks are visible.
 - **Dead code:** the unused `DeepPlan.eligible_action_ids` property was removed, and
   `nextmove.MOVES` is now asserted by a test so the declared move vocabulary is load-bearing.
 
+## Audit pass 5 (2026-09-23, combined-repo review after Phase 4–6 completion)
+
+Review of the whole repository after the bounded arc, live dossier, hypothesis engine and evaluation
+harness landed, with a focus on the new code paths and their interaction with existing invariants.
+
+### AUD-35: a dispatched revision was judged twice and the second decision was silently dropped
+
+- **Severity:** High (correctness, cost and recorded-stream integrity). **Disposition:** CONFIRMED by
+  probe → fixed.
+- **Root cause:** `dispatch_recorded_move` judged the revision it had just produced, and the
+  investigation loop judged the same revision again on its next step. The duplicate judgment wasted a
+  provider call whenever the cache did not absorb it, appended a duplicate step to the arc summary,
+  and emitted `JEV_DEEP_STARTED`/`NEXT_MOVE_SELECTED` with identical idempotency keys which
+  `append_event` silently de-duplicated — so the recorded event stream no longer matched the intended
+  loop (probe: three `JEV_DEEP_EVIDENCE_JUDGED` events, two `NEXT_MOVE_SELECTED`).
+- **Smallest fix:** dispatch decides and executes only; the caller judges each revision exactly once
+  (`cancerjev/research/deep.py`, `cancerjev/research/investigation.py`). `DispatchResult` no longer
+  carries a judgment; the arc summary exposes the successful dispatch as `dispatch` and the final
+  refusal as `last_dispatch`.
+- **Regression coverage:** `test_authorized_follow_up_dispatches_one_revision_and_rejudges_it`
+  asserts exactly two steps for two revisions, one judgment per step, two `NEXT_MOVE_DISPATCHED`
+  records (one success plus the closing refusal) and no duplicate `NEXT_MOVE_SELECTED`.
+
+### AUD-36: an in-repo LLM HTTP call violated the open-access and credential boundary
+
+- **Severity:** High (safety boundary). **Disposition:** CONFIRMED by the existing guard test → fixed.
+- **Root cause:** the first Phase 6 implementation called OpenRouter directly with a bearer
+  authorization header and read a provider key from the environment. The repository's guard test
+  (`test_no_source_file_uses_an_authentication_header_literal`) correctly failed, and the change
+  contradicted the documented rule that this tool uses *only* anonymous public GDC access with no
+  token or credential handling.
+- **Smallest fix:** the HTTP path, provider URL, key lookup and provider contract were removed.
+  Generation is deterministic by default; an LLM is only ever a **generator injected by the caller**,
+  and its output is validated strictly (schema, non-empty statement, distinguishing tests restricted
+  to eligible registered actions) with a typed `UNAVAILABLE` outcome on any deviation. Nothing in the
+  repository performs a model request or holds a provider credential.
+- **Regression coverage:** `test_configured_llm_generation_is_labelled_bound_and_uses_its_own_usage`,
+  `test_malformed_llm_response_is_a_typed_unavailability`,
+  `test_malformed_generator_output_is_rejected_without_storing_anything`.
+
+### AUD-37: the rankings API route read SQL directly
+
+- **Severity:** Low (ownership consistency). **Disposition:** CONFIRMED → fixed.
+- **Root cause:** `/api/runs/{id}/rankings` queried `artifacts` through `repository.database`,
+  bypassing the narrow-method rule this repository enforces for `research`/`jev`.
+- **Smallest fix:** added `Repository.ranking_artifacts(run_id)` and used it in the route and in the
+  evaluation harness, so no layer outside `storage` reads the database directly.
+- **Regression coverage:** the existing API contract tests plus `test_deep_slice_is_visible_through_the_api`.
+
+### AUD-38: the live hypotheses panel was unreachable and mislabelled
+
+- **Severity:** Low (presentation). **Disposition:** CONFIRMED → fixed.
+- **Root cause:** the hypotheses section rendered only inside the fixture branch, so live hypotheses
+  were fetched but never shown, and its eyebrow read "GENERATED FIXTURE HYPOTHESES" for any run.
+- **Smallest fix:** live runs render their own labelled section ("GENERATED HYPOTHESES — NOT EVIDENCE")
+  with the generator, statement, hypothetical mechanism and falsification criteria; the fixture branch
+  keeps its own wording. The dossier callout distinguishes live from synthetic dossiers.
+
+### Reviewed and refuted
+
+- **Loop termination:** the bounded arc terminates because `dispatch_recorded_move` refuses at
+  `FOLLOWUP_LIMIT`/`EVIDENCE_ITERATION_LIMIT` and a `MAX_INVESTIGATION_STEPS` guard bounds the loop
+  independently; the authorized test reaches exactly two steps and stops on `MOVE_NOT_FOLLOW_UP`.
+- **Duplicate stage events for repeated stage names:** `_stage` keys each event with a `uuid4`
+  suffix, so repeated `FOLLOWUP`/`JEV_DEEP` stages are all recorded (probe: 4 `FOLLOWUP` occurrences).
+- **Hypothesis applicability and validation:** the `hypothesis_present` rule and strict draft
+  validation reject ineligible-question answers and unknown action ids (exercised by the stub adapter
+  failing closed on a mixed answer set during development).
+- **Dossier completeness:** every `DOSSIER_SECTIONS` key is present with an explicit
+  availability/reason, so the renderer never prints an undefined section, and a live dossier carries
+  no synthetic warning.
+- **Evaluation harness:** it refuses a missing baseline/Jev ranking pair, bounds `k` to 1..3, requires
+  a pre-registered protocol/rationale/declaration/source/limitations, and states no superiority claim.
+
 ## Recommended Follow-Up
 
 1. Complete the baseline-vs-Jev evaluation with a predefined labeled/decision-quality protocol;

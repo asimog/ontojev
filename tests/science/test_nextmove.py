@@ -10,13 +10,14 @@ ACTION = "CHECK_EVIDENCE_INTEGRITY_V1"
 
 
 def test_declared_move_vocabulary_is_the_only_output():
-    assert MOVES == ("COMPLETE", "FOLLOW_UP", "ABSTAIN")
+    assert MOVES == ("COMPLETE", "FOLLOW_UP", "GENERATE_HYPOTHESES", "ABSTAIN")
     scenarios = [
         (_checks(), _judgment(), [ACTION]),
         (_checks(), _judgment(reliable=0.1), [ACTION]),
         (_checks(), _judgment(stopping=0.9), [ACTION]),
         (_checks(), _judgment(warranted=0.9, stopping=0.1), [ACTION]),
         (_checks(), _judgment(warranted=0.9, stopping=0.1), [ACTION, "ANOTHER"]),
+        (_checks(), _judgment(warranted=0.2, stopping=0.2), [ACTION]),
         (_checks(contradicted=1), _judgment(), [ACTION]),
         ({}, {"answers": {}, "error": {"code": "X"}}, []),
     ]
@@ -90,10 +91,18 @@ def test_insufficient_evidence_abstains():
     assert (decision["move"], decision["reason_code"]) == ("ABSTAIN", "EVIDENCE_INSUFFICIENT")
 
 
-def test_undecided_case_abstains_conservatively():
+def test_usable_evidence_without_a_warranted_step_asks_for_hypotheses():
     decision = next_move(checks=_checks(),
                          judgment=_judgment(sufficient=0.8, warranted=0.2, stopping=0.2),
                          eligible_action_ids=[ACTION])
+    assert (decision["move"], decision["reason_code"]) == (
+        "GENERATE_HYPOTHESES", "HYPOTHESES_JUSTIFIED")
+
+
+def test_missing_stopping_dimension_falls_back_to_conservative_abstention():
+    judgment = _judgment(warranted=0.2)
+    judgment["answers"]["stopping_more_honest"] = {"kind": "noul", "probability_yes": None}
+    decision = next_move(checks=_checks(), judgment=judgment, eligible_action_ids=[ACTION])
     assert (decision["move"], decision["reason_code"]) == ("ABSTAIN", "UNCERTAINTY_UNRESOLVED")
 
 

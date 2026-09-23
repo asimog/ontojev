@@ -45,6 +45,12 @@ duplicating a product surface. Global event search, `/candidates`, `/evaluations
 hypotheses and dossier panels remain available for fixture runs; for live runs the deep evidence panel is populated only when an operator
 explicitly selected a candidate (`--deep-candidate`), and the hypothesis/dossier panels stay empty until later phases are approved.
 
+**Live hypotheses and dossier**: for a live run, generated statements render in their own section
+labelled "GENERATED HYPOTHESES — NOT EVIDENCE" with the generator, statement, hypothetical mechanism and
+falsification criteria, and never inside the wide judgment panel; a live dossier renders as a
+"DOSSIER READY" callout linking to `/dossiers/{id}`, whose authoritative JSON carries the live notice and
+a per-section availability.
+
 **DeepEvidencePanel** lists the run's immutable evidence revisions (iteration, parent revision, action, per-check verified/contradicted/not-observed
 counts, evidence hash, and the deep Jev judgment attached to each revision) and expands one revision through `/api/evidence/{id}` to show each
 deterministic check outcome, its claim, its `n_effective` and its availability. A dispatched follow-up simply appears as one more revision whose

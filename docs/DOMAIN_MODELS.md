@@ -196,12 +196,24 @@ revision (`E2`) whose `previous_evidence_state_id` is `E1`, whose `source_statis
 names the accepted state, and whose `action` block cites the action that produced it; the producing
 action is excluded from that revision's eligible set.
 
+A generated hypothesis is a first-class record with the existing `hypotheses` shape plus
+`generator` and a label that names its generator (`GENERATED HYPOTHESIS — NOT EVIDENCE` or
+`LLM-GENERATED HYPOTHESIS — NOT EVIDENCE`); `proposed_action_ids` may only cite registered actions and
+the record is bounded to `MAX_HYPOTHESES` per candidate. Its review is a normal JevEvaluation with
+`purpose="HYPOTHESIS"`, `input_ref_kind="HYPOTHESIS"`, `input_ref_id=<hypothesis_id>` and the
+`hypothesis-v2` question set over the `jev-hypothesis-projection-v1` projection.
+
+A live dossier (`schema_version` 2) records the candidate entity, the ordered evidence revision ids,
+the hypothesis ids, the recorded next moves, a per-section availability/reason map over
+`DOSSIER_SECTIONS`, the live notice, creation time and the recorded limitations, alongside the
+authoritative JSON artifact and its derived Markdown.
+
 The deep judgment over a revision is a normal JevEvaluation with `purpose="DEEP"`,
 `input_ref_kind="EVIDENCE_STATE"`, `input_ref_id=<evidence_state_id>`, `source_evidence_hash`, the
 producing `action_id`, the `deep-v1` question-set version/hash and the full answers/applicability.
 Its projection is `jev-evidence-projection-v1`: the revision's recorded checks, copied project-level
 evidence, missing evidence, provenance counts and the eligible registered action set. A judgment is
-an input to `deep-policy-v1`, which records one next move; it never selects or executes an action,
+an input to `deep-policy-v2`, which records one next move; it never selects or executes an action,
 and only an explicit operator authorization dispatches a recorded `FOLLOW_UP`.
 
 Not yet used by the live slice: `cross_modal_patterns`, `contradictory_evidence`,

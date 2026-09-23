@@ -28,22 +28,34 @@ def parser() -> argparse.ArgumentParser:
         mode.add_argument("--live", action="store_true", help="real bounded open-access GDC sweep")
         command.add_argument("--jev", action="store_true",
                              help="Phase 3 wide Jev evaluation over real states (requires TYPESAFE_API_KEY)")
-        command.add_argument("--deep-candidate", default=None,
-                             help="explicitly selected candidate for the deterministic deep slice: gene symbol, "
-                                  "gene:<SYMBOL>, state:<STATE_ID> (wide-evaluated states) or slot:N "
-                                  "(policy-promoted candidates); requires --live --jev")
+        command.add_argument("--deep-candidate", action="append", default=None,
+                             help="explicitly selected candidate for the deterministic deep investigation "
+                                  "(repeatable: gene symbol, gene:<SYMBOL>, state:<STATE_ID> for a "
+                                  "wide-evaluated state, or slot:N for a policy-promoted candidate); "
+                                  "requires --live --jev")
         command.add_argument("--deep-action", default=None,
                              help="explicitly selected registered action id for the first deterministic "
-                                  "step on the accepted evidence E0 (optional); a dispatched follow-up "
-                                  "uses the policy's distinct eligible revision action instead")
+                                  "step on the accepted evidence E0 (optional); dispatched follow-ups "
+                                  "use the policy's distinct eligible revision action instead")
         command.add_argument("--deep-followup", action="store_true",
-                             help="authorize dispatching one recorded FOLLOW_UP for the selected candidate "
-                                  "(bounded to one dispatch per run); requires --deep-candidate")
+                             help="authorize bounded iteration for the selected candidate(s): recorded "
+                                  "FOLLOW_UP moves are dispatched and re-judged while the follow-up and "
+                                  "revision caps allow, and bounded hypothesis generation runs when the "
+                                  "policy asks for it; requires --deep-candidate")
     probe = commands.add_parser("probe", help="bounded anonymous GDC contract capture")
     probe.add_argument("--capture-dir", default=None)
     show = commands.add_parser("show")
     show.add_argument("run_id")
     show.add_argument("--events", action="store_true")
+    evaluate = commands.add_parser(
+        "evaluate",
+        help="compare one run's baseline and Jev rankings against pre-registered labels (offline)",
+    )
+    evaluate.add_argument("--run", dest="run_id", required=True, help="id of a completed run")
+    evaluate.add_argument("--labels", required=True,
+                          help="operator-supplied label JSON; never produced by cancerjev")
+    evaluate.add_argument("--k", type=int, default=3, help="top-k size (1..3)")
+    evaluate.add_argument("--out", default=None, help="report path (defaults to <data>/evaluations/...)")
     return root
 
 
@@ -121,6 +133,28 @@ def main(argv: list[str] | None = None) -> None:
             for event in page["items"]:
                 render_json_event(event)
         return
+    if args.command == "evaluate":
+        from pathlib import Path as _Path
+
+        from cancerjev.research.evaluation import (
+            EvaluationError,
+            evaluate_run,
+            load_labels,
+            report_path,
+            write_report,
+        )
+
+        try:
+            labels = load_labels(_Path(args.labels))
+            report = evaluate_run(run_id=args.run_id, repository=repository, artifacts=artifacts,
+                                 labels=labels, k=args.k)
+        except EvaluationError as exc:
+            raise SystemExit(str(exc)) from exc
+        target = _Path(args.out) if args.out else report_path(settings.data_dir, report)
+        write_report(target, report)
+        print(json.dumps(report.as_dict(), indent=2, sort_keys=True), flush=True)
+        print(f"[EVALUATION] report written to {target}", flush=True)
+        return
     if args.command == "probe":
         try:
             with ResearchOwnership(settings.lock_path):
@@ -142,7 +176,8 @@ def main(argv: list[str] | None = None) -> None:
                     jev_service = JevService(settings, repository, artifacts)
                 orchestrator = LiveOrchestrator(settings, repository, artifacts, render_event,
                                                 jev_service=jev_service,
-                                                deep_selection=deep_candidate,
+                                                deep_selection=(deep_candidate or [None])[0],
+                                                deep_selections=tuple(deep_candidate or ()),
                                                 deep_action_id=deep_action,
                                                 deep_followup_authorized=deep_followup)
             else:

@@ -162,6 +162,51 @@ beyond it.
   iteration, automatic dispatch of a recorded next move, live dossiers and Deep Jev question
   revisions beyond `deep-v1`.
 
+## Phase 4–6 completion: bounded arc, live dossier, hypotheses, evaluation harness (2026-09-23)
+
+IMPLEMENTED. The documented gaps — autonomous iteration, live dossiers, bounded hypothesis
+generation with a Jev review, and the baseline-vs-Jev evaluation harness — are now code.
+
+- **Bounded investigation arc** (`cancerjev/research/investigation.py`): for one explicitly selected
+  candidate, accept E0, run the selected action, judge the revision, and while the recorded move is
+  `FOLLOW_UP`, an authorization is in force and both caps allow it, dispatch the next distinct
+  eligible revision action and judge the new revision again. One judgment per revision (dispatch
+  decides and executes; the loop judges), `FOLLOWUP_LIMIT = 3` and `EVIDENCE_ITERATION_LIMIT = 2`
+  still bound the arc, a loop guard guarantees termination, and every refusal is a typed
+  `NEXT_MOVE_DISPATCHED` record. Run summary shape: `deep.candidates[]` with `first_step`, `steps`,
+  `dispatch` (first), `last_dispatch`, `decisions`, `hypothesis`, `dossier`.
+- **Multi-candidate selection**: `--deep-candidate` is repeatable; each selection resolves to a
+  policy-promoted candidate or an operator-approved wide-evaluated state, is investigated in order,
+  consumes one promotion slot, and gets its own chain, judgment, hypotheses and dossier.
+- **Live dossier** (`cancerjev/research/dossier.py`, Phase 5): authoritative JSON plus derived
+  Markdown (`render_markdown(dossier, warning=...)`, no template engine) covering all
+  `DOSSIER_SECTIONS` with an explicit availability/reason per section — recorded evidence chain,
+  deterministic checks, judgments and next moves — the live notice, and the candidate's recorded
+  limitations. Persisted with the existing `dossiers` row, `DOSSIER_CREATED` and `DOSSIER_READY`;
+  served by `/api/runs/{id}/dossiers` and `/api/dossiers/{id}` and linked from run detail.
+- **Bounded hypothesis generation** (`cancerjev/research/hypotheses.py`, Phase 6): the policy's new
+  `GENERATE_HYPOTHESES` move (`deep-policy-v2`, `HYPOTHESES_JUSTIFIED`) can be executed when iteration
+  is authorized. Deterministic template generation is the default and quotes only recorded numbers;
+  an LLM is used only through a **generator injected by the caller** — this repository performs no
+  model request, holds no provider credential and defines no provider contract. Output is validated
+  strictly (schema, non-empty statement, distinguishing tests restricted to eligible registered
+  actions) and any deviation is a typed `UNAVAILABLE` outcome, never a partly trusted hypothesis.
+  Hypotheses are stored with `generator` + `label` ("GENERATED HYPOTHESIS — NOT EVIDENCE" /
+  "LLM-GENERATED HYPOTHESIS — NOT EVIDENCE"), bounded at `MAX_HYPOTHESES = 3` per candidate, and never
+  write a measured field.
+- **`hypothesis-v2` Jev review**: three atomic questions (`hypothesis_testable`,
+  `hypothesis_exceeds_recorded_evidence`, `hypothesis_dominant_unsupported_assumption`) over the
+  new `jev-hypothesis-projection-v1` projection, persisted as evaluations with
+  `purpose="HYPOTHESIS"` / `input_ref_kind="HYPOTHESIS"` and recorded by `HYPOTHESIS_EVALUATED`.
+  Provider failure is a persisted `JEV_EVALUATION_FAILED`; the generated text and the revision stand.
+- **Baseline-vs-Jev evaluation harness** (`cancerjev/research/evaluation.py`,
+  `python -m cancerjev evaluate --run <id> --labels <file>`): offline, provider-free, compares recorded
+  baseline and Jev tops against an **operator-supplied, pre-registered** label file (protocol version,
+  rationale, declared_at, source, limitations are required and hashed into the report). It reports
+  top-k overlap, per-symbol ranks and labelled hits with an explicit "no superiority claim", and
+  writes the report under `<data>/evaluations/`. This repository contains no biology labels and makes
+  no incremental-value claim; `docs/IMPLEMENTATION_STATUS.md` still records that value as unverified.
+
 ## Phase 4 dispatch stage: second action and one authorized follow-up (2026-09-23)
 
 IMPLEMENTED. This closes the documented gap that a recorded `FOLLOW_UP` had nothing to dispatch.
@@ -212,7 +257,7 @@ IMPLEMENTED for one revision at a time, after the deterministic slice.
   applicability and cache provenance; recorded by `JEV_DEEP_STARTED` and
   `JEV_DEEP_EVIDENCE_JUDGED`. A provider/validation failure is `JEV_EVALUATION_FAILED` and the
   revision stands.
-- **Python next-move policy** (`deep-policy-v1`, `cancerjev/research/nextmove.py`): deterministic,
+- **Python next-move policy** (`deep-policy-v2`, `cancerjev/research/nextmove.py`): deterministic,
   named thresholds, records one typed move (`COMPLETE`/`FOLLOW_UP`/`ABSTAIN`) with its reason,
   dimensions and thresholds via `NEXT_MOVE_SELECTED`. It never dispatches: `executed` is always
   `false` and a warranted step without a distinct registered action is recorded as
@@ -302,7 +347,7 @@ Verification performed 2026-09-23 (pre-Phase-4 hardening) on the hardened implem
 | Gate | Command | Result |
 |---|---|---|
 | Python lint | `python -m ruff check cancerjev apps tests` | All checks passed |
-| Offline suite | `python -m pytest -q` | **348 passed**, 0 failed; 2 opt-in live-marked tests deselected (350 collected) |
+| Offline suite | `python -m pytest -q` | **360 passed**, 0 failed; 2 opt-in live-marked tests deselected (362 collected) |
 | Frontend typecheck | `npm run typecheck` | Passed |
 | Frontend build | `npm run build` | Passed (all routes) |
 | Browser E2E | `npm run test:e2e` (API 8010, web 3010; matching localhost origin) | **4 passed** |
@@ -319,7 +364,7 @@ No live GDC, TypeSafe or LLM call was made by the pre-Phase-4 hardening pass, th
 slice, or their verification: the tests use loopback sockets, the injected fake SDK module, and the
 replay transport. The deep slice acquires no evidence and calls no model by construction.
 
-On Windows, pytest exited successfully with all 348 offline tests passing but emitted an ignored
+On Windows, pytest exited successfully with all 360 offline tests passing but emitted an ignored
 `PermissionError` while cleaning its temporary `pytest-current` symlink at process exit.
 
 The dispatch stage is verified offline end-to-end (replay transport + stub adapter, both the
@@ -351,7 +396,7 @@ verified offline end-to-end.
 - The examined gene set is selection-biased: genes are taken from the cohort's provider top-mutated ranking by provider rank (no recurrence + round-robin pooling). The state records the bias and does not claim a genome-wide scan.
 - Case-to-sample resolution for expression values is **UNVERIFIED**; no sample-matched cross-modal claim is made.
 - GDC release atomicity across requests is **UNVERIFIED**; reproducibility means replay from retained responses and hashes.
-- No seed/temperature control exists for Jev; repeated calls may differ. Cache identity binds projection bytes, question bytes, model and adapter version; policy version is excluded so policy experiments do not rerun inference. `wide-policy-v2` thresholds remain provisional and uncalibrated. `deep-policy-v1` thresholds are equally provisional and are not tuned to force a move.
+- No seed/temperature control exists for Jev; repeated calls may differ. Cache identity binds projection bytes, question bytes, model and adapter version; policy version is excluded so policy experiments do not rerun inference. `wide-policy-v2` thresholds remain provisional and uncalibrated. `deep-policy-v2` thresholds are equally provisional and are not tuned to force a move.
 - Live deep determinations rest on one recorded review: the retained run's deep judgment (and its `COMPLETE` next move) is one provider call, reused from cache afterwards. It is not evidence that the deep question set is calibrated.
 - Operator-approved candidate selection consumes a promotion slot and is a recorded human decision, not a validated selection rule; the deep slice still requires `--live --jev` and cannot be reached from the fixture demo.
 - The TypeSafe price page is documentation, not a contract; cost stays `null`/unknown because the API exposes no cost field.
@@ -376,20 +421,32 @@ These are separate tasks; do not combine them.
 6. A second registered deterministic action, so a recorded `FOLLOW_UP` can actually be dispatched.
    **DONE (2026-09-23)** — `CHECK_REVISION_FAITHFULNESS_V1` plus one explicitly authorized dispatch per
    run, producing `E2` and re-judging it.
-7. Bounded next-candidate autonomous iteration.
-8. Bounded LLM hypothesis generation + Jev hypothesis evaluation.
+7. Bounded next-candidate autonomous iteration. **DONE (2026-09-23)** — repeatable
+   `--deep-candidate` selection, one bounded arc per candidate (`run_candidate_investigation`), with
+   `FOLLOW_UP` iteration inside the existing caps.
+8. Bounded LLM hypothesis generation + Jev hypothesis evaluation. **DONE for the engine
+   (2026-09-23)** — bounded generation with strict validation, `hypothesis-v2` Jev review, the
+   `GENERATE_HYPOTHESES` policy move, and an injected-generator boundary so this repository performs
+   no model request and holds no provider credential.
 
-## Phase 4–7: plans only, not implemented
+## Phase 4–7: what remains
 
-- **Phase 4 — deep deterministic evidence**: the first slice, the deep fan-out and one authorized
-  dispatch are IMPLEMENTED as described above (`CHECK_EVIDENCE_INTEGRITY_V1` and
-  `CHECK_REVISION_FAITHFULNESS_V1`, explicit/operator selection, immutable E0/E1/E2,
-  `deep-policy-v1`, typed abstention/failure/dispatch refusals). Still not implemented: autonomous
-  iteration beyond one authorized dispatch, bounded hypothesis generation, multi-candidate iteration
-  and further registered actions. Additional follow-up IDs in `docs/PHASE_4_READINESS_PLAN.md` remain
-  unapproved placeholders.
-- **Phase 5 — dossiers for live candidates**: structured JSON + derived Markdown from real evidence revisions.
-- **Phase 6 — generative hypotheses**: competing hypotheses may only be generated after deterministic evidence and Jev judgments exist; Jev critiques them; an LLM never writes a measured field. `hypothesis-v2` is documented.
-- **Phase 7 — offline autoresearch**: labelled historical states, LLM-proposed candidate questions, Jev evaluation, classical usefulness tests, pruning and human review to version the production question set.
+- **Phase 4 — deep deterministic evidence**: the first slice, the deep fan-out, the authorized
+  dispatch and the bounded multi-step arc are IMPLEMENTED (`CHECK_EVIDENCE_INTEGRITY_V1`,
+  `CHECK_REVISION_FAITHFULNESS_V1`, explicit/operator selection, immutable E0/E1/E2, `deep-policy-v2`,
+  typed abstention/failure/dispatch refusals, one judgment per revision). Remaining: further
+  registered actions and any registered action that would make a longer arc informative.
+- **Phase 5 — dossiers for live candidates**: IMPLEMENTED as authoritative JSON + derived Markdown
+  over the recorded chain, hypotheses and next moves, with per-section availability and the live
+  notice.
+- **Phase 6 — generative hypotheses**: IMPLEMENTED as an engine. Competing statements are generated
+  only after deterministic evidence and Jev judgments exist, are labelled with their generator, are
+  bounded, never write a measured field, and are reviewed by `hypothesis-v2`. **No LLM provider
+  integration exists in this repository**; a concrete provider adapter with its own contract, key
+  policy and budget is required before live generation, and is not implemented.
+- **Phase 7 — offline autoresearch**: NOT IMPLEMENTED, deliberately. It needs a labelled historical
+  corpus, a pre-registered usefulness protocol and human review of question-set versions; absent
+  those, a pruning or question-versioning engine would be infrastructure without a concrete operation
+  and would risk silently changing `wide-v3` semantics.
 
 **Confirmation: no LLM hypothesis implementation and no generative model call exists in the codebase.** The only provider calls are the bounded anonymous GDC requests and the Jev evaluations recorded above. Deterministic follow-up execution exists only as the Phase 4 slices above: it is Python-controlled, acquires no data, is explicitly selected by an operator, and never dispatches itself from wide admission or from its own recorded next move.

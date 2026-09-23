@@ -720,7 +720,6 @@ class DispatchResult:
     reason_code: str
     action_id: str | None
     result: FollowUpResult | None
-    judgement: dict[str, Any] | None
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -728,23 +727,21 @@ class DispatchResult:
             "evidence_state_id": self.result.evidence_state_id if self.result else None,
             "result_status": self.result.status if self.result else None,
             "iteration": self.result.iteration if self.result else None,
-            "judgment": {key: value for key, value in (self.judgement or {}).items()
-                         if key != "deep_judgment_vector"},
-            "next_move": (self.judgement or {}).get("next_move"),
         }
 
 
 def dispatch_recorded_move(*, run_id: str, candidate: CandidateEvidence, result: FollowUpResult,
                            decision: dict[str, Any], repository: Any, emit: Callable[..., Any],
                            publish_json: Callable[[str, str, Any, str], Any],
-                           read_artifact: Callable[[str], bytes | None], authorized: bool,
-                           jev_service: Any = None) -> DispatchResult:
+                           read_artifact: Callable[[str], bytes | None], authorized: bool) -> DispatchResult:
     """Dispatch one recorded FOLLOW_UP, only when an operator authorized it.
 
-    At most one dispatch happens per run, it obeys the existing follow-up and
+    At most one dispatch happens per step, it obeys the existing follow-up and
     revision caps (every attempt consumes follow-up budget, not only successful
-    ones), and a dispatched revision is judged again by the same deep fan-out.
-    Every refusal reason is recorded rather than silently dropped.
+    ones), and the caller judges the new revision exactly once afterwards. Judging
+    here would double every Jev call and duplicate the recorded decision, so this
+    function decides and executes only. Every refusal reason is recorded rather
+    than silently dropped.
     """
 
     def refuse(reason_code: str, detail: str) -> DispatchResult:
@@ -757,8 +754,7 @@ def dispatch_recorded_move(*, run_id: str, candidate: CandidateEvidence, result:
                   "reason_code": reason_code, "detail": detail, "dispatched": False,
                   "authorized": authorized},
         )
-        return DispatchResult(dispatched=False, reason_code=reason_code, action_id=None,
-                              result=None, judgement=None)
+        return DispatchResult(dispatched=False, reason_code=reason_code, action_id=None, result=None)
 
     if decision.get("move") != "FOLLOW_UP":
         return refuse("MOVE_NOT_FOLLOW_UP",
@@ -800,11 +796,7 @@ def dispatch_recorded_move(*, run_id: str, candidate: CandidateEvidence, result:
                   "action_id": action_id, "dispatched": False, "authorized": True},
         )
         return DispatchResult(dispatched=False, reason_code="DISPATCH_ACTION_FAILED", action_id=action_id,
-                              result=followup, judgement=None)
-    judgement = None
-    if jev_service is not None:
-        judgement = judge_evidence_revision(run_id=run_id, candidate=candidate, result=followup,
-                                            jev_service=jev_service, emit=emit)
+                              result=followup)
     emit(
         run_id, "NEXT_MOVE_DISPATCHED", f"dispatch:{result.evidence_state_id}:{action_id}",
         f"Recorded FOLLOW_UP dispatched as {action_id} on the operator's authorization.",
@@ -813,10 +805,9 @@ def dispatch_recorded_move(*, run_id: str, candidate: CandidateEvidence, result:
               "reason_code": "DISPATCHED", "action_id": action_id, "execution_id": execution_id,
               "output_evidence_state_id": evidence_state_id, "output_iteration": iteration,
               "dispatched": True, "authorized": True,
-              "new_move": (judgement or {}).get("next_move", {}).get("move")},
+              "note": "the new revision is judged once by the caller"},
     )
-    return DispatchResult(dispatched=True, reason_code="DISPATCHED", action_id=action_id,
-                          result=followup, judgement=judgement)
+    return DispatchResult(dispatched=True, reason_code="DISPATCHED", action_id=action_id, result=followup)
 
 
 def judge_evidence_revision(*, run_id: str, candidate: CandidateEvidence, result: FollowUpResult,

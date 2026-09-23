@@ -170,7 +170,8 @@ class Repository:
         elif event["type"] == "GDC_CACHE_HIT":
             usage["gdc_cache_hits"] += 1
         elif event["type"] in {"JEV_WIDE_STATE_EVALUATED", "JEV_DEEP_COMPLETED",
-                               "JEV_DEEP_EVIDENCE_JUDGED", "JEV_EVALUATION_FAILED"}:
+                               "JEV_DEEP_EVIDENCE_JUDGED", "JEV_EVALUATION_FAILED",
+                               "HYPOTHESIS_EVALUATED"}:
             data = event["data"]
             if data.get("provider_attempted") is True and not data.get("cache"):
                 usage["jev_calls"] += 1
@@ -180,6 +181,14 @@ class Repository:
                     if value is not None:
                         target = f"jev_{token_key}"
                         usage[target] = (usage[target] or 0) + int(value)
+        if event["type"] == "HYPOTHESES_GENERATED" and event["data"].get("provider_attempted") is True:
+            usage["llm_calls"] += 1
+            llm_usage = event["data"].get("usage") or {}
+            for token_key in ("input_tokens", "output_tokens"):
+                value = llm_usage.get(token_key)
+                if value is not None:
+                    target = f"llm_{token_key}"
+                    usage[target] = (usage[target] or 0) + int(value)
         run["usage_json"] = _json(usage)
         if event["type"] == "PROJECT_SCOPE_SELECTED":
             scope = json.loads(run["scope_json"])
@@ -255,6 +264,14 @@ class Repository:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def ranking_artifacts(self, run_id: str) -> list[dict[str, Any]]:
+        with self.database.read() as connection:
+            rows = connection.execute(
+                "SELECT * FROM artifacts WHERE run_id=? AND purpose='wide-ranking' ORDER BY artifact_id",
+                (run_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def gdc_run_totals(self, run_id: str) -> dict[str, int]:
         with self.database.read() as connection:
             row = connection.execute(
@@ -298,6 +315,20 @@ class Repository:
         with self.database.read() as connection:
             row = connection.execute(
                 "SELECT * FROM evidence_states WHERE evidence_state_id=?", (evidence_state_id,),
+            ).fetchone()
+        return _decode_row(row) if row else None
+
+    def get_hypothesis(self, hypothesis_id: str) -> dict[str, Any] | None:
+        with self.database.read() as connection:
+            row = connection.execute(
+                "SELECT * FROM hypotheses WHERE hypothesis_id=?", (hypothesis_id,),
+            ).fetchone()
+        return _decode_row(row) if row else None
+
+    def get_dossier(self, dossier_id: str) -> dict[str, Any] | None:
+        with self.database.read() as connection:
+            row = connection.execute(
+                "SELECT * FROM dossiers WHERE dossier_id=?", (dossier_id,),
             ).fetchone()
         return _decode_row(row) if row else None
 

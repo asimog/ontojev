@@ -1,9 +1,9 @@
 # Phase 4 Readiness Plan
 
-Status: **FIRST SLICE, DEEP FAN-OUT AND ONE AUTHORIZED DISPATCH IMPLEMENTED (2026-09-23); the rest of
-Phase 4 is not implemented or approved for live execution.** This document sequences one bounded
-deterministic follow-up vertical slice. It does not authorize new endpoints, expand budgets, or create
-a runtime workflow framework.
+Status: **PHASE 4–6 CORE IMPLEMENTED (2026-09-23): bounded multi-step arc, live dossier, bounded
+hypothesis engine with `hypothesis-v2`, and an offline evaluation harness. Phase 7 is deliberately
+not implemented.** This document sequences bounded deterministic follow-up work. It does not
+authorize new endpoints, expand budgets, or create a runtime workflow framework.
 
 ## Completion Status
 
@@ -54,7 +54,7 @@ exists.
 ## Next stage: deep fan-out and next-move decision (IMPLEMENTED 2026-09-23)
 
 After E1, one Deep Jev fan-out judges the revision plus the eligible registered action set with the
-versioned `deep-v1` question set, and the Python next-move policy (`deep-policy-v1`) records one typed
+versioned `deep-v1` question set, and the Python next-move policy (`deep-policy-v2`) records one typed
 move. Implemented and live-validated as described in `docs/IMPLEMENTATION_STATUS.md`; the operator
 may also name a wide-evaluated state explicitly when the provisional policy selects nothing
 (`gene:<SYMBOL>`/`state:<STATE_ID>`), which creates the candidate with recorded
@@ -70,7 +70,7 @@ Still open for a later slice, unchanged in intent:
 - a separately approved bounded live acceptance for any new action, plus the still-open
   baseline-vs-Jev incremental-value evaluation.
 
-`deep-policy-v1` thresholds are provisional. Do not lower them to force a `FOLLOW_UP`.
+`deep-policy-v2` thresholds are provisional. Do not lower them to force a `FOLLOW_UP`.
 
 ## Dispatch stage implemented (2026-09-23)
 
@@ -91,8 +91,36 @@ A recorded `FOLLOW_UP` now has something to dispatch, under explicit operator co
 
 Still open for a later slice: autonomous iteration beyond one authorized dispatch, a third registered
 action, multi-candidate iteration, hypothesis generation, and the separately approved bounded live
-acceptance plus the baseline-vs-Jev incremental-value evaluation. `deep-policy-v1` thresholds remain
+acceptance plus the baseline-vs-Jev incremental-value evaluation. `deep-policy-v2` thresholds remain
 provisional; do not lower them to force a `FOLLOW_UP`.
+
+## Phase 4–6 completion (IMPLEMENTED 2026-09-23)
+
+- **Bounded arc** (Phase 4): `run_candidate_investigation` composes plan → execute → judge → dispatch
+  → judge … bounded by `FOLLOWUP_LIMIT = 3`, `EVIDENCE_ITERATION_LIMIT = 2` and a loop guard; one
+  judgment per revision; every refusal typed. `--deep-candidate` is repeatable, so several explicitly
+  selected candidates are investigated in order, each within its own caps.
+- **Live dossier** (Phase 5): authoritative JSON + derived Markdown over the recorded chain,
+  hypotheses and next moves, with per-section availability, the live notice and `DOSSIER_READY`.
+- **Hypothesis engine** (Phase 6): the `GENERATE_HYPOTHESES` policy move, bounded generation with
+  strict validation, `hypothesis-v2` Jev review, labels naming the generator, and an injected-generator
+  boundary — this repository performs no model request and holds no provider credential.
+- **Evaluation harness**: `python -m cancerjev evaluate --run <id> --labels <file>` compares recorded
+  baseline/Jev tops against an operator-supplied pre-registered label set and reports descriptive
+  metrics with an explicit no-superiority claim. It produces no biology labels and no value claim.
+
+Still open after this pass:
+
+- further registered actions (a longer arc needs a second revision action to be informative);
+- a concrete LLM provider adapter with its own contract, key policy and budget, if live generation is
+  ever wanted — not in this repository today;
+- the **incremental-value result**: the harness exists, but a pre-registered protocol over held-out
+  labelled cohorts is a scientific task, not a code change, and remains undone;
+- Phase 7 offline autoresearch, which needs a labelled historical corpus and human review before any
+  question-set versioning engine is justified.
+
+`deep-policy-v2` thresholds remain provisional. Do not lower them to force a `FOLLOW_UP` or a
+`GENERATE_HYPOTHESES`.
 
 ## Pre-Phase-4 structural check (2026-09-23)
 

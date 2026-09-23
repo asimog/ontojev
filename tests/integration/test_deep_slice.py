@@ -12,6 +12,7 @@ from apps.api.main import create_app
 from cancerjev.domain.identity import content_hash, evidence_state_identity_payload
 from cancerjev.research import deep
 from cancerjev.research.live import LiveOrchestrator
+from cancerjev.research.nextmove import DEEP_POLICY_VERSION
 from cancerjev.research.specs import LUAD_RESEARCH_V1
 from cancerjev.science.actions import ACTION_REGISTRY_VERSION, ActionError
 from tests.integration.test_live_replay import _orchestrator
@@ -31,28 +32,37 @@ def _events(repository, run_id, types):
 
 
 def _deep_summary(repository, run_id) -> dict:
+    """The first investigated candidate's arc summary from RUN_COMPLETED."""
     completed = _events(repository, run_id, {"RUN_COMPLETED"})
     assert completed, "the run must complete"
-    return completed[-1]["data"]["deep"]
+    deep = completed[-1]["data"]["deep"]
+    assert deep["candidate_count"] == len(deep["candidates"])
+    return deep["candidates"][0]
+
+
+def _first_step(summary: dict) -> dict:
+    return summary["first_step"]
 
 
 def test_live_deep_slice_creates_e0_and_e1_from_one_explicit_action(runtime, monkeypatch):
     artifacts = runtime[2]
     run_id, run, repository = _completed_slice(runtime, monkeypatch, deep_selection="GENEONE")
     summary = _deep_summary(repository, run_id)
+    first_step = _first_step(summary)
     assert summary["selection"] == "GENEONE"
     started = _events(repository, run_id, {"RUN_STARTED"})[0]
     assert started["data"]["deep_selection"] == "GENEONE"
     assert started["data"]["deep_selection_rule"], "the human-approved selection rule must be recorded"
     assert summary["status"] == "COMPLETED"
-    assert summary["checks_total"] == 5
-    assert summary["checks_contradicted"] == 0
+    assert first_step["checks_total"] == 5
+    assert first_step["checks_contradicted"] == 0
 
     candidates = repository.list_table("candidates", run_id)
     assert len(candidates) == 2, "both promoted candidates stay recorded"
     selected = next(row for row in candidates if row["entity"]["gene_symbol"] == "GENEONE")
-    assert selected["status"] == "DEEP_ANALYZED"
-    assert selected["latest_evidence_state_id"] == summary["evidence_state_id"]
+    assert selected["status"] == "DOSSIER_READY", "the arc ends with a recorded dossier"
+    assert selected["dossier_id"] == summary["dossier"]["dossier_id"]
+    assert selected["latest_evidence_state_id"] == first_step["evidence_state_id"]
 
     revisions = repository.evidence_revisions(selected["candidate_id"])
     assert [row["iteration"] for row in revisions] == [0, 1]
@@ -98,6 +108,32 @@ def test_live_deep_slice_creates_e0_and_e1_from_one_explicit_action(runtime, mon
     assert run["counts"]["evidence_revisions"] == 2
 
 
+def test_multiple_selected_candidates_each_get_a_bounded_arc(runtime, monkeypatch):
+    orchestrator, _, repository = _orchestrator(
+        runtime, monkeypatch, jev_adapter=_abstaining_adapter(),
+        deep_selections=("GENEONE", "GENETWO"), deep_followup_authorized=True)
+    run_id = orchestrator.run()
+    completed = _events(repository, run_id, {"RUN_COMPLETED"})[-1]["data"]["deep"]
+    assert completed["selections"] == ["GENEONE", "GENETWO"]
+    assert completed["candidate_count"] == 2
+    selections = [summary["selection"] for summary in completed["candidates"]]
+    assert selections == ["GENEONE", "GENETWO"]
+    for summary in completed["candidates"]:
+        assert summary["status"] == "COMPLETED", summary
+        assert summary["dossier"]["dossier_id"]
+        assert summary["first_step"]["checks_total"] == 5
+    candidates = repository.list_table("candidates", run_id)
+    assert len(candidates) == 2, "each selection consumed one promotion slot"
+    assert all(row["status"] == "DOSSIER_READY" for row in candidates)
+    assert len(repository.list_table("dossiers", run_id)) == 2
+    assert repository.list_table("evidence_states", run_id)
+    # two independent candidates, each with its own revision chain
+    per_candidate = {row["candidate_id"]: [] for row in candidates}
+    for row in repository.list_table("evidence_states", run_id):
+        per_candidate[row["candidate_id"]].append(row["iteration"])
+    assert sorted(sorted(chain) for chain in per_candidate.values()) == [[0, 1], [0, 1]]
+
+
 def test_baseline_evidence_never_changes_when_a_revision_is_added(runtime, monkeypatch):
     artifacts = runtime[2]
     run_id, _, repository = _completed_slice(runtime, monkeypatch, deep_selection="slot:1")
@@ -138,7 +174,7 @@ def test_explicit_registered_action_selection_is_used(runtime, monkeypatch):
     run_id, _, repository = _completed_slice(
         runtime, monkeypatch, deep_selection="GENEONE", deep_action_id="CHECK_EVIDENCE_INTEGRITY_V1",
     )
-    assert _deep_summary(repository, run_id)["action_id"] == "CHECK_EVIDENCE_INTEGRITY_V1"
+    assert _first_step(_deep_summary(repository, run_id))["action_id"] == "CHECK_EVIDENCE_INTEGRITY_V1"
     assert [row["iteration"] for row in repository.list_table("evidence_states", run_id)] == [0, 1]
 
 
@@ -259,6 +295,7 @@ def test_evidence_identity_excludes_operational_fields_and_tracks_outcomes(runti
 def test_deep_slice_is_visible_through_the_api(runtime, monkeypatch):
     run_id, _, repository = _completed_slice(runtime, monkeypatch, deep_selection="GENEONE")
     summary = _deep_summary(repository, run_id)
+    first_step = _first_step(summary)
     client = TestClient(create_app())
     evidence = client.get(f"/api/runs/{run_id}/evidence")
     assert evidence.status_code == 200
@@ -267,7 +304,7 @@ def test_deep_slice_is_visible_through_the_api(runtime, monkeypatch):
     followups = client.get(f"/api/runs/{run_id}/followups")
     assert followups.status_code == 200
     assert [item["status"] for item in followups.json()["items"]] == ["COMPLETED"]
-    detail = client.get(f"/api/evidence/{summary['evidence_state_id']}")
+    detail = client.get(f"/api/evidence/{first_step['evidence_state_id']}")
     assert detail.status_code == 200
     assert detail.headers["X-Artifact-SHA256"]
     payload = detail.json()
@@ -311,15 +348,16 @@ def test_operator_selected_state_reaches_the_deep_slice_without_policy_promotion
     assert promotions[0]["data"]["promotion_slot"] == 1
 
     summary = _deep_summary(repository, run_id)
+    first_step = _first_step(summary)
     assert summary["status"] == "COMPLETED"
-    assert summary["checks_total"] == 5 and summary["checks_contradicted"] == 0
-    assert summary["iteration"] == 1 and summary["evidence_state_id"]
-    assert summary["deep_evaluation_id"], "the revision must be judged in one deep fan-out"
-    assert summary["deep_error_code"] is None
-    assert summary["next_move"]["move"] == "COMPLETE"
-    assert summary["next_move"]["policy_version"] == "deep-policy-v1"
-    assert summary["next_move"]["executed"] is False
-    assert summary["deep_usage"]["input_tokens"] == 1200
+    assert first_step["checks_total"] == 5 and first_step["checks_contradicted"] == 0
+    assert first_step["iteration"] == 1 and first_step["evidence_state_id"]
+    assert first_step["deep_evaluation_id"], "the revision must be judged in one deep fan-out"
+    assert first_step["deep_error_code"] is None
+    assert first_step["next_move"]["move"] == "COMPLETE"
+    assert first_step["next_move"]["policy_version"] == DEEP_POLICY_VERSION
+    assert first_step["next_move"]["executed"] is False
+    assert first_step["deep_usage"]["input_tokens"] == 1200
 
     event_types = [event["type"] for event in repository.events(run_id, 0, 500)["items"]]
     assert event_types.index("ELIGIBLE_ACTIONS_COMPUTED") < event_types.index("FOLLOWUP_STARTED")
@@ -331,8 +369,8 @@ def test_operator_selected_state_reaches_the_deep_slice_without_policy_promotion
     assert len(evaluations) == 1
     deep = evaluations[0]["vector"]
     assert deep["input_ref_kind"] == "EVIDENCE_STATE"
-    assert deep["evidence_state_id"] == summary["evidence_state_id"]
-    assert deep["source_evidence_hash"] == summary["evidence_hash"]
+    assert deep["evidence_state_id"] == first_step["evidence_state_id"]
+    assert deep["source_evidence_hash"] == first_step["evidence_hash"]
     assert deep["question_set_version"] == "deep-v1"
     assert deep["action_id"] == "CHECK_EVIDENCE_INTEGRITY_V1"
     assert set(deep["answers"]) == {
@@ -361,20 +399,20 @@ def test_operator_selection_grammar(runtime, monkeypatch):
         "state-2": {"state_id": "state-2", "entity": {"gene_symbol": "GENETWO"}},
     }
     orchestrator.deep_selection = "state:state-2"
-    assert orchestrator._operator_selection_target(index) == ("state-2", None)
+    assert orchestrator._operator_selection_target(orchestrator.deep_selection, index) == ("state-2", None)
     orchestrator.deep_selection = "gene:GENEONE"
-    assert orchestrator._operator_selection_target(index) == ("state-1", None)
+    assert orchestrator._operator_selection_target(orchestrator.deep_selection, index) == ("state-1", None)
     orchestrator.deep_selection = "GENEONE"
-    assert orchestrator._operator_selection_target(index) == ("state-1", None)
+    assert orchestrator._operator_selection_target(orchestrator.deep_selection, index) == ("state-1", None)
     orchestrator.deep_selection = "MISSING"
-    assert orchestrator._operator_selection_target(index)[0] is None
+    assert orchestrator._operator_selection_target(orchestrator.deep_selection, index)[0] is None
     orchestrator.deep_selection = "state:MISSING"
-    assert orchestrator._operator_selection_target(index)[0] is None
+    assert orchestrator._operator_selection_target(orchestrator.deep_selection, index)[0] is None
     orchestrator.deep_selection = "slot:1"
-    assert orchestrator._operator_selection_target(index)[0] is None
+    assert orchestrator._operator_selection_target(orchestrator.deep_selection, index)[0] is None
     ambiguous = {**index, "state-3": {"state_id": "state-3", "entity": {"gene_symbol": "GENEONE"}}}
     orchestrator.deep_selection = "GENEONE"
-    assert orchestrator._operator_selection_target(ambiguous)[0] is None
+    assert orchestrator._operator_selection_target(orchestrator.deep_selection, ambiguous)[0] is None
 
 
 def test_operator_selection_is_refused_for_an_unevaluated_state(runtime, monkeypatch):
@@ -424,9 +462,11 @@ def test_deep_judgment_failure_is_contained_and_keeps_the_revision(runtime, monk
     run_id = orchestrator.run()
     assert repository.get_run(run_id)["status"] == "COMPLETED"
     summary = _deep_summary(repository, run_id)
-    assert summary["status"] == "COMPLETED", "the deterministic revision stands"
-    assert summary["next_move"]["reason_code"] == "DEEP_JUDGMENT_UNAVAILABLE"
-    assert summary["deep_error_code"] == "INVALID_DISTRIBUTION"
+    first_step = _first_step(summary)
+    assert summary["status"] == "ABSTAINED", "the deterministic revision stands even when its judgment fails"
+    assert summary["final_move"] == "ABSTAIN"
+    assert first_step["next_move"]["reason_code"] == "DEEP_JUDGMENT_UNAVAILABLE"
+    assert first_step["deep_error_code"] == "INVALID_DISTRIBUTION"
     deep_errors = [event for event in repository.events(run_id, 0, 500)["items"]
                    if event["type"] == "JEV_EVALUATION_FAILED"
                    and event["data"]["input_ref_kind"] == "EVIDENCE_STATE"]
@@ -458,10 +498,11 @@ def _dispatched_slice(runtime, monkeypatch, *, authorized: bool, **kwargs):
 def test_authorized_follow_up_dispatches_one_revision_and_rejudges_it(runtime, monkeypatch):
     run_id, run, repository = _dispatched_slice(runtime, monkeypatch, authorized=True)
     summary = _deep_summary(repository, run_id)
-    assert summary["next_move"]["move"] == "FOLLOW_UP"
-    assert summary["next_move"]["reason_code"] == "FOLLOW_UP_WARRANTED"
-    assert summary["next_move"]["executed"] is False, "the policy never dispatches its own decision"
-    assert summary["next_move"]["dimensions"]["distinct_eligible_action_ids"] == [
+    first_step = _first_step(summary)
+    assert first_step["next_move"]["move"] == "FOLLOW_UP"
+    assert first_step["next_move"]["reason_code"] == "FOLLOW_UP_WARRANTED"
+    assert first_step["next_move"]["executed"] is False, "the policy never dispatches its own decision"
+    assert first_step["next_move"]["dimensions"]["distinct_eligible_action_ids"] == [
         "CHECK_REVISION_FAITHFULNESS_V1",
     ]
     dispatch = summary["dispatch"]
@@ -470,10 +511,11 @@ def test_authorized_follow_up_dispatches_one_revision_and_rejudges_it(runtime, m
     assert dispatch["action_id"] == "CHECK_REVISION_FAITHFULNESS_V1"
     assert dispatch["iteration"] == 2
     assert dispatch["result_status"] == "COMPLETED"
-    assert dispatch["next_move"]["move"] == "ABSTAIN"
-    assert dispatch["next_move"]["reason_code"] == "NO_FURTHER_REGISTERED_ACTION"
-    assert dispatch["judgment"]["deep_evaluation_id"], "the dispatched revision's judgment must be named"
-    assert dispatch["judgment"]["deep_usage"]["input_tokens"] == 1200
+    assert summary["decisions"][-1]["move"] == "ABSTAIN", "the new revision is judged once by the loop"
+    assert summary["decisions"][-1]["reason_code"] == "NO_FURTHER_REGISTERED_ACTION"
+    assert len(summary["steps"]) == 2, "one step per judged revision, never a duplicate"
+    assert summary["steps"][1]["deep_evaluation_id"], "the dispatched revision's judgment must be named"
+    assert summary["steps"][1]["deep_usage"]["input_tokens"] == 1200
 
     candidate = next(row for row in repository.list_table("candidates", run_id)
                      if row["entity"]["gene_symbol"] == "GENEONE")
@@ -499,9 +541,16 @@ def test_authorized_follow_up_dispatches_one_revision_and_rejudges_it(runtime, m
 
     event_types = [event["type"] for event in repository.events(run_id, 0, 700)["items"]]
     assert event_types.count("NEXT_MOVE_SELECTED") == 2
-    assert event_types.count("NEXT_MOVE_DISPATCHED") == 1
+    assert event_types.count("NEXT_MOVE_DISPATCHED") == 2, \
+        "one successful dispatch and one recorded refusal that stopped the bounded loop"
     assert event_types.count("EVIDENCE_STATE_CREATED") == 3
     assert event_types.count("JEV_DEEP_EVIDENCE_JUDGED") == 2
+    assert len(summary["steps"]) == 2, "two judged revisions in the bounded arc"
+    assert summary["final_move"] == "ABSTAIN"
+    assert summary["last_dispatch"]["reason_code"] == "MOVE_NOT_FOLLOW_UP"
+    assert summary["stop_reason"] == "MOVE_NOT_FOLLOW_UP"
+    assert summary["dossier"]["dossier_id"]
+    assert summary["hypothesis"] is None, "the move never asked for hypotheses in this arc"
     assert run["counts"]["followups_completed"] == 2
     assert run["counts"]["evidence_revisions"] == 3
     deep_evaluations = repository.page_child("jev_evaluations", run_id, 50, None,
@@ -520,7 +569,8 @@ def repository_runtime_artifact(runtime, repository, artifact_id: str) -> bytes:
 def test_unauthorized_follow_up_is_recorded_but_not_dispatched(runtime, monkeypatch):
     run_id, run, repository = _dispatched_slice(runtime, monkeypatch, authorized=False)
     summary = _deep_summary(repository, run_id)
-    assert summary["next_move"]["move"] == "FOLLOW_UP"
+    first_step = _first_step(summary)
+    assert first_step["next_move"]["move"] == "FOLLOW_UP"
     assert summary["dispatch"]["dispatched"] is False
     assert summary["dispatch"]["reason_code"] == "DISPATCH_NOT_AUTHORIZED"
     assert [row["iteration"] for row in repository.list_table("evidence_states", run_id)] == [0, 1]
@@ -533,7 +583,8 @@ def test_completed_investigation_is_never_dispatched(runtime, monkeypatch):
     run_id, run, repository = _operator_slice(runtime, monkeypatch, deep_selection="GENEONE",
                                               deep_followup_authorized=True)
     summary = _deep_summary(repository, run_id)
-    assert summary["next_move"]["move"] == "COMPLETE"
+    first_step = _first_step(summary)
+    assert first_step["next_move"]["move"] == "COMPLETE"
     assert summary["dispatch"]["dispatched"] is False
     assert summary["dispatch"]["reason_code"] == "MOVE_NOT_FOLLOW_UP"
     assert [row["iteration"] for row in repository.list_table("evidence_states", run_id)] == [0, 1]
@@ -550,7 +601,8 @@ def test_dispatch_respects_the_caps(runtime, monkeypatch, attribute, limit, reas
     monkeypatch.setattr(deep, attribute, limit)
     run_id, run, repository = _dispatched_slice(runtime, monkeypatch, authorized=True)
     summary = _deep_summary(repository, run_id)
-    assert summary["next_move"]["move"] == "FOLLOW_UP"
+    first_step = _first_step(summary)
+    assert first_step["next_move"]["move"] == "FOLLOW_UP"
     assert summary["dispatch"]["dispatched"] is False
     assert summary["dispatch"]["reason_code"] == reason
     assert [row["iteration"] for row in repository.list_table("evidence_states", run_id)] == [0, 1]

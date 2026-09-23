@@ -54,13 +54,8 @@ from cancerjev.gdc.parsers import (
     response_warnings,
 )
 from cancerjev.gdc.transport import BudgetCaps, GDCResponse, GDCTransport, RunBudget, TransportError
-from cancerjev.research.deep import (
-    dispatch_recorded_move,
-    execute_followup,
-    judge_evidence_revision,
-    plan_deep_slice,
-    stable_id,
-)
+from cancerjev.research.deep import stable_id
+from cancerjev.research.investigation import run_candidate_investigation
 from cancerjev.research.ranking import PROMOTION_LIMIT
 from cancerjev.research.specs import LUAD_RESEARCH_V1, ResearchSpec
 from cancerjev.research.wide import run_wide_evaluation
@@ -224,8 +219,10 @@ class LiveOrchestrator:
     transport_factory: Callable[..., Any] | None = None
     research_spec: ResearchSpec = LUAD_RESEARCH_V1
     deep_selection: str | None = None
+    deep_selections: tuple[str, ...] = ()
     deep_action_id: str | None = None
     deep_followup_authorized: bool = False
+    llm_generator: Callable[..., Any] | None = None
 
     # ------------------------------------------------------------- event helpers
 
@@ -340,6 +337,7 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
                         "jev_max_states": self.settings.jev_max_states,
                     },
                     "deep_selection": self.deep_selection,
+                    "deep_selections": list(self._deep_selections()),
                     "deep_action_id": self.deep_action_id,
                     "deep_followup_authorized": self.deep_followup_authorized,
                     "deep_selection_rule": (
@@ -388,8 +386,8 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
             raise
         totals = self.repository.gdc_run_totals(run_id)
         deep_summary = None
-        if self.deep_selection and wide_result is not None:
-            deep_summary = self._deep_slice(run_id, wide_result)
+        if self._deep_selections() and wide_result is not None:
+            deep_summary = self._deep_candidates(run_id, wide_result)
         completion_data = {
             "status": "COMPLETED", "reason_code": "BOUNDED_SWEEP_COMPLETE", "coverage": coverage,
             "states": len(states), "gdc_attempts": totals["attempts"], "gdc_bytes": totals["bytes"],
@@ -406,16 +404,22 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
 
     # -------------------------------------------------------------- deep slice
 
-    def _resolve_deep_candidate(self, run_id: str, promoted: list[dict[str, Any]]) -> dict[str, Any] | None:
+    def _deep_selections(self) -> tuple[str, ...]:
+        if self.deep_selections:
+            return tuple(self.deep_selections)
+        return (self.deep_selection,) if self.deep_selection else ()
+
+    def _resolve_deep_candidate(self, run_id: str, promoted: list[dict[str, Any]],
+                                selection: str) -> dict[str, Any] | None:
         rows = {row["candidate_id"]: row for row in self.repository.list_table("candidates", run_id)}
         for promotion in promoted:
             row = rows.get(promotion["candidate_id"])
             if row is None:
                 continue
             entity = row["entity"]
-            if self.deep_selection == entity.get("gene_symbol"):
+            if selection == entity.get("gene_symbol"):
                 return {**row, "entity": entity}
-            if self.deep_selection == f"slot:{promotion['slot']}":
+            if selection == f"slot:{promotion['slot']}":
                 return {**row, "entity": entity}
         return None
 
@@ -437,8 +441,8 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
             }
         return index
 
-    def _operator_selection_target(self, index: dict[str, dict[str, Any]]) -> tuple[str | None, str | None]:
-        selection = self.deep_selection or ""
+    def _operator_selection_target(self, selection: str,
+                                   index: dict[str, dict[str, Any]]) -> tuple[str | None, str | None]:
         if selection.startswith("slot:"):
             return None, "only a policy-promoted candidate can be named by slot"
         if selection.startswith("state:"):
@@ -455,7 +459,7 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
             return None, "the gene symbol is ambiguous in this run; use state:<state_id>"
         return matches[0], None
 
-    def _operator_candidate(self, run_id: str, state_id: str) -> dict[str, Any] | None:
+    def _operator_candidate(self, run_id: str, state_id: str, selection: str) -> dict[str, Any] | None:
         """Create one explicitly operator-selected candidate for deep analysis.
 
         Wide admission never selects it: the operator named it, the recorded rule says
@@ -469,19 +473,19 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
         slot = len(existing) + 1
         if slot > PROMOTION_LIMIT:
             self._event(
-                run_id, "DEEP_SELECTION_UNAVAILABLE", "deep:selection:cap",
+                run_id, "DEEP_SELECTION_UNAVAILABLE", f"deep:selection:cap:{selection}",
                 f"Explicit deep selection was refused: the promotion cap of {PROMOTION_LIMIT} is reached.",
                 stage="DEEP_ANALYSIS", level="warning",
-                data={"selection": self.deep_selection, "reason_code": "PROMOTION_LIMIT_REACHED",
+                data={"selection": selection, "reason_code": "PROMOTION_LIMIT_REACHED",
                       "detail": f"{len(existing)} candidate(s) already exist in this run"},
             )
             return None
         if not entry["evaluation_id"] or entry["evaluation_error"] is not None:
             self._event(
-                run_id, "DEEP_SELECTION_UNAVAILABLE", "deep:selection:not-evaluated",
+                run_id, "DEEP_SELECTION_UNAVAILABLE", f"deep:selection:not-evaluated:{selection}",
                 "Explicit deep selection was refused: the named state has no successful wide evaluation.",
                 stage="DEEP_ANALYSIS", level="warning",
-                data={"selection": self.deep_selection, "source_state_id": state_id,
+                data={"selection": selection, "source_state_id": state_id,
                       "reason_code": "STATE_NOT_EVALUATED",
                       "detail": "operator selection requires a state with a successful wide Jev evaluation"},
             )
@@ -497,7 +501,7 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
                 "candidate_id": candidate_id, "source_state_id": state_id,
                 "evaluation_id": entry["evaluation_id"], "promotion_slot": slot,
                 "policy_version": "operator-selection-v1", "reason": "OPERATOR_APPROVED_SELECTION",
-                "selection": self.deep_selection,
+                "selection": selection,
                 "selection_rule": (
                     "An operator named this candidate explicitly; wide admission did not select it and "
                     "no follow-up is dispatched automatically."
@@ -509,8 +513,8 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
                 status="WIDE_EVALUATED", current_stage="DEEP_ANALYSIS", source_state_id=state_id,
                 entity_json=canonical_json(entity).decode(),
                 summary_json=canonical_json({
-                    "promotion_reason": f"OPERATOR_APPROVED_SELECTION:{self.deep_selection}",
-                    "wide_evaluation_id": entry["evaluation_id"], "selection": self.deep_selection,
+                    "promotion_reason": f"OPERATOR_APPROVED_SELECTION:{selection}",
+                    "wide_evaluation_id": entry["evaluation_id"], "selection": selection,
                     "policy_version": "operator-selection-v1", "auto_dispatched": False,
                 }).decode(),
                 created_at=now, updated_at=now,
@@ -525,91 +529,64 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
             return None
         return self.artifacts.read(metadata["relative_path"])
 
-    def _deep_slice(self, run_id: str, wide_result: dict[str, Any]) -> dict[str, Any]:
-        promoted = wide_result.get("promoted", [])
-        candidate = self._resolve_deep_candidate(run_id, promoted)
+    def _resolve_selection(self, run_id: str, promoted: list[dict[str, Any]],
+                           selection: str) -> dict[str, Any] | None:
+        candidate = self._resolve_deep_candidate(run_id, promoted, selection)
+        if candidate is not None:
+            return candidate
         refusal_emitted = False
-        if candidate is None and self.deep_selection:
-            index = self._deep_state_index(run_id)
-            state_id, detail = self._operator_selection_target(index)
-            if state_id is not None:
-                candidate = self._operator_candidate(run_id, state_id)
-                refusal_emitted = candidate is None
-            elif detail is not None:
-                self._event(
-                    run_id, "DEEP_SELECTION_UNAVAILABLE", "deep:selection:unavailable",
-                    f"Explicit deep selection {self.deep_selection!r} matched no candidate: {detail}.",
-                    stage="DEEP_ANALYSIS", level="warning",
-                    data={"selection": self.deep_selection, "promoted_candidates": len(promoted),
-                          "reason_code": "DEEP_SELECTION_UNAVAILABLE", "detail": detail},
-                )
-                refusal_emitted = True
-        if candidate is None:
-            if self.deep_selection and not refusal_emitted:
-                self._event(
-                    run_id, "DEEP_SELECTION_UNAVAILABLE", "deep:selection:unavailable",
-                    f"Explicit deep selection {self.deep_selection!r} matched no promoted candidate.",
-                    stage="DEEP_ANALYSIS", level="warning",
-                    data={"selection": self.deep_selection, "promoted_candidates": len(promoted),
-                          "reason_code": "DEEP_SELECTION_UNAVAILABLE",
-                          "detail": "the selection must name a gene symbol, slot:N or state:<state_id> "
-                                    "of a wide-evaluated state in this run"},
-                )
-            return {"selection": self.deep_selection, "status": "DEEP_SELECTION_UNAVAILABLE",
-                    "candidate_id": None}
-
-        selection = self._stage(
-            run_id, "DEEP_ANALYSIS",
-            lambda: plan_deep_slice(
-                run_id=run_id, candidate=candidate, repository=self.repository,
-                artifacts=self.artifacts, emit=self._event, publish_json=self._publish_json,
-                requested_action_id=self.deep_action_id,
-            ),
-        )
-        if selection.selected_action_id is None:
-            return {"selection": self.deep_selection, "status": selection.abstain_reason,
-                    "candidate_id": candidate["candidate_id"],
-                    "abstain_detail": selection.abstain_detail}
-        result = self._stage(
-            run_id, "FOLLOWUP",
-            lambda: execute_followup(
-                run_id=run_id, plan=selection, repository=self.repository, emit=self._event,
-                publish_json=self._publish_json, read_artifact=self._read_artifact,
-            ),
-        )
-        summary: dict[str, Any] = {
-            "selection": self.deep_selection, "candidate_id": candidate["candidate_id"],
-            **result.summary(),
-        }
-        if result.status == "FAILED":
-            return summary
-        if self.jev_service is None:
-            summary["deep_note"] = "NOT_JUDGED: Jev is not enabled for this run"
-            summary["deep_evaluation_id"] = None
-            summary["next_move"] = None
-            return summary
-        judgement = self._stage(
-            run_id, "JEV_DEEP",
-            lambda: judge_evidence_revision(
-                run_id=run_id, candidate=selection.candidate, result=result,
-                jev_service=self.jev_service, emit=self._event,
-            ),
-        )
-        summary.update({key: value for key, value in judgement.items()
-                        if key != "deep_judgment_vector"})
-        decision = judgement.get("next_move")
-        if decision is not None:
-            dispatch = self._stage(
-                run_id, "FOLLOWUP",
-                lambda: dispatch_recorded_move(
-                    run_id=run_id, candidate=selection.candidate, result=result, decision=decision,
-                    repository=self.repository, emit=self._event, publish_json=self._publish_json,
-                    read_artifact=self._read_artifact,
-                    authorized=self.deep_followup_authorized, jev_service=self.jev_service,
-                ),
+        index = self._deep_state_index(run_id)
+        state_id, detail = self._operator_selection_target(selection, index)
+        if state_id is not None:
+            candidate = self._operator_candidate(run_id, state_id, selection)
+            refusal_emitted = candidate is None
+        elif detail is not None:
+            self._event(
+                run_id, "DEEP_SELECTION_UNAVAILABLE", f"deep:selection:unavailable:{selection}",
+                f"Explicit deep selection {selection!r} matched no candidate: {detail}.",
+                stage="DEEP_ANALYSIS", level="warning",
+                data={"selection": selection, "promoted_candidates": len(promoted),
+                      "reason_code": "DEEP_SELECTION_UNAVAILABLE", "detail": detail},
             )
-            summary["dispatch"] = dispatch.summary()
-        return summary
+            refusal_emitted = True
+        if candidate is None and not refusal_emitted:
+            self._event(
+                run_id, "DEEP_SELECTION_UNAVAILABLE", f"deep:selection:unavailable:{selection}",
+                f"Explicit deep selection {selection!r} matched no promoted candidate.",
+                stage="DEEP_ANALYSIS", level="warning",
+                data={"selection": selection, "promoted_candidates": len(promoted),
+                      "reason_code": "DEEP_SELECTION_UNAVAILABLE",
+                      "detail": "the selection must name a gene symbol, slot:N or state:<state_id> "
+                                "of a wide-evaluated state in this run"},
+            )
+        return candidate
+
+    def _deep_candidates(self, run_id: str, wide_result: dict[str, Any]) -> dict[str, Any]:
+        """Investigate each explicitly selected candidate with the bounded arc."""
+        promoted = wide_result.get("promoted", [])
+        selections = self._deep_selections()
+        summaries: list[dict[str, Any]] = []
+        for selection in selections:
+            candidate = self._resolve_selection(run_id, promoted, selection)
+            if candidate is None:
+                summaries.append({
+                    "selection": selection, "candidate_id": None, "status": "DEEP_SELECTION_UNAVAILABLE",
+                    "final_move": None, "stop_reason": "DEEP_SELECTION_UNAVAILABLE", "error_code": None,
+                    "first_step": {}, "steps": [], "decisions": [], "hypothesis": None, "dossier": None,
+                })
+                continue
+            investigation = run_candidate_investigation(
+                run_id=run_id, candidate=candidate, selection=selection,
+                repository=self.repository, artifacts=self.artifacts, emit=self._event,
+                publish_json=self._publish_json, read_artifact=self._read_artifact,
+                stage=lambda name, function: self._stage(run_id, name, function),
+                jev_service=self.jev_service, requested_action_id=self.deep_action_id,
+                authorize_iteration=self.deep_followup_authorized,
+                llm_generator=self.llm_generator,
+            )
+            summaries.append(investigation.summary())
+        return {"selections": list(selections), "candidate_count": len(summaries),
+                "candidates": summaries}
 
     # ----------------------------------------------------------------- inventory
 

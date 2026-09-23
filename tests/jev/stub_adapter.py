@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from cancerjev.jev.questions import DEEP_LIMITATION_ROSTER, LIMITATION_ROSTER, QuestionDefinition
+from cancerjev.jev.questions import (
+    DEEP_LIMITATION_ROSTER,
+    HYPOTHESIS_UNSUPPORTED_ROSTER,
+    LIMITATION_ROSTER,
+    QuestionDefinition,
+)
 from cancerjev.jev.typesafe_adapter import ProviderAnswerSet
 
 DEEP_ANSWERS = {
@@ -37,6 +42,8 @@ class StubAdapter:
         if state.get("projection_version") == "jev-evidence-projection-v1":
             answers = self._deep_answers()
             answers.update(self.deep_override)
+        elif state.get("projection_version") == "jev-hypothesis-projection-v1":
+            answers = self._hypothesis_answers()
         else:
             answers = self._wide_answers(state)
             answers.update(self.override)
@@ -60,6 +67,19 @@ class StubAdapter:
             "dominant_limitation": {
                 "kind": "choice", "choice": limitation, "confidence": 0.88,
                 "probabilities": probabilities,
+            },
+        }
+
+    def _hypothesis_answers(self) -> dict[str, dict[str, Any]]:
+        probabilities = {
+            option: (0.70 if option == "NONE" else 0.30 / (len(HYPOTHESIS_UNSUPPORTED_ROSTER) - 1))
+            for option in HYPOTHESIS_UNSUPPORTED_ROSTER
+        }
+        return {
+            "hypothesis_testable": {"kind": "noul", "probability_yes": 0.80},
+            "hypothesis_exceeds_recorded_evidence": {"kind": "noul", "probability_yes": 0.35},
+            "hypothesis_dominant_unsupported_assumption": {
+                "kind": "choice", "choice": "NONE", "confidence": 0.70, "probabilities": probabilities,
             },
         }
 

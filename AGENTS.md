@@ -16,15 +16,21 @@ instructions override implementation steps embedded in reference documents.
   <gene|gene:SYM|state:ID|slot:N>`); wide admission never dispatches a follow-up, and the slice
   acquires no evidence and calls no model.
 - One Deep Jev fan-out over E1 exists (`deep-v1`, `jev-evidence-projection-v1`), followed by the
-  deterministic Python next-move policy (`deep-policy-v1`) which records exactly one typed move
+  deterministic Python next-move policy (`deep-policy-v2`) which records exactly one typed move
   (`COMPLETE`/`FOLLOW_UP`/`ABSTAIN`) and never dispatches it. Jev judges; Python decides.
 - A recorded `FOLLOW_UP` can be dispatched as at most one further immutable revision (`E2`), and only
   when the operator authorizes it explicitly (`run --live --jev --deep-candidate <sel> --deep-followup`);
   a second registered action (`CHECK_REVISION_FAITHFULNESS_V1`, input kind `EVIDENCE_STATE`) makes that
   dispatch possible, the existing follow-up/revision caps still apply, and the new revision is judged
   again by the same deep fan-out.
-- Still absent: autonomous iteration beyond one authorized dispatch, hypothesis generation,
-  multi-candidate iteration, live dossiers and further registered actions.
+- A bounded investigation arc exists: after E1 the same run may dispatch further distinct eligible
+  revision actions while an operator authorization is in force and the follow-up/revision caps allow,
+  judging each new revision exactly once. Generated hypotheses follow the same rule: deterministic by
+  default, bounded, labelled, judged under `hypothesis-v2`, and produced by an injected generator only;
+  this repository performs no model request and holds no provider credential. Each investigated
+  candidate ends with a live dossier.
+- Still absent: Phase 7 offline autoresearch (needs a labelled historical corpus and human review), a
+  concrete LLM provider adapter, and any incremental-value result.
 - `LUAD_RESEARCH_V1` (`domain=lung cancer`, `cohort_id=TCGA-LUAD`, `project_id=TCGA-LUAD`)
   is the only production `ResearchSpec`. TCGA-LUAD and TCGA-LUSC are never pooled.
 - `wide-v2` is retained only for historical evaluations. Do not silently change `wide-v3` semantics;
@@ -83,6 +89,10 @@ instructions override implementation steps embedded in reference documents.
   concepts that a Python function or a new bounded `ResearchRun` can express.
 - Default tests are offline and must not contact GDC, TypeSafe/Jev or an LLM. Run focused
   tests before broader checks. Never weaken a scientific test to obtain a pass.
+- Generated hypothesis text is never evidence and never writes a measured field. This repository
+  performs no model request and holds no provider credential: a model is only ever reached through a
+  generator injected by the caller, and its output is validated strictly or rejected as a typed
+  `UNAVAILABLE` outcome.
 
 ## Documentation
 

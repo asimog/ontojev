@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-DEEP_POLICY_VERSION = "deep-policy-v1"
+DEEP_POLICY_VERSION = "deep-policy-v2"
 
 THRESHOLDS = {
     "revision_reliable_min": 0.5,
@@ -23,7 +23,7 @@ THRESHOLDS = {
     "stopping_more_honest_min": 0.5,
 }
 
-MOVES = ("COMPLETE", "FOLLOW_UP", "ABSTAIN")
+MOVES = ("COMPLETE", "FOLLOW_UP", "GENERATE_HYPOTHESES", "ABSTAIN")
 
 
 def _probability(judgment: dict[str, Any], question_id: str) -> float | None:
@@ -99,6 +99,12 @@ def next_move(*, checks: dict[str, Any], judgment: dict[str, Any],
         move, reason, detail = (
             "ABSTAIN", "EVIDENCE_INSUFFICIENT",
             "the revision does not hold enough observed evidence for a further step",
+        )
+    elif stopping is not None and stopping < THRESHOLDS["stopping_more_honest_min"]:
+        move, reason, detail = (
+            "GENERATE_HYPOTHESES", "HYPOTHESES_JUSTIFIED",
+            "the evidence is usable, no further deterministic step is warranted, and stopping is not "
+            "yet honest, so the honest next step is to state competing explanations",
         )
     else:
         move, reason, detail = (

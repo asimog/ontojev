@@ -19,20 +19,26 @@ from cancerjev.jev.contracts import JevContractError, validate_answers
 from cancerjev.jev.projection import (
     EVIDENCE_INCLUDED_FIELDS,
     EVIDENCE_PROJECTION_VERSION,
+    HYPOTHESIS_INCLUDED_FIELDS,
+    HYPOTHESIS_PROJECTION_VERSION,
     INCLUDED_FIELDS,
     PROJECTION_VERSION,
     build_evidence_projection,
+    build_hypothesis_projection,
     build_projection,
     projection_hash,
 )
 from cancerjev.jev.questions import (
     DEEP_QUESTION_SET_VERSION,
     DEEP_QUESTIONS,
+    HYPOTHESIS_QUESTION_SET_VERSION,
+    HYPOTHESIS_QUESTIONS,
     WIDE_QUESTION_SET_VERSION,
     WIDE_QUESTIONS,
     QuestionDefinition,
     applicability_map,
     deep_question_set_hash,
+    hypothesis_question_set_hash,
     wide_question_set_hash,
 )
 from cancerjev.jev.typesafe_adapter import ADAPTER_VERSION, JevProviderError, TypeSafeAdapter
@@ -81,6 +87,24 @@ class EvaluationContext:
             "question_hash": self.question_set_hash,
             "question_definitions_ref": self.question_definitions_ref,
         }
+
+
+@dataclass(frozen=True)
+class JudgementSpec:
+    """What one judgment is about and how it is recorded."""
+
+    purpose: str
+    input_ref_kind: str
+    input_ref_id: str
+    label: str
+    stage: str
+    questions: tuple[QuestionDefinition, ...]
+    question_set_version: str
+    set_hash: str
+    projection_version: str
+    event_type: str
+    event_prefix: str
+    common: dict[str, Any]
 
 
 @dataclass
@@ -265,36 +289,109 @@ class JevService:
             artifact_refs=[projection_artifact.ref()],
             registrations=[self.repository.artifact_registration(projection_artifact, run_id)],
         )
-        applicability = applicability_map(projection, DEEP_QUESTIONS)
         question_artifact = self._ensure_question_artifact(
             run_id, version=DEEP_QUESTION_SET_VERSION, definitions=DEEP_QUESTIONS,
             set_hash=deep_question_set_hash(),
         )
+        spec = JudgementSpec(
+            purpose="DEEP", input_ref_kind="EVIDENCE_STATE", input_ref_id=input_ref_id,
+            label=(evidence.get("entity") or {}).get("gene_symbol") or input_ref_id,
+            stage="JEV_DEEP", questions=DEEP_QUESTIONS,
+            question_set_version=DEEP_QUESTION_SET_VERSION, set_hash=deep_question_set_hash(),
+            projection_version=EVIDENCE_PROJECTION_VERSION, event_prefix="jev-deep",
+            event_type="JEV_DEEP_EVIDENCE_JUDGED",
+            common={
+                "source_state_hash": (evidence.get("source_statistical_state") or {}).get("state_identity_hash"),
+                "source_evidence_hash": evidence_hash,
+                "evidence_state_id": input_ref_id,
+                "candidate_id": evidence.get("candidate_id"),
+                "action_id": (evidence.get("action") or {}).get("action_id"),
+            },
+        )
+        return self._judge(run_id=run_id, subject_record=evidence, projection=projection,
+                           projection_id=projection_id, p_hash=p_hash,
+                           question_artifact=question_artifact, spec=spec, emit=emit)
+
+    def evaluate_hypothesis(self, *, run_id: str, hypothesis: dict[str, Any], evidence: dict[str, Any],
+                            eligible_actions: list[dict[str, Any]], evidence_hash: str,
+                            emit: Callable[..., Any]) -> dict[str, Any]:
+        """Judge one generated hypothesis against the revision it came from.
+
+        The generated text is carried into the projection verbatim and labelled with
+        its generator; the judgment is an input to Python policy, never evidence, and
+        never a measured field.
+        """
+        projection = build_hypothesis_projection(hypothesis, evidence, eligible_actions=eligible_actions,
+                                                 evidence_hash=evidence_hash)
+        projection_id = self._projection_id()
+        p_hash = projection_hash(projection)
+        projection_artifact = self._publish_json(
+            run_id, f"runs/{run_id}/jev/projections/{projection_id}.json", projection,
+            "jev-hypothesis-projection",
+        )
+        input_ref_id = hypothesis["hypothesis_id"]
+        emit(
+            run_id, "JEV_PROJECTION_CREATED", f"projection:{projection_id}",
+            f"Jev hypothesis projection created for hypothesis {input_ref_id}.",
+            stage="HYPOTHESIS_VERIFICATION",
+            data={"projection_id": projection_id, "input_ref_kind": "HYPOTHESIS",
+                  "input_ref_id": input_ref_id, "projection_version": HYPOTHESIS_PROJECTION_VERSION,
+                  "source_evidence_hash": evidence_hash, "projection_hash": p_hash,
+                  "included_fields": list(HYPOTHESIS_INCLUDED_FIELDS)},
+            artifact_refs=[projection_artifact.ref()],
+            registrations=[self.repository.artifact_registration(projection_artifact, run_id)],
+        )
+        question_artifact = self._ensure_question_artifact(
+            run_id, version=HYPOTHESIS_QUESTION_SET_VERSION, definitions=HYPOTHESIS_QUESTIONS,
+            set_hash=hypothesis_question_set_hash(),
+        )
+        spec = JudgementSpec(
+            purpose="HYPOTHESIS", input_ref_kind="HYPOTHESIS", input_ref_id=input_ref_id,
+            label=hypothesis.get("label") or input_ref_id, stage="HYPOTHESIS_VERIFICATION",
+            questions=HYPOTHESIS_QUESTIONS,
+            question_set_version=HYPOTHESIS_QUESTION_SET_VERSION,
+            set_hash=hypothesis_question_set_hash(),
+            projection_version=HYPOTHESIS_PROJECTION_VERSION, event_prefix="jev-hypothesis",
+            event_type="HYPOTHESIS_EVALUATED",
+            common={
+                "source_state_hash": (evidence.get("source_statistical_state") or {}).get("state_identity_hash"),
+                "source_evidence_hash": evidence_hash,
+                "evidence_state_id": evidence.get("evidence_state_id"),
+                "hypothesis_id": input_ref_id,
+                "candidate_id": evidence.get("candidate_id"),
+                "generator": hypothesis.get("generator"),
+            },
+        )
+        return self._judge(run_id=run_id, subject_record=hypothesis, projection=projection,
+                           projection_id=projection_id, p_hash=p_hash,
+                           question_artifact=question_artifact, spec=spec, emit=emit)
+
+    def _judge(self, *, run_id: str, subject_record: dict[str, Any], projection: dict[str, Any],
+               projection_id: str, p_hash: str, question_artifact: Any, spec: JudgementSpec,
+               emit: Callable[..., Any]) -> dict[str, Any]:
+        """Shared judgment path: cache, fail-closed provider call, persistence."""
+        applicability = applicability_map(projection, spec.questions)
         requested_model = self.settings.jev_model
-        subject = (evidence.get("entity") or {}).get("gene_symbol") or input_ref_id
         common = {
             "evaluation_id": str(uuid4()),
             "mode": "LIVE",
-            "purpose": "DEEP",
-            "input_ref_kind": "EVIDENCE_STATE",
-            "input_ref_id": input_ref_id,
-            "source_state_hash": (evidence.get("source_statistical_state") or {}).get("state_identity_hash"),
-            "source_evidence_hash": evidence_hash,
-            "evidence_state_id": input_ref_id,
-            "candidate_id": evidence.get("candidate_id"),
-            "action_id": (evidence.get("action") or {}).get("action_id"),
+            "purpose": spec.purpose,
+            "input_ref_kind": spec.input_ref_kind,
+            "input_ref_id": spec.input_ref_id,
             "projection_id": projection_id,
-            "projection_version": EVIDENCE_PROJECTION_VERSION,
+            "projection_version": spec.projection_version,
             "projection_hash": p_hash,
-            "question_set_version": DEEP_QUESTION_SET_VERSION,
-            "question_hash": deep_question_set_hash(),
+            "question_set_version": spec.question_set_version,
+            "question_hash": spec.set_hash,
             "question_definitions_ref": question_artifact.artifact_id,
             "adapter_version": ADAPTER_VERSION,
             "applicability": applicability,
             "routing_policy_version": None,
+            **spec.common,
         }
-        cache_key = self._cache_key(projection_hash_value=p_hash,
-                                    question_set_hash_value=deep_question_set_hash(),
+        persist = dict(purpose=spec.purpose, stage=spec.stage, subject=spec.label,
+                       event_type=spec.event_type, event_prefix=spec.event_prefix)
+        cache_key = self._cache_key(projection_hash_value=p_hash, question_set_hash_value=spec.set_hash,
                                     requested_model=requested_model)
         if cache_key is not None:
             cached_id = self.repository.jev_cache_get(cache_key)
@@ -310,15 +407,15 @@ class JevService:
                         "latency_ms": 0, "cache_source_evaluation_id": source["evaluation_id"],
                         "error": None,
                     }
-                    return self._persist_evaluation(run_id, evidence, evaluation, emit,
+                    return self._persist_evaluation(run_id, subject_record, evaluation, emit,
                                                     cache_key=cache_key, provider_attempted=False,
-                                                    purpose="DEEP", stage="JEV_DEEP", subject=subject)
+                                                    **persist)
         adapter = (
             self.adapter_factory() if self.adapter_factory is not None
             else TypeSafeAdapter(model=requested_model, timeout=self.settings.jev_timeout_seconds)
         )
         try:
-            answer_set, validated = self._invoke(adapter, projection, DEEP_QUESTIONS)
+            answer_set, validated = self._invoke(adapter, projection, spec.questions)
         except (JevProviderError, JevContractError) as exc:
             code = getattr(exc, "code", type(exc).__name__)
             evaluation = {
@@ -329,9 +426,8 @@ class JevService:
                 "cache_source_evaluation_id": None,
                 "error": {"code": str(code), "detail": str(exc)},
             }
-            return self._persist_evaluation(run_id, evidence, evaluation, emit, cache_key=None,
-                                            provider_attempted=True, purpose="DEEP",
-                                            stage="JEV_DEEP", subject=subject)
+            return self._persist_evaluation(run_id, subject_record, evaluation, emit, cache_key=None,
+                                            provider_attempted=True, **persist)
         if cache_key is not None and answer_set.resolved_model != requested_model:
             cache_key = None
         evaluation = {
@@ -342,9 +438,8 @@ class JevService:
             "request_id": answer_set.request_id, "usage": answer_set.usage,
             "latency_ms": answer_set.latency_ms, "cache_source_evaluation_id": None, "error": None,
         }
-        return self._persist_evaluation(run_id, evidence, evaluation, emit, cache_key=cache_key,
-                                        provider_attempted=True, purpose="DEEP",
-                                        stage="JEV_DEEP", subject=subject)
+        return self._persist_evaluation(run_id, subject_record, evaluation, emit, cache_key=cache_key,
+                                        provider_attempted=True, **persist)
 
     def _cached_evaluation(self, state: dict[str, Any], source: dict[str, Any], projection_id: str,
                            p_hash: str, question_artifact: Any,
@@ -385,7 +480,8 @@ class JevService:
     def _persist_evaluation(self, run_id: str, subject_record: dict[str, Any], evaluation: dict[str, Any],
                             emit: Callable[..., Any], *, cache_key: str | None, provider_attempted: bool,
                             purpose: str = "WIDE", stage: str = "JEV_WIDE",
-                            subject: str | None = None) -> dict[str, Any]:
+                            subject: str | None = None, event_type: str | None = None,
+                            event_prefix: str | None = None) -> dict[str, Any]:
         """Persist one evaluation (success or fail-closed failure) with its event.
 
         ``subject_record`` is the evaluated StatisticalState or EvidenceState
@@ -412,7 +508,7 @@ class JevService:
                 self.repository.jev_cache_registration(cache_key, evaluation_id, utc_now()),
             )
         label = subject or (subject_record.get("entity") or {}).get("gene_symbol") or input_ref_id
-        prefix = "jev-wide" if purpose == "WIDE" else "jev-deep"
+        prefix = event_prefix or ("jev-wide" if purpose == "WIDE" else "jev-deep")
         data = {
             "evaluation_id": evaluation_id,
             "purpose": purpose,
@@ -431,6 +527,10 @@ class JevService:
             "judgment_vector": evaluation["answers"],
             "question_set_version": evaluation["question_set_version"],
         }
+        if input_ref_kind == "HYPOTHESIS":
+            data["hypothesis_id"] = input_ref_id
+        if evaluation.get("generator") is not None:
+            data["generator"] = evaluation["generator"]
         if error is not None:
             event_type = "JEV_EVALUATION_FAILED"
             key = f"{prefix}:{evaluation_id}:failed"

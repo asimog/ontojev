@@ -154,11 +154,7 @@ def rankings(run_id: UUID, request: Request):
     if not repository.get_run(str(run_id)):
         raise HTTPException(404, detail="run not found")
     result: dict[str, object] = {"baseline": None, "jev": None}
-    with repository.database.read() as connection:
-        rows = connection.execute(
-            "SELECT * FROM artifacts WHERE run_id=? AND purpose='wide-ranking'", (str(run_id),),
-        ).fetchall()
-    for row in rows:
+    for row in repository.ranking_artifacts(str(run_id)):
         key = "baseline" if row["relative_path"].endswith("baseline_ranking.json") else "jev"
         try:
             result[key] = json.loads(artifacts.read(row["relative_path"], row["sha256"]))

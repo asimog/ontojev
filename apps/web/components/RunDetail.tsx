@@ -228,7 +228,28 @@ export function RunDetail({ runId }: { runId: string }) {
           <section className="panel"><div className="eyebrow">REGISTERED FOLLOW-UP</div><p>Baseline and revised EvidenceState IDs are preserved in the canonical events below. The deterministic fixture action changes the descriptive value without overwriting baseline evidence.</p></section>
         </>
       )}
-      {detail.dossiers.length > 0 && <section className="panel callout"><div><div className="eyebrow">DOSSIER READY</div><h2>{live ? "Research dossier" : "Synthetic research dossier"}</h2></div><Link className="button" href={`/dossiers/${String(detail.dossiers[0].dossier_id)}`}>Open dossier</Link></section>}
+            {detail.dossiers.length > 0 && <section className="panel callout"><div><div className="eyebrow">DOSSIER READY</div><h2>{live ? "Live research dossier" : "Synthetic research dossier"}</h2><p className="fine">{live ? "Authoritative JSON plus derived Markdown over the recorded evidence chain, generated hypotheses and next moves." : "Synthetic fixture dossier."}</p></div><Link className="button" href={`/dossiers/${String(detail.dossiers[0].dossier_id)}`}>Open dossier</Link></section>}
+      {live && detail.hypotheses.length > 0 && (
+        <section className="panel hypotheses">
+          <div className="eyebrow coral">GENERATED HYPOTHESES — NOT EVIDENCE</div>
+          <h2>{detail.hypotheses.length} labelled statement(s) awaiting no execution</h2>
+          <p className="fine">Each statement is generated text recorded with its generator; its Jev review is an input to the Python next-move policy and never evidence. A generated statement never writes a measured field.</p>
+          {detail.hypotheses.map((record) => {
+            const hypothesis = record.hypothesis as Record<string, unknown>;
+            return (
+              <article className="hypothesis" key={String(record.hypothesis_id)}>
+                <span>{String(hypothesis.label)}</span>
+                <h3>{String(hypothesis.statement)}</h3>
+                <p className="fine mono">generator {String(hypothesis.generator)}</p>
+                <p>{String(hypothesis.proposed_mechanism)}</p>
+                {Array.isArray(hypothesis.contradicted_if) && hypothesis.contradicted_if.length > 0 && (
+                  <p className="fine">falsified if: {hypothesis.contradicted_if.join("; ")}</p>
+                )}
+              </article>
+            );
+          })}
+        </section>
+      )}
       <section className="panel filter-row">
         <label>Candidate <select value={candidateFilter} onChange={(event) => setCandidateFilter(event.target.value)}><option value="all">All candidates</option>{detail.candidates.map((item) => <option key={String(item.candidate_id)} value={String(item.candidate_id)}>{String((item.entity as Record<string, unknown>)?.gene_symbol ?? String(item.candidate_id).slice(0, 8))}</option>)}</select></label>
         <label>Iteration <select value={iterationFilter} onChange={(event) => setIterationFilter(event.target.value)}><option value="all">All iterations</option><option value="0">0</option><option value="1">1</option><option value="2">2</option></select></label>

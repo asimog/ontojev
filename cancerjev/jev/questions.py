@@ -16,6 +16,7 @@ from cancerjev.domain.events import canonical_json
 
 WIDE_QUESTION_SET_VERSION = "wide-v3"
 DEEP_QUESTION_SET_VERSION = "deep-v1"
+HYPOTHESIS_QUESTION_SET_VERSION = "hypothesis-v2"
 
 NOUL_TRUE_CRITERION = (
     "The stated proposition is supported by the supplied observations and their stated quality context."
@@ -239,10 +240,63 @@ DEEP_QUESTIONS: tuple[QuestionDefinition, ...] = (
 
 DEEP_QUESTIONS_BY_ID = {definition.question_id: definition for definition in DEEP_QUESTIONS}
 
+HYPOTHESIS_UNSUPPORTED_ROSTER = {
+    "MECHANISM": "The statement asserts a biological mechanism the recorded evidence does not establish.",
+    "CAUSALITY": "The statement asserts a cause or direction that the recorded evidence cannot support.",
+    "CLINICAL": "The statement carries a clinical, prognostic or therapeutic implication the evidence cannot support.",
+    "POPULATION": "The statement generalizes beyond the single examined cohort or the selection-biased examined gene set.",
+    "NONE": "No listed unsupported assumption dominates.",
+    "OTHER": "An unsupported assumption outside the listed options dominates.",
+}
+
+HYPOTHESIS_QUESTIONS: tuple[QuestionDefinition, ...] = (
+    QuestionDefinition(
+        question_id="hypothesis_testable",
+        primitive="NOUL",
+        version=1,
+        instructions=(
+            "You are reviewing one generated hypothesis about a single gene in one TCGA-LUAD cohort. The "
+            "projection states which generator produced the text, the exact statement, its predictions and "
+            "falsification criteria, and the recorded evidence revision it was derived from. Generated text is "
+            "not evidence, and you must judge only the statement in front of you. Decide whether the statement "
+            "could be contradicted by a bounded deterministic computation over evidence that is already "
+            "retained or allowlisted. A statement that could never fail such a computation is not testable."
+        ),
+        criteria={"true": NOUL_TRUE_CRITERION, "false": NOUL_FALSE_CRITERION},
+        applicability_rule="hypothesis_present",
+    ),
+    QuestionDefinition(
+        question_id="hypothesis_exceeds_recorded_evidence",
+        primitive="NOUL",
+        version=1,
+        instructions=(
+            "Does the statement claim more than the recorded evidence supports? Treat any asserted mechanism, "
+            "causal direction, clinical meaning or wider generalization as exceeding the evidence unless the "
+            "statement itself is explicit that it is only a hypothesis. Count the recorded revision's own "
+            "stated missingness and scope limits against the statement."
+        ),
+        criteria={"true": NOUL_TRUE_CRITERION, "false": NOUL_FALSE_CRITERION},
+        applicability_rule="hypothesis_present",
+    ),
+    QuestionDefinition(
+        question_id="hypothesis_dominant_unsupported_assumption",
+        primitive="CHOICE",
+        version=1,
+        instructions=(
+            "Which single unsupported assumption, if any, most dominates this statement? Choose the "
+            "best-fitting option, or NONE when the statement stays within what the recorded evidence can support."
+        ),
+        criteria=dict(HYPOTHESIS_UNSUPPORTED_ROSTER),
+        applicability_rule="hypothesis_present",
+    ),
+)
+
+HYPOTHESIS_QUESTIONS_BY_ID = {definition.question_id: definition for definition in HYPOTHESIS_QUESTIONS}
+
 _PRIMITIVES = frozenset({"NOUL", "CHOICE", "SCORE"})
 _APPLICABILITY_RULES = frozenset({
     "any_observation", "mutation_observed", "expression_observed",
-    "revision_evidence_present", "integrity_observed",
+    "revision_evidence_present", "integrity_observed", "hypothesis_present",
 })
 
 
@@ -285,6 +339,7 @@ def validate_definitions(definitions: tuple[QuestionDefinition, ...]) -> None:
 
 validate_definitions(WIDE_QUESTIONS)
 validate_definitions(DEEP_QUESTIONS)
+validate_definitions(HYPOTHESIS_QUESTIONS)
 
 
 def question_set_hash(definitions: tuple[QuestionDefinition, ...], version: str) -> str:
@@ -322,6 +377,10 @@ def deep_question_set_hash() -> str:
     return question_set_hash(DEEP_QUESTIONS, DEEP_QUESTION_SET_VERSION)
 
 
+def hypothesis_question_set_hash() -> str:
+    return question_set_hash(HYPOTHESIS_QUESTIONS, HYPOTHESIS_QUESTION_SET_VERSION)
+
+
 def applicability(definition: QuestionDefinition, projection: dict[str, Any]) -> tuple[bool, str]:
     cohort = projection.get("cohort", {})
     revision = projection.get("revision", {})
@@ -341,6 +400,10 @@ def applicability(definition: QuestionDefinition, projection: dict[str, Any]) ->
     if rule == "integrity_observed":
         observed = revision.get("integrity_observed") is True
         return observed, f"INTEGRITY_OBSERVED={observed}"
+    if rule == "hypothesis_present":
+        hypothesis = projection.get("hypothesis", {})
+        present = isinstance(hypothesis, dict) and bool(hypothesis.get("statement"))
+        return present, f"HYPOTHESIS_PRESENT={present}"
     raise ValueError(f"unknown applicability rule {rule}")
 
 

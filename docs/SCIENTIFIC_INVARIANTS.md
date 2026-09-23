@@ -92,7 +92,7 @@ action set, using its own versioned question set (`deep-v1`). The boundary is ex
   grounded is marked inapplicable and the evaluation records that.
 - Provider or validation failure is a persisted `JEV_EVALUATION_FAILED`; the revision stands and the
   run continues. There is no fabricated default answer.
-- The Python next-move policy (`deep-policy-v1`) maps the recorded checks and the judgment to exactly
+- The Python next-move policy (`deep-policy-v2`) maps the recorded checks and the judgment to exactly
   one typed move (`COMPLETE`, `FOLLOW_UP`, `ABSTAIN`) with named thresholds. A contradicted
   integrity check abstains before any judgment dimension is consulted; a missing or failed judgment
   abstains as `DEEP_JUDGMENT_UNAVAILABLE`.
@@ -100,8 +100,26 @@ action set, using its own versioned question set (`deep-v1`). The boundary is ex
   step with no distinct eligible action is reported as `NO_FURTHER_REGISTERED_ACTION` rather than
   dropped. Jev does not select, authorize or execute a computation, and no loop is driven by a
   judgment.
+## Generated hypotheses and live dossiers (Phase 5-6)
+
+- Generated text is never evidence. Every statement carries a label naming its generator, is stored in
+  its own record, is bounded (`MAX_HYPOTHESES = 3` per candidate) and never writes a measured field.
+- This repository performs no model request, holds no provider credential and defines no provider
+  contract. Generation is deterministic by default; an LLM is used only through a generator injected
+  by the caller, whose output is validated strictly (schema, non-empty statement, distinguishing tests
+  restricted to eligible registered actions) and whose absence or deviation is a typed, recorded
+  `UNAVAILABLE` outcome.
+- `hypothesis-v2` reviews each statement over the new `jev-hypothesis-projection-v1` projection. The
+  review is an input to Python policy; it executes nothing and authorizes nothing.
+- A live dossier is presentation over what the run already recorded: every section states its
+  availability and reason, the live notice names what the dossier does and does not support, and no
+  measurement is computed while building it.
+- The baseline-versus-Jev harness compares recorded rankings against an operator-supplied,
+  pre-registered label file. It is descriptive: with one cohort, a selection-biased examined gene set
+  and k <= 3 it never claims that a changed ranking improved the decision.
+
 - Deep thresholds are provisional and must not be tuned to force a move; a `COMPLETE` decision is a
-  statement about remaining deterministic work, not a biological conclusion. The `deep-policy-v1`
+  statement about remaining deterministic work, not a biological conclusion. The `deep-policy-v2`
   values are `revision_reliable_min = 0.5`, `evidence_sufficient_min = 0.5`,
   `next_step_warranted_min = 0.6` and `stopping_more_honest_min = 0.5`
   (`cancerjev/research/nextmove.py` is the source of truth).

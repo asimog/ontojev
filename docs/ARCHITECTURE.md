@@ -99,9 +99,20 @@ with recorded `operator-selection-v1` provenance and still consumes a promotion 
 judges the revision plus the eligible registered action set with the versioned `deep-v1` question set
 (`JEV_DEEP_STARTED`, one evaluation per revision recorded as `purpose=DEEP` /
 `input_ref_kind=EVIDENCE_STATE` via `JEV_DEEP_EVIDENCE_JUDGED`), and the Python next-move policy
-(`deep-policy-v1`) records one typed move (`COMPLETE`/`FOLLOW_UP`/`ABSTAIN`) with its dimensions and
+(`deep-policy-v2`) records one typed move (`COMPLETE`/`FOLLOW_UP`/`ABSTAIN`) with its dimensions and
 reason. Jev judges; Python decides: a judgment never selects, authorizes or executes an action, and
 the recorded move is deliberately not dispatched by the policy.
+
+**Live Phase 4-6 bounded arc (IMPLEMENTED, 2026-09-23):** the dispatch above is the first step of
+a bounded arc: after each new revision is judged once, Python may dispatch the next distinct eligible
+revision action while an operator authorization is in force and both caps allow, repeating
+evidence -> judgment -> decision until a typed stop. Bounded hypothesis generation runs when the
+policy asks for it (`GENERATE_HYPOTHESES`): statements are deterministic by default, are labelled with
+their generator, are reviewed by `hypothesis-v2`, and are produced by an injected generator only --
+this repository performs no model request. The arc ends with the candidate's live dossier
+(authoritative JSON plus derived Markdown over the recorded chain). The autonomous loop below remains
+the destination; nothing dispatches a move the policy did not record and no judgment drives control
+flow.
 
 **Live Phase 4 dispatch (IMPLEMENTED, 2026-09-23):** a recorded `FOLLOW_UP` may be dispatched once per
 run, only when the operator authorizes it (`--deep-followup`), only to the sorted-first distinct

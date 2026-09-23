@@ -15,6 +15,7 @@ from cancerjev.domain.events import canonical_json
 
 PROJECTION_VERSION = "jev-state-projection-v2"
 EVIDENCE_PROJECTION_VERSION = "jev-evidence-projection-v1"
+HYPOTHESIS_PROJECTION_VERSION = "jev-hypothesis-projection-v1"
 PROJECTION_BYTE_CAP = 65_536
 
 INCLUDED_FIELDS = (
@@ -151,6 +152,103 @@ def build_projection(state: dict[str, Any]) -> dict[str, Any]:
         "missingness": missingness,
         "limitations": _limitations(state),
         "eligible_followups": [],
+    }
+    encoded = canonical_json(projection)
+    if len(encoded) > PROJECTION_BYTE_CAP:
+        raise ProjectionError("PROJECTION_TOO_LARGE", f"{len(encoded)} bytes exceeds cap {PROJECTION_BYTE_CAP}")
+    return projection
+
+
+HYPOTHESIS_INCLUDED_FIELDS = (
+    "projection_version",
+    "hypothesis.hypothesis_id",
+    "hypothesis.label",
+    "hypothesis.generator",
+    "hypothesis.statement",
+    "hypothesis.proposed_mechanism",
+    "hypothesis.predictions",
+    "hypothesis.contradicted_if",
+    "hypothesis.distinguishing_tests",
+    "hypothesis.required_evidence",
+    "hypothesis.unsupported_assumptions",
+    "revision.iteration",
+    "revision.source_state_hash",
+    "revision.evidence_hash",
+    "observations[]",
+    "project_evidence[]",
+    "missing_evidence[]",
+    "eligible_actions[]",
+    "limitations[]",
+)
+
+
+def build_hypothesis_projection(hypothesis: dict[str, Any], evidence: dict[str, Any], *,
+                                eligible_actions: list[dict[str, Any]], evidence_hash: str) -> dict[str, Any]:
+    """Project one generated hypothesis together with the revision it came from.
+
+    The hypothesis text is carried verbatim and labelled with its generator; the
+    projection never presents generated text as evidence, never recomputes anything
+    and never includes operational ids.
+    """
+    if evidence.get("schema_version") != 2:
+        raise ProjectionError("UNSUPPORTED_EVIDENCE_SCHEMA", f"schema {evidence.get('schema_version')!r}")
+    observations = []
+    for observation in evidence.get("deterministic_observations", []):
+        observations.append({
+            "check_id": observation.get("check_id") or observation.get("method_id"),
+            "outcome": observation.get("outcome"),
+            "availability": observation.get("availability"),
+            "n_effective": observation.get("n_effective"),
+            "missingness": observation.get("missingness"),
+        })
+    project_evidence = []
+    for row in evidence.get("project_level_evidence", []):
+        entry = {"project_id": row.get("project_id")}
+        for key in ("affected_case_count", "examined_cases", "project_case_with_ssm",
+                    "cases_with_expression", "missing_measurements"):
+            metric = row.get(key) or {}
+            entry[key] = metric.get("value")
+            entry[f"{key}_availability"] = metric.get("availability")
+        project_evidence.append(entry)
+    projection = {
+        "projection_version": HYPOTHESIS_PROJECTION_VERSION,
+        "hypothesis": {
+            "hypothesis_id": hypothesis.get("hypothesis_id"),
+            "label": hypothesis.get("label"),
+            "generator": hypothesis.get("generator"),
+            "statement": hypothesis.get("statement"),
+            "proposed_mechanism": hypothesis.get("proposed_mechanism"),
+            "predictions": list(hypothesis.get("predictions", [])),
+            "contradicted_if": list(hypothesis.get("contradicted_if", [])),
+            "distinguishing_tests": list(hypothesis.get("distinguishing_tests", [])),
+            "required_evidence": list(hypothesis.get("required_evidence", [])),
+            "unsupported_assumptions": list(hypothesis.get("unsupported_assumptions", [])),
+        },
+        "revision": {
+            "iteration": evidence.get("iteration_number"),
+            "source_state_hash": (evidence.get("source_statistical_state") or {}).get("state_identity_hash"),
+            "evidence_hash": evidence_hash,
+        },
+        "observations": observations,
+        "project_evidence": project_evidence,
+        "missing_evidence": [
+            {"needed_evidence": item.get("needed_evidence"), "availability": item.get("availability")}
+            for item in evidence.get("missing_evidence", [])
+        ],
+        "eligible_actions": [
+            {
+                "action_id": action.get("action_id"),
+                "version": action.get("version"),
+                "title": action.get("title"),
+                "unit": action.get("unit"),
+            }
+            for action in eligible_actions
+        ],
+        "limitations": [
+            "The hypothesis text is generated, not measured; it is not evidence.",
+            "Judgments about the statement are inputs to Python policy and never execute anything.",
+            "A single cohort is examined and the examined gene set is selection-biased.",
+        ],
     }
     encoded = canonical_json(projection)
     if len(encoded) > PROJECTION_BYTE_CAP:

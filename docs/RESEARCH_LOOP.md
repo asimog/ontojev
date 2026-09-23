@@ -69,22 +69,31 @@ specification `LUAD_RESEARCH_V1`:
 6. `JEV_DEEP` (Phase 4 next stage, same run): one Deep Jev fan-out over the new revision plus the
    eligible registered action set with the versioned `deep-v1` question set, persisted as a normal
    evaluation with `purpose=DEEP` and `input_ref_kind=EVIDENCE_STATE`; then the deterministic Python
-   next-move policy (`deep-policy-v1`) records one typed move (`COMPLETE`/`FOLLOW_UP`/`ABSTAIN`) with
+   next-move policy (`deep-policy-v2`) records one typed move (`COMPLETE`/`FOLLOW_UP`/`ABSTAIN`) with
    its dimensions and thresholds. The judgment is an input and the move is recorded, not dispatched:
    Jev never selects, authorizes or executes an action.
-7. `FOLLOWUP` (Phase 4 dispatch stage, same run): when the recorded move is `FOLLOW_UP` and the
+7. `HYPOTHESIS_GENERATION` (Phase 4-6, same run): when the policy records `GENERATE_HYPOTHESES`
+   and iteration is authorized, bounded statements are generated (deterministic by default, or by a
+   generator injected by the caller -- never by this repository), stored with their generator label,
+   and judged once each under `hypothesis-v2`. Generated text is never evidence and never writes a
+   measured field.
+8. `DOSSIER` (Phase 5, same run): the candidate's live dossier is recorded as authoritative JSON plus
+   derived Markdown over the accepted state, every revision, every execution, every judgment and every
+   recorded next move, with an explicit availability per section; the candidate becomes
+   `DOSSIER_READY`.
+9. `FOLLOWUP` (Phase 4 bounded arc, same run): when the recorded move is `FOLLOW_UP` and the
    operator authorized dispatch (`--deep-followup`), at most one further immutable revision (`E2`,
    parent `E1`) is produced by the distinct eligible revision action, and it is judged again by the
    same deep fan-out. Every refusal (not a `FOLLOW_UP`, not authorized, no distinct eligible action,
    either cap, action failure) is a typed `NEXT_MOVE_DISPATCHED` record. Autonomous iteration beyond
    this one authorized dispatch is not implemented.
-8. `RUN_COMPLETED` with `coverage = COMPLETE_FOR_SCOPE` or `PARTIAL`, real GDC/Jev usage counters,
+10. `RUN_COMPLETED` with `coverage = COMPLETE_FOR_SCOPE` or `PARTIAL`, real GDC/Jev usage counters,
    the deep-slice and dispatch summaries when they ran, and zero LLM calls.
 
 Failure discipline: any budget exhaustion, transport failure or parser rejection stops admission
 for the affected lane, is recorded as a typed event, and leaves the run COMPLETED/PARTIAL or
-FAILED with the reason — never a silent skip. Hypothesis generation, further revisions beyond one
-authorized dispatch and multi-candidate iteration remain Phase 4+, and nothing in the live loop
+FAILED with the reason — never a silent skip. Hypothesis generation, further revisions beyond the
+authorized caps and Phase 7 offline autoresearch remain later work, and nothing in the live loop
 dispatches a follow-up from a recorded next move without explicit operator authorization.
 
 ## Planned candidate investigation (Phase 4+, first slices IMPLEMENTED)
