@@ -18,8 +18,13 @@ instructions override implementation steps embedded in reference documents.
 - One Deep Jev fan-out over E1 exists (`deep-v1`, `jev-evidence-projection-v1`), followed by the
   deterministic Python next-move policy (`deep-policy-v1`) which records exactly one typed move
   (`COMPLETE`/`FOLLOW_UP`/`ABSTAIN`) and never dispatches it. Jev judges; Python decides.
-- Still absent: a second registered action (so a recorded `FOLLOW_UP` can be dispatched), hypothesis
-  generation, multi-candidate iteration, further evidence revisions and live dossiers.
+- A recorded `FOLLOW_UP` can be dispatched as at most one further immutable revision (`E2`), and only
+  when the operator authorizes it explicitly (`run --live --jev --deep-candidate <sel> --deep-followup`);
+  a second registered action (`CHECK_REVISION_FAITHFULNESS_V1`, input kind `EVIDENCE_STATE`) makes that
+  dispatch possible, the existing follow-up/revision caps still apply, and the new revision is judged
+  again by the same deep fan-out.
+- Still absent: autonomous iteration beyond one authorized dispatch, hypothesis generation,
+  multi-candidate iteration, live dossiers and further registered actions.
 - `LUAD_RESEARCH_V1` (`domain=lung cancer`, `cohort_id=TCGA-LUAD`, `project_id=TCGA-LUAD`)
   is the only production `ResearchSpec`. TCGA-LUAD and TCGA-LUSC are never pooled.
 - `wide-v2` is retained only for historical evaluations. Do not silently change `wide-v3` semantics;
@@ -43,10 +48,10 @@ instructions override implementation steps embedded in reference documents.
   judgment never selects, authorizes or executes an action, and a recorded next move is never
   dispatched by the policy that recorded it.
 - Deterministic follow-up actions are registered in code with an explicit contract (question,
-  falsifiable interpretation, method/version, unit, required evidence, limitations). They acquire no
-  data, call no model, compute no new biological quantity and never rewrite the evidence they read;
-  an action failure is a typed outcome that promotes nothing. New actions require a concrete
-  operation, not foresight.
+  falsifiable interpretation, method/version, unit, required evidence, limitations) and a declared
+  input kind (`STATISTICAL_STATE` or `EVIDENCE_STATE`). They acquire no data, call no model, compute no
+  new biological quantity and never rewrite the evidence they read; an action failure is a typed
+  outcome that promotes nothing. New actions require a concrete operation, not foresight.
 - `storage` is the only layer that writes SQL. `research` and `jev` register records through
   narrow `Repository` methods inside the same event + registrations transaction; they must not
   contain raw SQL or touch `repository.database`. No ORM, DAO hierarchy or second repository.

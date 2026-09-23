@@ -13,7 +13,7 @@ from cancerjev.domain.identity import content_hash, evidence_state_identity_payl
 from cancerjev.research import deep
 from cancerjev.research.live import LiveOrchestrator
 from cancerjev.research.specs import LUAD_RESEARCH_V1
-from cancerjev.science.actions import ActionError
+from cancerjev.science.actions import ACTION_REGISTRY_VERSION, ActionError
 from tests.integration.test_live_replay import _orchestrator
 from tests.jev.stub_adapter import StubAdapter
 
@@ -78,7 +78,7 @@ def test_live_deep_slice_creates_e0_and_e1_from_one_explicit_action(runtime, mon
     assert [check["outcome"] for check in revised_state["deterministic_observations"]] == [
         "VERIFIED", "VERIFIED", "VERIFIED", "VERIFIED", "VERIFIED",
     ]
-    assert revised_state["provenance"]["action_registry_version"] == "1"
+    assert revised_state["provenance"]["action_registry_version"] == ACTION_REGISTRY_VERSION
     assert revised_state["provenance"]["selection_artifact_sha256"]
     assert revised_state["research_only_notice"].startswith("REAL OPEN-ACCESS GDC EVIDENCE")
 
@@ -432,3 +432,123 @@ def test_deep_judgment_failure_is_contained_and_keeps_the_revision(runtime, monk
                    and event["data"]["input_ref_kind"] == "EVIDENCE_STATE"]
     assert deep_errors, "a failed deep judgment must be recorded, not hidden"
     assert [row["iteration"] for row in repository.list_table("evidence_states", run_id)] == [0, 1]
+
+
+def _follow_up_adapter() -> StubAdapter:
+    """A provider that warrants a further step and does not claim completion."""
+    return StubAdapter(
+        override={"warrants_deeper_investigation": {"kind": "noul", "probability_yes": 0.05}},
+        deep_override={
+            "next_step_warranted": {"kind": "noul", "probability_yes": 0.9},
+            "stopping_more_honest": {"kind": "noul", "probability_yes": 0.1},
+        },
+    )
+
+
+def _dispatched_slice(runtime, monkeypatch, *, authorized: bool, **kwargs):
+    orchestrator, _, repository = _orchestrator(
+        runtime, monkeypatch, jev_adapter=_follow_up_adapter(),
+        deep_selection="GENEONE", deep_followup_authorized=authorized, **kwargs)
+    run_id = orchestrator.run()
+    run = repository.get_run(run_id)
+    assert run["status"] == "COMPLETED"
+    return run_id, run, repository
+
+
+def test_authorized_follow_up_dispatches_one_revision_and_rejudges_it(runtime, monkeypatch):
+    run_id, run, repository = _dispatched_slice(runtime, monkeypatch, authorized=True)
+    summary = _deep_summary(repository, run_id)
+    assert summary["next_move"]["move"] == "FOLLOW_UP"
+    assert summary["next_move"]["reason_code"] == "FOLLOW_UP_WARRANTED"
+    assert summary["next_move"]["executed"] is False, "the policy never dispatches its own decision"
+    assert summary["next_move"]["dimensions"]["distinct_eligible_action_ids"] == [
+        "CHECK_REVISION_FAITHFULNESS_V1",
+    ]
+    dispatch = summary["dispatch"]
+    assert dispatch["dispatched"] is True
+    assert dispatch["reason_code"] == "DISPATCHED"
+    assert dispatch["action_id"] == "CHECK_REVISION_FAITHFULNESS_V1"
+    assert dispatch["iteration"] == 2
+    assert dispatch["next_move"]["move"] == "ABSTAIN"
+    assert dispatch["next_move"]["reason_code"] == "NO_FURTHER_REGISTERED_ACTION"
+
+    candidate = next(row for row in repository.list_table("candidates", run_id)
+                     if row["entity"]["gene_symbol"] == "GENEONE")
+    revisions = repository.evidence_revisions(candidate["candidate_id"])
+    assert [row["iteration"] for row in revisions] == [0, 1, 2]
+    assert revisions[2]["previous_evidence_state_id"] == revisions[1]["evidence_state_id"]
+    assert revisions[2]["evidence_hash"] != revisions[1]["evidence_hash"]
+    assert revisions[0]["evidence_hash"] != revisions[1]["evidence_hash"]
+    second = json.loads(repository_runtime_artifact(runtime, repository, revisions[2]["artifact_id"]))
+    assert second["action"]["action_id"] == "CHECK_REVISION_FAITHFULNESS_V1"
+    assert second["previous_evidence_state_id"] == revisions[1]["evidence_state_id"]
+    assert [observation["outcome"] for observation in second["deterministic_observations"]] == [
+        "VERIFIED", "VERIFIED", "VERIFIED", "VERIFIED",
+    ]
+    assert second["quality_and_fragility"]["checks_total"] == 4
+
+    executions = repository.followup_executions_for(candidate["candidate_id"])
+    assert [row["action_id"] for row in executions] == [
+        "CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1",
+    ]
+    assert [row["status"] for row in executions] == ["COMPLETED", "COMPLETED"]
+    assert executions[1]["input_evidence_hash"] == revisions[1]["evidence_hash"]
+
+    event_types = [event["type"] for event in repository.events(run_id, 0, 700)["items"]]
+    assert event_types.count("NEXT_MOVE_SELECTED") == 2
+    assert event_types.count("NEXT_MOVE_DISPATCHED") == 1
+    assert event_types.count("EVIDENCE_STATE_CREATED") == 3
+    assert event_types.count("JEV_DEEP_EVIDENCE_JUDGED") == 2
+    assert run["counts"]["followups_completed"] == 2
+    assert run["counts"]["evidence_revisions"] == 3
+    deep_evaluations = repository.page_child("jev_evaluations", run_id, 50, None,
+                                             {"purpose": "DEEP"})["items"]
+    assert len(deep_evaluations) == 2
+    assert run["provider_usage"]["jev_calls"] == 2 + len(
+        repository.page_child("jev_evaluations", run_id, 50, None, {"purpose": "WIDE"})["items"]
+    )
+
+
+def repository_runtime_artifact(runtime, repository, artifact_id: str) -> bytes:
+    metadata = repository.artifact(artifact_id)
+    return runtime[2].read(metadata["relative_path"])
+
+
+def test_unauthorized_follow_up_is_recorded_but_not_dispatched(runtime, monkeypatch):
+    run_id, run, repository = _dispatched_slice(runtime, monkeypatch, authorized=False)
+    summary = _deep_summary(repository, run_id)
+    assert summary["next_move"]["move"] == "FOLLOW_UP"
+    assert summary["dispatch"]["dispatched"] is False
+    assert summary["dispatch"]["reason_code"] == "DISPATCH_NOT_AUTHORIZED"
+    assert [row["iteration"] for row in repository.list_table("evidence_states", run_id)] == [0, 1]
+    refusals = [event for event in repository.events(run_id, 0, 700)["items"]
+                if event["type"] == "NEXT_MOVE_DISPATCHED"]
+    assert len(refusals) == 1 and refusals[0]["data"]["authorized"] is False
+
+
+def test_completed_investigation_is_never_dispatched(runtime, monkeypatch):
+    run_id, run, repository = _operator_slice(runtime, monkeypatch, deep_selection="GENEONE",
+                                              deep_followup_authorized=True)
+    summary = _deep_summary(repository, run_id)
+    assert summary["next_move"]["move"] == "COMPLETE"
+    assert summary["dispatch"]["dispatched"] is False
+    assert summary["dispatch"]["reason_code"] == "MOVE_NOT_FOLLOW_UP"
+    assert [row["iteration"] for row in repository.list_table("evidence_states", run_id)] == [0, 1]
+
+
+@pytest.mark.parametrize(
+    ("attribute", "limit", "reason"),
+    [
+        ("FOLLOWUP_LIMIT", 1, "FOLLOWUP_LIMIT_REACHED"),
+        ("EVIDENCE_ITERATION_LIMIT", 1, "EVIDENCE_ITERATION_LIMIT_REACHED"),
+    ],
+)
+def test_dispatch_respects_the_caps(runtime, monkeypatch, attribute, limit, reason):
+    monkeypatch.setattr(deep, attribute, limit)
+    run_id, run, repository = _dispatched_slice(runtime, monkeypatch, authorized=True)
+    summary = _deep_summary(repository, run_id)
+    assert summary["next_move"]["move"] == "FOLLOW_UP"
+    assert summary["dispatch"]["dispatched"] is False
+    assert summary["dispatch"]["reason_code"] == reason
+    assert [row["iteration"] for row in repository.list_table("evidence_states", run_id)] == [0, 1]
+    assert len(repository.list_table("followup_executions", run_id)) == 1

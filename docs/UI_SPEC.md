@@ -47,7 +47,9 @@ explicitly selected a candidate (`--deep-candidate`), and the hypothesis/dossier
 
 **DeepEvidencePanel** lists the run's immutable evidence revisions (iteration, parent revision, action, per-check verified/contradicted/not-observed
 counts, evidence hash, and the deep Jev judgment attached to each revision) and expands one revision through `/api/evidence/{id}` to show each
-deterministic check outcome, its claim, its `n_effective` and its availability. Wide and deep judgments are separated by `purpose`, so a deep
-judgment is never rendered in the wide judgment panel, and no judgment is rendered as a measurement. A check outcome is never displayed as a
-probability or confidence, `NOT_OBSERVED` is displayed explicitly rather than as a zero, and the panel states that the deep judgment is an input
-to the Python next-move policy (recorded in the event stream as `NEXT_MOVE_SELECTED`) and that wide admission never dispatches a follow-up itself.
+deterministic check outcome, its claim, its `n_effective` and its availability. A dispatched follow-up simply appears as one more revision whose
+parent is the previous one, so no new surface is required. Wide and deep judgments are separated by `purpose`, so a deep judgment is never rendered
+in the wide judgment panel, and no judgment is rendered as a measurement. A check outcome is never displayed as a probability or confidence,
+`NOT_OBSERVED` is displayed explicitly rather than as a zero, and the panel states that the deep judgment is an input to the Python next-move policy
+(recorded in the event stream as `NEXT_MOVE_SELECTED`, with dispatch attempts recorded as `NEXT_MOVE_DISPATCHED`) and that wide admission never
+dispatches a follow-up itself.

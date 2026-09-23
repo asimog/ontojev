@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from cancerjev.cli.console import render_event, render_json_event
-from cancerjev.config import Settings
+from cancerjev.config import Settings, load_local_env
 from cancerjev.gdc.capture import CaptureSink, run_contract_probe
 from cancerjev.gdc.transport import BudgetCaps, GDCTransport, RunBudget
 from cancerjev.research.live import LiveOrchestrator
@@ -34,6 +34,9 @@ def parser() -> argparse.ArgumentParser:
                                   "(policy-promoted candidates); requires --live --jev")
         command.add_argument("--deep-action", default=None,
                              help="explicitly selected registered action id for the deep slice (optional)")
+        command.add_argument("--deep-followup", action="store_true",
+                             help="authorize dispatching one recorded FOLLOW_UP for the selected candidate "
+                                  "(bounded to one dispatch per run); requires --deep-candidate")
     probe = commands.add_parser("probe", help="bounded anonymous GDC contract capture")
     probe.add_argument("--capture-dir", default=None)
     show = commands.add_parser("show")
@@ -80,17 +83,21 @@ def _probe(settings: Settings, repository: Repository, artifacts: ArtifactStore,
 
 
 def main(argv: list[str] | None = None) -> None:
+    load_local_env()
     args = parser().parse_args(argv)
     live = bool(getattr(args, "live", False))
     jev_requested = bool(getattr(args, "jev", False))
     deep_candidate = getattr(args, "deep_candidate", None)
     deep_action = getattr(args, "deep_action", None)
+    deep_followup = bool(getattr(args, "deep_followup", False))
     if jev_requested and not live:
         raise SystemExit("--jev requires --live (Jev evaluates real GDC states only).")
     if jev_requested and not os.getenv("TYPESAFE_API_KEY"):
         raise SystemExit("--jev requires the TYPESAFE_API_KEY environment variable (server-side only).")
     if deep_candidate and not (live and jev_requested):
         raise SystemExit("--deep-candidate requires --live --jev (a deep slice needs a wide-evaluated candidate).")
+    if deep_followup and not deep_candidate:
+        raise SystemExit("--deep-followup requires --deep-candidate (dispatch is authorized per candidate).")
     if deep_action:
         from cancerjev.science.actions import ACTION_REGISTRY
 
@@ -134,7 +141,8 @@ def main(argv: list[str] | None = None) -> None:
                 orchestrator = LiveOrchestrator(settings, repository, artifacts, render_event,
                                                 jev_service=jev_service,
                                                 deep_selection=deep_candidate,
-                                                deep_action_id=deep_action)
+                                                deep_action_id=deep_action,
+                                                deep_followup_authorized=deep_followup)
             else:
                 orchestrator = DemoOrchestrator(settings, repository, artifacts, render_event)
             if args.command == "run":

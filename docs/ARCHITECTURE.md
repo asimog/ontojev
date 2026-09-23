@@ -101,9 +101,17 @@ judges the revision plus the eligible registered action set with the versioned `
 `input_ref_kind=EVIDENCE_STATE` via `JEV_DEEP_EVIDENCE_JUDGED`), and the Python next-move policy
 (`deep-policy-v1`) records one typed move (`COMPLETE`/`FOLLOW_UP`/`ABSTAIN`) with its dimensions and
 reason. Jev judges; Python decides: a judgment never selects, authorizes or executes an action, and
-the recorded move is deliberately not dispatched. Deep Jev judgment over a second revision,
-hypotheses and multi-candidate iteration remain unimplemented; the autonomous loop below is
-unchanged.
+the recorded move is deliberately not dispatched by the policy.
+
+**Live Phase 4 dispatch (IMPLEMENTED, 2026-09-23):** a recorded `FOLLOW_UP` may be dispatched once per
+run, only when the operator authorizes it (`--deep-followup`), only to the sorted-first distinct
+eligible registered action for that revision (`CHECK_REVISION_FAITHFULNESS_V1`, input kind
+`EVIDENCE_STATE`), and only inside the existing follow-up and revision caps. The new immutable
+revision `E2` has parent `E1`, cites its producing action, and is judged again by the same deep
+fan-out; its producing action is excluded from its own eligible set, so the follow-on decision is
+`NO_FURTHER_REGISTERED_ACTION`. Refusals are typed `NEXT_MOVE_DISPATCHED` records. Autonomous
+iteration beyond one authorized dispatch, hypotheses and multi-candidate iteration remain
+unimplemented; the autonomous loop below is unchanged.
 
 ## Simplification review
 

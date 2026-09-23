@@ -454,7 +454,7 @@ def plan_deep_slice(*, run_id: str, candidate: dict[str, Any], repository: Any, 
             abstain_detail=exc.detail, iteration_number=None, execution_id=None, evidence_state_id=None)
 
     state = evidence.state
-    eligibilities = eligible_actions(state)
+    eligibilities = eligible_actions(state, "STATISTICAL_STATE")
     eligible_ids = [item.action_id for item in eligibilities if item.eligible]
 
     baseline_id = stable_id(run_id, f"evidence:{candidate['candidate_id']}:0")
@@ -575,66 +575,72 @@ def _abstain(run_id: str, emit: Callable[..., Any], evidence: CandidateEvidence,
                     evidence_state_id=None)
 
 
-def execute_followup(*, run_id: str, plan: DeepPlan, repository: Any, emit: Callable[..., Any],
-                     publish_json: Callable[[str, str, Any, str], Any],
-                     read_artifact: Callable[[str], bytes | None]) -> FollowUpResult:
-    """Run the selected deterministic action and persist the immutable E1 revision."""
-    if plan.selected_action_id is None or plan.iteration_number is None or plan.execution_id is None \
-            or plan.evidence_state_id is None:
-        raise DeepError("FOLLOWUP_NOT_PLANNED", "execute_followup requires a selected action plan")
-    candidate = plan.candidate
-    action_id = plan.selected_action_id
+def _execute_action(*, run_id: str, candidate: CandidateEvidence, record: dict[str, Any], input_kind: str,
+                    action_id: str, previous_evidence_id: str, iteration: int, execution_id: str,
+                    evidence_state_id: str, repository: Any, emit: Callable[..., Any],
+                    publish_json: Callable[[str, str, Any, str], Any],
+                    read_artifact: Callable[[str], bytes | None]) -> FollowUpResult:
+    """Run one registered deterministic action and persist an immutable revision.
+
+    The action's declared input kind decides what it reads: an accepted
+    StatisticalState, or an existing immutable evidence revision. Every revision
+    copies its project-level evidence from the accepted state, links its parent and
+    cites the producing action.
+    """
     definition = ACTION_REGISTRY[action_id]
-    input_evidence_hash = candidate.state["state_hash"]
+    if input_kind == "STATISTICAL_STATE":
+        input_evidence_hash = record["state_hash"]
+        input_evidence_state_id = previous_evidence_id
+    else:
+        input_evidence_hash = content_hash(evidence_state_identity_payload(record))
+        input_evidence_state_id = record["evidence_state_id"]
     emit(
-        run_id, "FOLLOWUP_STARTED", f"deep:{plan.execution_id}:started",
+        run_id, "FOLLOWUP_STARTED", f"deep:{execution_id}:started",
         f"Deterministic follow-up {action_id} started for candidate {candidate.candidate_id}.",
-        stage="FOLLOWUP", candidate_id=candidate.candidate_id, iteration=plan.iteration_number,
-        data={"execution_id": plan.execution_id, "candidate_id": candidate.candidate_id,
+        stage="FOLLOWUP", candidate_id=candidate.candidate_id, iteration=iteration,
+        data={"execution_id": execution_id, "candidate_id": candidate.candidate_id,
               "action_id": action_id, "action_version": definition.version,
-              "input_evidence_state_id": plan.baseline_evidence_id,
+              "input_ref_kind": input_kind, "input_evidence_state_id": input_evidence_state_id,
               "input_evidence_hash": input_evidence_hash},
     )
     try:
-        outcome = execute(action_id, candidate.state, read_artifact=read_artifact)
+        outcome = execute(action_id, record, read_artifact=read_artifact)
     except ActionError as exc:
         emit(
-            run_id, "FOLLOWUP_FAILED", f"deep:{plan.execution_id}:failed",
+            run_id, "FOLLOWUP_FAILED", f"deep:{execution_id}:failed",
             f"Deterministic follow-up {action_id} failed: {exc.code}.",
             stage="FOLLOWUP", level="error", candidate_id=candidate.candidate_id,
-            iteration=plan.iteration_number,
-            data={"execution_id": plan.execution_id, "candidate_id": candidate.candidate_id,
+            iteration=iteration,
+            data={"execution_id": execution_id, "candidate_id": candidate.candidate_id,
                   "action_id": action_id, "error_code": exc.code, "detail": exc.detail,
                   "input_evidence_hash": input_evidence_hash},
             registrations=[repository.followup_execution_registration(
-                execution_id=plan.execution_id, run_id=run_id, candidate_id=candidate.candidate_id,
+                execution_id=execution_id, run_id=run_id, candidate_id=candidate.candidate_id,
                 action_id=action_id, action_version=definition.version,
                 input_evidence_hash=input_evidence_hash, output_evidence_state_id=None,
-                slot=plan.iteration_number, status="FAILED",
+                slot=iteration, status="FAILED",
                 summary_json=canonical_json({"error_code": exc.code, "detail": exc.detail}).decode(),
                 created_at=utc_now(),
             )],
         )
         return FollowUpResult(
             status="FAILED", action_id=action_id, evidence_state_id=None, evidence_hash=None,
-            iteration=plan.iteration_number, checks_total=0, checks_verified=0, checks_contradicted=0,
+            iteration=iteration, checks_total=0, checks_verified=0, checks_contradicted=0,
             checks_not_observed=0, error_code=exc.code, revision=None,
         )
 
-    revision = _followup_evidence(outcome, candidate, candidate.state, run_id=run_id,
-                                  iteration=plan.iteration_number,
-                                  previous_evidence_id=plan.baseline_evidence_id)
+    revision = _followup_evidence(outcome, candidate, candidate.state, run_id=run_id, iteration=iteration,
+                                  previous_evidence_id=previous_evidence_id)
     evidence_hash = content_hash(evidence_state_identity_payload(revision))
     outcome_label = "COMPLETED_WITH_CONTRADICTIONS" if outcome.contradictions else "COMPLETED"
-    artifact = publish_json(run_id, f"runs/{run_id}/evidence/{plan.evidence_state_id}.json",
+    artifact = publish_json(run_id, f"runs/{run_id}/evidence/{evidence_state_id}.json",
                             revision, "evidence-state")
     emit(
-        run_id, "EVIDENCE_STATE_CREATED", f"evidence:{plan.evidence_state_id}:created",
-        f"Immutable evidence revision E{plan.iteration_number} recorded for candidate "
-        f"{candidate.candidate_id}.",
-        stage="EVIDENCE_BUILD", candidate_id=candidate.candidate_id, iteration=plan.iteration_number,
-        data={"evidence_state_id": plan.evidence_state_id, "evidence_hash": evidence_hash,
-              "iteration": plan.iteration_number, "previous_evidence_state_id": plan.baseline_evidence_id,
+        run_id, "EVIDENCE_STATE_CREATED", f"evidence:{evidence_state_id}:created",
+        f"Immutable evidence revision E{iteration} recorded for candidate {candidate.candidate_id}.",
+        stage="EVIDENCE_BUILD", candidate_id=candidate.candidate_id, iteration=iteration,
+        data={"evidence_state_id": evidence_state_id, "evidence_hash": evidence_hash,
+              "iteration": iteration, "previous_evidence_state_id": previous_evidence_id,
               "candidate_id": candidate.candidate_id, "state_id": candidate.state_id,
               "action_id": action_id, "outcome": outcome_label,
               "checks_verified": outcome.verified, "checks_contradicted": outcome.contradictions,
@@ -643,13 +649,13 @@ def execute_followup(*, run_id: str, plan: DeepPlan, repository: Any, emit: Call
         registrations=[
             repository.artifact_registration(artifact, run_id),
             repository.evidence_state_registration(
-                evidence_state_id=plan.evidence_state_id, run_id=run_id,
+                evidence_state_id=evidence_state_id, run_id=run_id,
                 candidate_id=candidate.candidate_id,
-                previous_evidence_state_id=plan.baseline_evidence_id,
-                iteration=plan.iteration_number, evidence_hash=evidence_hash,
+                previous_evidence_state_id=previous_evidence_id,
+                iteration=iteration, evidence_hash=evidence_hash,
                 artifact_id=artifact.artifact_id,
                 summary_json=canonical_json({
-                    "entity": candidate.entity, "iteration": plan.iteration_number, "action_id": action_id,
+                    "entity": candidate.entity, "iteration": iteration, "action_id": action_id,
                     "outcome": outcome_label, "checks_verified": outcome.verified,
                     "checks_contradicted": outcome.contradictions,
                     "checks_not_observed": outcome.not_observed,
@@ -659,27 +665,27 @@ def execute_followup(*, run_id: str, plan: DeepPlan, repository: Any, emit: Call
             repository.candidate_status_registration(
                 candidate_id=candidate.candidate_id, status="DEEP_ANALYZED",
                 current_stage="EVIDENCE_BUILD", updated_at=utc_now(),
-                latest_evidence_state_id=plan.evidence_state_id,
+                latest_evidence_state_id=evidence_state_id,
             ),
         ],
     )
     emit(
-        run_id, "FOLLOWUP_COMPLETED", f"deep:{plan.execution_id}:completed",
+        run_id, "FOLLOWUP_COMPLETED", f"deep:{execution_id}:completed",
         f"Deterministic follow-up {action_id} completed with {outcome.contradictions} contradicted check(s).",
-        stage="FOLLOWUP", candidate_id=candidate.candidate_id, iteration=plan.iteration_number,
-        data={"execution_id": plan.execution_id, "candidate_id": candidate.candidate_id,
+        stage="FOLLOWUP", candidate_id=candidate.candidate_id, iteration=iteration,
+        data={"execution_id": execution_id, "candidate_id": candidate.candidate_id,
               "action_id": action_id, "action_version": definition.version,
               "input_evidence_hash": input_evidence_hash,
-              "output_evidence_state_id": plan.evidence_state_id, "outcome": outcome_label,
+              "output_evidence_state_id": evidence_state_id, "outcome": outcome_label,
               "checks_total": len(outcome.checks), "checks_verified": outcome.verified,
               "checks_contradicted": outcome.contradictions,
               "checks_not_observed": outcome.not_observed},
         registrations=[repository.followup_execution_registration(
-            execution_id=plan.execution_id, run_id=run_id, candidate_id=candidate.candidate_id,
+            execution_id=execution_id, run_id=run_id, candidate_id=candidate.candidate_id,
             action_id=action_id, action_version=definition.version,
             input_evidence_hash=input_evidence_hash,
-            output_evidence_state_id=plan.evidence_state_id,
-            slot=plan.iteration_number, status="COMPLETED",
+            output_evidence_state_id=evidence_state_id,
+            slot=iteration, status="COMPLETED",
             summary_json=canonical_json({
                 "outcome": outcome_label, "checks_total": len(outcome.checks),
                 "checks_verified": outcome.verified, "checks_contradicted": outcome.contradictions,
@@ -689,32 +695,155 @@ def execute_followup(*, run_id: str, plan: DeepPlan, repository: Any, emit: Call
         )],
     )
     return FollowUpResult(
-        status=outcome_label, action_id=action_id, evidence_state_id=plan.evidence_state_id,
-        evidence_hash=evidence_hash, iteration=plan.iteration_number, checks_total=len(outcome.checks),
+        status=outcome_label, action_id=action_id, evidence_state_id=evidence_state_id,
+        evidence_hash=evidence_hash, iteration=iteration, checks_total=len(outcome.checks),
         checks_verified=outcome.verified, checks_contradicted=outcome.contradictions,
         checks_not_observed=outcome.not_observed, error_code=None, revision=revision,
     )
 
 
-def judge_evidence_revision(*, run_id: str, plan: DeepPlan, result: FollowUpResult,
+def execute_followup(*, run_id: str, plan: DeepPlan, repository: Any, emit: Callable[..., Any],
+                     publish_json: Callable[[str, str, Any, str], Any],
+                     read_artifact: Callable[[str], bytes | None]) -> FollowUpResult:
+    """Run the selected deterministic action over the candidate's accepted evidence."""
+    if plan.selected_action_id is None or plan.iteration_number is None or plan.execution_id is None \
+            or plan.evidence_state_id is None:
+        raise DeepError("FOLLOWUP_NOT_PLANNED", "execute_followup requires a selected action plan")
+    return _execute_action(
+        run_id=run_id, candidate=plan.candidate, record=plan.candidate.state,
+        input_kind="STATISTICAL_STATE", action_id=plan.selected_action_id,
+        previous_evidence_id=plan.baseline_evidence_id, iteration=plan.iteration_number,
+        execution_id=plan.execution_id, evidence_state_id=plan.evidence_state_id,
+        repository=repository, emit=emit, publish_json=publish_json, read_artifact=read_artifact,
+    )
+
+
+@dataclass(frozen=True)
+class DispatchResult:
+    dispatched: bool
+    reason_code: str
+    action_id: str | None
+    result: FollowUpResult | None
+    judgement: dict[str, Any] | None
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "dispatched": self.dispatched, "reason_code": self.reason_code, "action_id": self.action_id,
+            "evidence_state_id": self.result.evidence_state_id if self.result else None,
+            "iteration": self.result.iteration if self.result else None,
+            "next_move": (self.judgement or {}).get("next_move"),
+        }
+
+
+def dispatch_recorded_move(*, run_id: str, candidate: CandidateEvidence, result: FollowUpResult,
+                           decision: dict[str, Any], repository: Any, emit: Callable[..., Any],
+                           publish_json: Callable[[str, str, Any, str], Any],
+                           read_artifact: Callable[[str], bytes | None], authorized: bool,
+                           jev_service: Any = None) -> DispatchResult:
+    """Dispatch one recorded FOLLOW_UP, only when an operator authorized it.
+
+    At most one dispatch happens per run, it obeys the existing follow-up and
+    revision caps, and a dispatched revision is judged again by the same deep
+    fan-out. Every refusal reason is recorded rather than silently dropped.
+    """
+
+    def refuse(reason_code: str, detail: str) -> DispatchResult:
+        emit(
+            run_id, "NEXT_MOVE_DISPATCHED", f"dispatch:{result.evidence_state_id}:{reason_code}",
+            f"Recorded next move was not dispatched: {reason_code}.",
+            stage="FOLLOWUP", level="warning" if reason_code != "MOVE_NOT_FOLLOW_UP" else "info",
+            candidate_id=candidate.candidate_id, iteration=result.iteration,
+            data={"evidence_state_id": result.evidence_state_id, "move": decision.get("move"),
+                  "reason_code": reason_code, "detail": detail, "dispatched": False,
+                  "authorized": authorized},
+        )
+        return DispatchResult(dispatched=False, reason_code=reason_code, action_id=None,
+                              result=None, judgement=None)
+
+    if decision.get("move") != "FOLLOW_UP":
+        return refuse("MOVE_NOT_FOLLOW_UP",
+                      f"the recorded move is {decision.get('move')}, so nothing is dispatched")
+    if not authorized:
+        return refuse("DISPATCH_NOT_AUTHORIZED",
+                      "dispatching a recorded move requires explicit operator authorization")
+    if result.revision is None or result.evidence_state_id is None or result.iteration is None:
+        return refuse("INPUT_REVISION_MISSING", "no immutable revision is available to continue from")
+    action_ids = sorted(decision.get("dimensions", {}).get("distinct_eligible_action_ids") or [])
+    if not action_ids:
+        return refuse("NO_DISTINCT_ELIGIBLE_ACTION",
+                      "no registered action other than the producing one is eligible for this revision")
+    action_id = action_ids[0]
+    completed = [row for row in repository.followup_executions_for(candidate.candidate_id)
+                 if row["status"] == "COMPLETED"]
+    if len(completed) >= FOLLOWUP_LIMIT:
+        return refuse("FOLLOWUP_LIMIT_REACHED", f"the candidate reached the follow-up limit {FOLLOWUP_LIMIT}")
+    iteration = result.iteration + 1
+    if iteration > EVIDENCE_ITERATION_LIMIT:
+        return refuse("EVIDENCE_ITERATION_LIMIT_REACHED",
+                      f"iteration {iteration} exceeds the revision limit {EVIDENCE_ITERATION_LIMIT}")
+    execution_id = stable_id(run_id, f"followup:{candidate.candidate_id}:{action_id}:{iteration}")
+    evidence_state_id = stable_id(run_id, f"evidence:{candidate.candidate_id}:{iteration}")
+    followup = _execute_action(
+        run_id=run_id, candidate=candidate, record=result.revision, input_kind="EVIDENCE_STATE",
+        action_id=action_id, previous_evidence_id=result.evidence_state_id, iteration=iteration,
+        execution_id=execution_id, evidence_state_id=evidence_state_id, repository=repository,
+        emit=emit, publish_json=publish_json, read_artifact=read_artifact,
+    )
+    if followup.status == "FAILED":
+        emit(
+            run_id, "NEXT_MOVE_DISPATCHED", f"dispatch:{result.evidence_state_id}:action-failed",
+            f"Recorded next move dispatch failed: {followup.error_code}.",
+            stage="FOLLOWUP", level="error", candidate_id=candidate.candidate_id, iteration=iteration,
+            data={"evidence_state_id": result.evidence_state_id, "move": decision.get("move"),
+                  "reason_code": "DISPATCH_ACTION_FAILED", "detail": followup.error_code,
+                  "action_id": action_id, "dispatched": False, "authorized": True},
+        )
+        return DispatchResult(dispatched=False, reason_code="DISPATCH_ACTION_FAILED", action_id=action_id,
+                              result=followup, judgement=None)
+    judgement = None
+    if jev_service is not None:
+        judgement = judge_evidence_revision(run_id=run_id, candidate=candidate, result=followup,
+                                            jev_service=jev_service, emit=emit)
+    emit(
+        run_id, "NEXT_MOVE_DISPATCHED", f"dispatch:{result.evidence_state_id}:{action_id}",
+        f"Recorded FOLLOW_UP dispatched as {action_id} on the operator's authorization.",
+        stage="FOLLOWUP", candidate_id=candidate.candidate_id, iteration=iteration,
+        data={"evidence_state_id": result.evidence_state_id, "move": decision.get("move"),
+              "reason_code": "DISPATCHED", "action_id": action_id, "execution_id": execution_id,
+              "output_evidence_state_id": evidence_state_id, "output_iteration": iteration,
+              "dispatched": True, "authorized": True,
+              "new_move": (judgement or {}).get("next_move", {}).get("move")},
+    )
+    return DispatchResult(dispatched=True, reason_code="DISPATCHED", action_id=action_id,
+                          result=followup, judgement=judgement)
+
+
+def judge_evidence_revision(*, run_id: str, candidate: CandidateEvidence, result: FollowUpResult,
                             jev_service: Any, emit: Callable[..., Any]) -> dict[str, Any]:
     """One Deep Jev fan-out over the new revision, then the Python next-move policy.
 
-    The judgment is an input to the policy: Jev does not select, authorize or
-    execute the move, and no measured field is written from it.
+    The eligible set is computed from the revision's own declared input kind, so the
+    judgment and the policy see exactly the actions that could run on this revision.
+    The judgment is an input to the policy: Jev does not select, authorize or execute
+    the move, and no measured field is written from it.
     """
     if result.revision is None or result.evidence_state_id is None or result.evidence_hash is None:
         return {"deep_evaluation_id": None, "deep_error_code": "NO_REVISION_TO_JUDGE",
                 "next_move": None}
-    eligible_action_payloads = [ACTION_REGISTRY[action_id].payload()
-                               for action_id in plan.eligible_action_ids]
+    revision_eligibilities = eligible_actions(result.revision, "EVIDENCE_STATE")
+    eligible_action_ids = [item.action_id for item in revision_eligibilities if item.eligible]
+    eligible_action_payloads = [ACTION_REGISTRY[action_id].payload() for action_id in eligible_action_ids]
     emit(
         run_id, "JEV_DEEP_STARTED", f"jev-deep:{result.evidence_state_id}:started",
         f"Deep Jev evidence judgment started for revision {result.iteration}.",
-        stage="JEV_DEEP", candidate_id=plan.candidate.candidate_id, iteration=result.iteration,
+        stage="JEV_DEEP", candidate_id=candidate.candidate_id, iteration=result.iteration,
         data={"evidence_state_id": result.evidence_state_id, "evidence_hash": result.evidence_hash,
               "iteration": result.iteration, "action_id": result.action_id,
-              "eligible_action_ids": plan.eligible_action_ids,
+              "eligible_action_ids": eligible_action_ids,
+              "ineligible": [
+                  {"action_id": item.action_id, "reasons": list(item.reasons)}
+                  for item in revision_eligibilities if not item.eligible
+              ],
               "action_registry_version": ACTION_REGISTRY_VERSION,
               "question_set_version": "deep-v1"},
     )
@@ -728,13 +857,13 @@ def judge_evidence_revision(*, run_id: str, plan: DeepPlan, result: FollowUpResu
     }
     decision = next_move(
         checks=result.revision["quality_and_fragility"], judgment=judgment,
-        eligible_action_ids=plan.eligible_action_ids,
+        eligible_action_ids=eligible_action_ids,
     )
     emit(
         run_id, "NEXT_MOVE_SELECTED", f"next-move:{result.evidence_state_id}:{decision['move']}",
         f"Python next-move policy recorded {decision['move']} for revision {result.iteration}: "
         f"{decision['reason_code']}.",
-        stage="JEV_DEEP", candidate_id=plan.candidate.candidate_id, iteration=result.iteration,
+        stage="JEV_DEEP", candidate_id=candidate.candidate_id, iteration=result.iteration,
         data={"evidence_state_id": result.evidence_state_id, "evidence_hash": result.evidence_hash,
               "evaluation_id": evaluation["evaluation_id"], "policy_version": DEEP_POLICY_VERSION,
               "move": decision["move"], "reason_code": decision["reason_code"],

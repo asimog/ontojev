@@ -55,6 +55,7 @@ from cancerjev.gdc.parsers import (
 )
 from cancerjev.gdc.transport import BudgetCaps, GDCResponse, GDCTransport, RunBudget, TransportError
 from cancerjev.research.deep import (
+    dispatch_recorded_move,
     execute_followup,
     judge_evidence_revision,
     plan_deep_slice,
@@ -224,6 +225,7 @@ class LiveOrchestrator:
     research_spec: ResearchSpec = LUAD_RESEARCH_V1
     deep_selection: str | None = None
     deep_action_id: str | None = None
+    deep_followup_authorized: bool = False
 
     # ------------------------------------------------------------- event helpers
 
@@ -339,10 +341,15 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
                     },
                     "deep_selection": self.deep_selection,
                     "deep_action_id": self.deep_action_id,
+                    "deep_followup_authorized": self.deep_followup_authorized,
                     "deep_selection_rule": (
                         "An operator names one promoted candidate explicitly; wide admission never "
                         "dispatches a follow-up on its own."
-                    ) if self.deep_selection else None})
+                    ) if self.deep_selection else None,
+                    "deep_dispatch_rule": (
+                        "One recorded FOLLOW_UP may be dispatched for the named candidate on explicit "
+                        "operator authorization, inside the existing follow-up and revision caps."
+                    ) if self.deep_followup_authorized else None})
         wide_result: dict[str, Any] | None = None
         try:
             inventory = self._stage(run_id, "INVENTORY", lambda: self._inventory(run_id, transport))
@@ -584,12 +591,24 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
         judgement = self._stage(
             run_id, "JEV_DEEP",
             lambda: judge_evidence_revision(
-                run_id=run_id, plan=selection, result=result, jev_service=self.jev_service,
-                emit=self._event,
+                run_id=run_id, candidate=selection.candidate, result=result,
+                jev_service=self.jev_service, emit=self._event,
             ),
         )
         summary.update({key: value for key, value in judgement.items()
                         if key != "deep_judgment_vector"})
+        decision = judgement.get("next_move")
+        if decision is not None:
+            dispatch = self._stage(
+                run_id, "FOLLOWUP",
+                lambda: dispatch_recorded_move(
+                    run_id=run_id, candidate=selection.candidate, result=result, decision=decision,
+                    repository=self.repository, emit=self._event, publish_json=self._publish_json,
+                    read_artifact=self._read_artifact,
+                    authorized=self.deep_followup_authorized, jev_service=self.jev_service,
+                ),
+            )
+            summary["dispatch"] = dispatch.summary()
         return summary
 
     # ----------------------------------------------------------------- inventory

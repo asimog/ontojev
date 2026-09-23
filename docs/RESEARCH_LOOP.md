@@ -72,13 +72,20 @@ specification `LUAD_RESEARCH_V1`:
    next-move policy (`deep-policy-v1`) records one typed move (`COMPLETE`/`FOLLOW_UP`/`ABSTAIN`) with
    its dimensions and thresholds. The judgment is an input and the move is recorded, not dispatched:
    Jev never selects, authorizes or executes an action.
-7. `RUN_COMPLETED` with `coverage = COMPLETE_FOR_SCOPE` or `PARTIAL`, real GDC/Jev usage counters,
-   the deep-slice summary when it ran, and zero LLM calls.
+7. `FOLLOWUP` (Phase 4 dispatch stage, same run): when the recorded move is `FOLLOW_UP` and the
+   operator authorized dispatch (`--deep-followup`), at most one further immutable revision (`E2`,
+   parent `E1`) is produced by the distinct eligible revision action, and it is judged again by the
+   same deep fan-out. Every refusal (not a `FOLLOW_UP`, not authorized, no distinct eligible action,
+   either cap, action failure) is a typed `NEXT_MOVE_DISPATCHED` record. Autonomous iteration beyond
+   this one authorized dispatch is not implemented.
+8. `RUN_COMPLETED` with `coverage = COMPLETE_FOR_SCOPE` or `PARTIAL`, real GDC/Jev usage counters,
+   the deep-slice and dispatch summaries when they ran, and zero LLM calls.
 
 Failure discipline: any budget exhaustion, transport failure or parser rejection stops admission
 for the affected lane, is recorded as a typed event, and leaves the run COMPLETED/PARTIAL or
-FAILED with the reason — never a silent skip. Hypothesis generation and multi-candidate iteration
-remain Phase 4+, and nothing in the live loop dispatches a follow-up from a recorded next move.
+FAILED with the reason — never a silent skip. Hypothesis generation, further revisions beyond one
+authorized dispatch and multi-candidate iteration remain Phase 4+, and nothing in the live loop
+dispatches a follow-up from a recorded next move without explicit operator authorization.
 
 ## Planned candidate investigation (Phase 4+, first slices IMPLEMENTED)
 

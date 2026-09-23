@@ -162,6 +162,36 @@ beyond it.
   iteration, automatic dispatch of a recorded next move, live dossiers and Deep Jev question
   revisions beyond `deep-v1`.
 
+## Phase 4 dispatch stage: second action and one authorized follow-up (2026-09-23)
+
+IMPLEMENTED. This closes the documented gap that a recorded `FOLLOW_UP` had nothing to dispatch.
+
+- **Declared action input kinds**: `ActionDefinition.input_kind` is `STATISTICAL_STATE` or
+  `EVIDENCE_STATE`; `eligible_actions(record, input_kind)` filters by it, so an action is only ever
+  evaluated against the evidence kind it declares. Registry version is `2`.
+- **Second registered action** `CHECK_REVISION_FAITHFULNESS_V1` (method `REVISION_FAITHFULNESS_V1` v1,
+  input `EVIDENCE_STATE`, 4 checks): the revision restates every copied project-level metric exactly
+  (`SOURCE_EVIDENCE_RESTATED`), keeps exactly the accepted provenance sources
+  (`SOURCE_PROVENANCE_UNCHANGED`), binds a source artifact whose bytes and recomputed scientific
+  identity match what it records (`SOURCE_STATE_IDENTITY_REPRODUCIBLE`), and cites a registered
+  producing action at its recorded version with a parent and the accepted entity
+  (`REVISION_CHAIN_LINKED`). It acquires nothing, recomputes no measurement and rewrites nothing.
+- **One authorized dispatch per run**: `dispatch_recorded_move` acts only on a recorded `FOLLOW_UP`,
+  only with explicit operator authorization (`--deep-followup`), at most once, on the
+  sorted-first distinct eligible revision action, inside `FOLLOWUP_LIMIT = 3` and
+  `EVIDENCE_ITERATION_LIMIT = 2`. Every refusal is recorded as `NEXT_MOVE_DISPATCHED` with a typed
+  reason (`MOVE_NOT_FOLLOW_UP`, `DISPATCH_NOT_AUTHORIZED`, `NO_DISTINCT_ELIGIBLE_ACTION`,
+  `FOLLOWUP_LIMIT_REACHED`, `EVIDENCE_ITERATION_LIMIT_REACHED`, `DISPATCH_ACTION_FAILED`,
+  `INPUT_REVISION_MISSING`).
+- **Revision chain**: a dispatched action produces iteration 2 (`E2`) whose parent is `E1`, which
+  cites `CHECK_REVISION_FAITHFULNESS_V1`, keeps `source_statistical_state` pointing at the accepted
+  state, and is judged again by the same `deep-v1` fan-out. Its producing action is excluded from its
+  own eligible set, so the follow-on decision is `NO_FURTHER_REGISTERED_ACTION` — the loop stops
+  honestly instead of repeating itself.
+- **Boundary preserved**: the policy's recorded move is still never dispatched by the policy itself
+  (`executed: false`); dispatch is a separate Python step gated by explicit authorization, and the
+  new judgment is only an input to the follow-on decision.
+
 ## Phase 4 next stage: deep Jev fan-out and next-move policy (2026-09-23)
 
 IMPLEMENTED for one revision at a time, after the deterministic slice.
@@ -272,7 +302,7 @@ Verification performed 2026-09-23 (pre-Phase-4 hardening) on the hardened implem
 | Gate | Command | Result |
 |---|---|---|
 | Python lint | `python -m ruff check cancerjev apps tests` | All checks passed |
-| Offline suite | `python -m pytest -q` | **328 passed**, 0 failed; 2 opt-in live-marked tests deselected (330 collected) |
+| Offline suite | `python -m pytest -q` | **343 passed**, 0 failed; 2 opt-in live-marked tests deselected (345 collected) |
 | Frontend typecheck | `npm run typecheck` | Passed |
 | Frontend build | `npm run build` | Passed (all routes) |
 | Browser E2E | `npm run test:e2e` (API 8010, web 3010; matching localhost origin) | **4 passed** |
@@ -280,15 +310,23 @@ Verification performed 2026-09-23 (pre-Phase-4 hardening) on the hardened implem
 | Live GDC + Jev | `python -m cancerjev run --live --jev` with a fresh data directory and GDC cache disabled | **COMPLETED**, 16 fresh GDC requests, 10 Jev calls/evaluations, 10 states, 0 promotions, explicit `ABSTAIN` |
 | Deep slice (Phase 4 first slice) | `tests/integration/test_deep_slice.py` with the replay transport and stub adapter, explicit `--deep-selection` equivalent | **COMPLETED**: E0 + E1 recorded, 5/5 checks verified, typed abstention/failure and idempotency branches covered; no provider call |
 | Deep Jev + next move (next stage) | same suite | **COMPLETED**: operator-approved selection, `deep-v1` judgment persisted as `purpose=DEEP`/`input_ref_kind=EVIDENCE_STATE`, next-move decision recorded and never dispatched, deep provider-failure containment, usage accounting; no provider call |
+| Dispatch stage | same suite | **COMPLETED**: second action with a declared `EVIDENCE_STATE` input kind; each of its four checks exercised as `VERIFIED`/`CONTRADICTED`/`NOT_OBSERVED`; an authorized `FOLLOW_UP` produces `E2` (parent `E1`) that is judged again and yields `NO_FURTHER_REGISTERED_ACTION`; unauthorized, `COMPLETE`, follow-up-cap and revision-cap refusals are recorded as typed `NEXT_MOVE_DISPATCHED` reasons; no provider call |
 | Live deep validation | `run --live --jev --deep-candidate TP53` on the retained live directory | **COMPLETED**: wide `ABSTAIN`/0 promoted → operator-approved candidate → E0/E1 (5/5 verified) → one deep `deep-v1` call → `COMPLETE`; the following run reused 10/10 wide and the deep judgment from cache (`jev_calls: 0`) |
+| Live dispatch validation | `run --live --jev --deep-candidate TP53 --deep-followup` on the retained live directory | **COMPLETED**: 16 GDC cache hits, 10/10 wide judgments reused, one deep `deep-v1` call (3,613/174 tokens) → judgment `next_step_warranted 0.53`, `stopping_more_honest 0.56` → move `COMPLETE`, so `NEXT_MOVE_DISPATCHED` recorded `dispatched: false`, `MOVE_NOT_FOLLOW_UP`, `authorized: true`; the revision-eligible set correctly included `CHECK_REVISION_FAITHFULNESS_V1`; 2 revisions and 1 execution remained, with no `E2` |
 | GDC contract probe | `python -m cancerjev probe` | Historical probe: 14 captures, all HTTP 200, anonymous |
 
 No live GDC, TypeSafe or LLM call was made by the pre-Phase-4 hardening pass, the Phase 4 first
 slice, or their verification: the tests use loopback sockets, the injected fake SDK module, and the
 replay transport. The deep slice acquires no evidence and calls no model by construction.
 
-On Windows, pytest exited successfully with all 304 offline tests passing but emitted an ignored
+On Windows, pytest exited successfully with all 343 offline tests passing but emitted an ignored
 `PermissionError` while cleaning its temporary `pytest-current` symlink at process exit.
+
+The dispatch stage is verified offline end-to-end (replay transport + stub adapter, both the
+authorized `FOLLOW_UP` path and every refusal branch). Its live acceptance is inherently limited: the
+retained live `deep-v1` judgment records `COMPLETE`, so an authorized live run correctly records
+`NEXT_MOVE_DISPATCHED` with `MOVE_NOT_FOLLOW_UP` and dispatches nothing — thresholds are not tuned to
+force a dispatch.
 
 A bounded live acceptance of the deep slice (`python -m cancerjev run --live --jev
 --deep-candidate <slot:N>`) is a separately approved step and has not been run yet; the slice is
@@ -297,7 +335,7 @@ verified offline end-to-end.
 ## Provider-use record (cumulative through 2026-09-23)
 
 - **GDC:** prior record 84 real anonymous network attempts (735,207 bytes) plus 158 cache hits; this task made 32 additional fresh requests across two runs (each 16 requests, about 359 KiB). All endpoints remained within the open-access allowlist; zero file downloads, controlled records, or authentication headers.
-- **Jev / TypeSafe:** prior record 10 provider calls; the wide acceptance made 10 further calls on model `jev-1.13.0` for `wide-v3` (17,692 input / 2,070 output tokens); the deep-stage validation made 1 call for `deep-v1` (3,606 input / 174 output tokens), and one further re-run made 9 wide + 1 deep calls before the identity fix below (3,602/174) for 3,605/174 in another run. A final re-run made 0 calls, reusing 10/10 wide and the deep judgment from cache. No cost field is available (unknown). The initial environment setup attempt made no provider calls because the project-declared SDK was not installed; the same bounded run succeeded after installing SDK 0.7.1.
+- **Jev / TypeSafe:** prior record 10 provider calls; the wide acceptance made 10 further calls on model `jev-1.13.0` for `wide-v3` (17,692 input / 2,070 output tokens); the deep-stage validation made 1 call for `deep-v1` (3,606 input / 174 output tokens), one further re-run made 9 wide + 1 deep calls before the identity fix (3,602/174), another made 3,605/174, and the dispatch-stage validation made 1 more deep call (3,613/174). A final re-run of each stage made 0 calls, reusing 10/10 wide and the deep judgment from cache. No cost field is available (unknown). The initial environment setup attempt made no provider calls because the project-declared SDK was not installed; the same bounded run succeeded after installing SDK 0.7.1.
 - **LLM / OpenRouter:** 0.
 - No GDC credential exists anywhere in the codebase or environment; the TypeSafe key is read only from `TYPESAFE_API_KEY` at call time and is never persisted or logged.
 
@@ -336,16 +374,18 @@ These are separate tasks; do not combine them.
    (2026-09-23)**, bounded to one revision and one decision record; dispatch of a recorded move
    remains unimplemented.
 6. A second registered deterministic action, so a recorded `FOLLOW_UP` can actually be dispatched.
+   **DONE (2026-09-23)** — `CHECK_REVISION_FAITHFULNESS_V1` plus one explicitly authorized dispatch per
+   run, producing `E2` and re-judging it.
 7. Bounded next-candidate autonomous iteration.
 8. Bounded LLM hypothesis generation + Jev hypothesis evaluation.
 
 ## Phase 4–7: plans only, not implemented
 
-- **Phase 4 — deep deterministic evidence**: the first slice and the deep fan-out are IMPLEMENTED as
-  described above (`CHECK_EVIDENCE_INTEGRITY_V1`, explicit/operator selection, immutable E0/E1, typed
-  abstention/failure, one `deep-v1` judgment per revision, `deep-policy-v1` next-move record).
-  Still not implemented: dispatching a recorded move (no second registered action exists), bounded
-  hypothesis generation, multi-candidate iteration, evidence-revision re-judging beyond one revision
+- **Phase 4 — deep deterministic evidence**: the first slice, the deep fan-out and one authorized
+  dispatch are IMPLEMENTED as described above (`CHECK_EVIDENCE_INTEGRITY_V1` and
+  `CHECK_REVISION_FAITHFULNESS_V1`, explicit/operator selection, immutable E0/E1/E2,
+  `deep-policy-v1`, typed abstention/failure/dispatch refusals). Still not implemented: autonomous
+  iteration beyond one authorized dispatch, bounded hypothesis generation, multi-candidate iteration
   and further registered actions. Additional follow-up IDs in `docs/PHASE_4_READINESS_PLAN.md` remain
   unapproved placeholders.
 - **Phase 5 — dossiers for live candidates**: structured JSON + derived Markdown from real evidence revisions.

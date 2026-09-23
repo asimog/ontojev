@@ -103,6 +103,21 @@ action set, using its own versioned question set (`deep-v1`). The boundary is ex
 - Deep thresholds are provisional and must not be tuned to force a move; a `COMPLETE` decision is a
   statement about remaining deterministic work, not a biological conclusion.
 
+## Dispatch of a recorded move (Phase 4 dispatch stage)
+
+- An action declares its input kind, and eligibility is computed against that kind, so a revision
+  action can never be run on a state (or the reverse) by accident. `CHECK_REVISION_FAITHFULNESS_V1`
+  re-derives no measurement: it verifies restatement, provenance, source-artifact identity and the
+  revision chain, and reports anything it cannot verify as `NOT_OBSERVED`.
+- The policy's recorded move is never dispatched by the policy; dispatch is a separate Python step
+  that requires explicit operator authorization, runs at most once per run, and obeys
+  `followup_count ≤ 3` and `iteration ≤ 2`.
+- A dispatched revision is a new immutable revision whose parent is the current one; it cites its
+  producing action, which is excluded from its own eligible set, so the follow-on decision is
+  `NO_FURTHER_REGISTERED_ACTION` rather than a silent repetition.
+- Every refusal to dispatch is recorded with a typed reason. Autonomous iteration, hypothesis
+  generation and multi-candidate work remain unimplemented and out of scope here.
+
 
 Scientific identity includes exact input hashes, population and sample mapping, units, method/version/parameters, tested universe, environment and results. Exclude scheduler, Jev, UI and clock state. Evidence revisions are new immutable records linked to their parent; semantic judgments never overwrite measurements.
 

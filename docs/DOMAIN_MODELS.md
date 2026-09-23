@@ -187,12 +187,22 @@ carries run timestamps); it retains the source revision's scientific `state_iden
 outcomes, measured values, populations, units, missingness, action/method version, provenance
 response hashes and the iteration number, so identical evidence keeps one identity across runs.
 
+Registered `ActionDefinition`s declare an `input_kind` (`STATISTICAL_STATE` or `EVIDENCE_STATE`), so an
+action is only ever evaluated against the evidence kind it declares: `CHECK_EVIDENCE_INTEGRITY_V1`
+reads the accepted state, and `CHECK_REVISION_FAITHFULNESS_V1` reads an immutable revision (verifying
+that the revision restates the accepted evidence exactly, keeps its provenance, binds a matching
+source artifact and cites a registered producing action). A dispatched follow-up produces the next
+revision (`E2`) whose `previous_evidence_state_id` is `E1`, whose `source_statistical_state` still
+names the accepted state, and whose `action` block cites the action that produced it; the producing
+action is excluded from that revision's eligible set.
+
 The deep judgment over a revision is a normal JevEvaluation with `purpose="DEEP"`,
 `input_ref_kind="EVIDENCE_STATE"`, `input_ref_id=<evidence_state_id>`, `source_evidence_hash`, the
 producing `action_id`, the `deep-v1` question-set version/hash and the full answers/applicability.
 Its projection is `jev-evidence-projection-v1`: the revision's recorded checks, copied project-level
 evidence, missing evidence, provenance counts and the eligible registered action set. A judgment is
-an input to `deep-policy-v1`, which records one next move; it never selects or executes an action.
+an input to `deep-policy-v1`, which records one next move; it never selects or executes an action,
+and only an explicit operator authorization dispatches a recorded `FOLLOW_UP`.
 
 Not yet used by the live slice: `cross_modal_patterns`, `contradictory_evidence`,
 `unavailable_evidence`, correction families, intervals and inference fields. They remain planned.

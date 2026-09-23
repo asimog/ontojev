@@ -1,9 +1,9 @@
 # Phase 4 Readiness Plan
 
-Status: **FIRST SLICE AND DEEP FAN-OUT IMPLEMENTED (2026-09-23); the rest of Phase 4 is not
-implemented or approved for live execution.** This document sequences one bounded deterministic
-follow-up vertical slice. It does not authorize new endpoints, expand budgets, or create a runtime
-workflow framework.
+Status: **FIRST SLICE, DEEP FAN-OUT AND ONE AUTHORIZED DISPATCH IMPLEMENTED (2026-09-23); the rest of
+Phase 4 is not implemented or approved for live execution.** This document sequences one bounded
+deterministic follow-up vertical slice. It does not authorize new endpoints, expand budgets, or create
+a runtime workflow framework.
 
 ## Completion Status
 
@@ -71,6 +71,28 @@ Still open for a later slice, unchanged in intent:
   baseline-vs-Jev incremental-value evaluation.
 
 `deep-policy-v1` thresholds are provisional. Do not lower them to force a `FOLLOW_UP`.
+
+## Dispatch stage implemented (2026-09-23)
+
+A recorded `FOLLOW_UP` now has something to dispatch, under explicit operator control:
+
+- `CHECK_REVISION_FAITHFULNESS_V1` (input kind `EVIDENCE_STATE`) verifies that a revision restates the
+  accepted evidence exactly, keeps its provenance, binds a matching source artifact and cites a
+  registered producing action; the registry now declares an input kind per action and the eligible set
+  is computed against the revision it would run on.
+- `--deep-followup` authorizes at most **one** dispatch per run for the named candidate; it obeys
+  `followup_count ≤ 3` and `iteration ≤ 2`, executes the sorted-first distinct eligible revision
+  action, records `E2` with parent `E1`, and re-judges `E2` with the same `deep-v1` fan-out. Every
+  refusal (move not `FOLLOW_UP`, not authorized, no distinct action, either cap, action failure) is a
+  typed `NEXT_MOVE_DISPATCHED` record.
+- The dispatch is a Python step, not a policy side effect: the recorded move still carries
+  `executed: false`, and the follow-on decision for `E2` is `NO_FURTHER_REGISTERED_ACTION` because its
+  producing action is excluded from its own eligible set.
+
+Still open for a later slice: autonomous iteration beyond one authorized dispatch, a third registered
+action, multi-candidate iteration, hypothesis generation, and the separately approved bounded live
+acceptance plus the baseline-vs-Jev incremental-value evaluation. `deep-policy-v1` thresholds remain
+provisional; do not lower them to force a `FOLLOW_UP`.
 
 ## Pre-Phase-4 structural check (2026-09-23)
 

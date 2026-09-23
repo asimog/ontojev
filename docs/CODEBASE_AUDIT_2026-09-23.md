@@ -381,6 +381,20 @@ were found only by the bounded live run; each is fixed with regression coverage.
   the duplicate check is removed.
 - **Verification:** the same refused invocation now leaves `data/` untouched.
 
+### AUD-26: moving flag validation earlier stopped `.env.local` from loading before the Jev key check
+
+- **Severity:** High for the live path (regression introduced by the AUD-25 fix). **Disposition:**
+  CONFIRMED live → fixed.
+- **Root cause:** `load_local_env()` is called inside `Settings.from_env()`; AUD-25 moved the
+  `TYPESAFE_API_KEY` requirement ahead of `Settings.from_env()`, so a configured key was no longer
+  loaded when the check ran and every `--jev` run with `.env.local` refused to start. Offline tests
+  could not catch it because they disable dotenv and set the key explicitly.
+- **Smallest fix:** call `load_local_env()` at the start of `main()` before any flag validation
+  (`cancerjev/cli/main.py`); `Settings.from_env()` keeps its idempotent call since process-environment
+  values still win.
+- **Live confirmation:** the bounded dispatch validation then ran end-to-end (16 GDC cache hits,
+  10/10 wide judgments reused, one deep provider call).
+
 ## Recommended Follow-Up
 
 1. Complete the baseline-vs-Jev evaluation with a predefined labeled/decision-quality protocol;
