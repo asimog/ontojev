@@ -4,6 +4,7 @@ import hashlib
 from typing import Any
 
 from cancerjev.domain.events import canonical_json
+from cancerjev.domain.measurements import ContractError
 
 
 def statistical_state_identity_payload(state: dict[str, Any]) -> dict[str, Any]:
@@ -31,7 +32,9 @@ def statistical_state_identity_payload(state: dict[str, Any]) -> dict[str, Any]:
     scientific components only: endpoint, canonical request hash, response hash,
     parser version, completeness and release.
     """
-    if state.get("schema_version") == 2:
+    if type(state.get("schema_version")) is not int or state["schema_version"] not in (1, 2):
+        raise ContractError("legacy state identity requires schema 1 or 2", "UNSUPPORTED_SCHEMA_VERSION")
+    if state["schema_version"] == 2:
         provenance = state["provenance"]
         generation = {
             key: value for key, value in state["generation"].items()
@@ -103,7 +106,9 @@ def evidence_state_identity_payload(evidence: dict[str, Any]) -> dict[str, Any]:
     is an operational record (its JSON carries run timestamps) and stays in
     provenance, so identical evidence keeps one identity across runs.
     """
-    if evidence.get("schema_version") == 2:
+    if type(evidence.get("schema_version")) is not int or evidence["schema_version"] not in (1, 2):
+        raise ContractError("legacy evidence identity requires schema 1 or 2", "UNSUPPORTED_SCHEMA_VERSION")
+    if evidence["schema_version"] == 2:
         provenance = evidence["provenance"]
         source = evidence["source_statistical_state"]
         return {

@@ -1,7 +1,10 @@
 # OntoJev architecture
 
 Reviewed 2026-09-24 at `42b05d40e6edafec0b8613e7dd154a60a46e4fee`.
-This pass changes documentation only. [Implementation status](IMPLEMENTATION_STATUS.md) owns current
+That architecture review changed documentation only. Stage 1 (2026-09-25) subsequently added
+standalone frozen scientific contracts/versioned codecs and a strict ResearchSpecV2 composition
+reader. These are not wired into the production flow below; current writers, questions, policies,
+transport and database schema are unchanged. [Implementation status](IMPLEMENTATION_STATUS.md) owns current
 facts; [the roadmap](DISCOVERY_ROADMAP.md) separates implementation gates from design.
 
 ## IMPLEMENTED: bounded deterministic-first research

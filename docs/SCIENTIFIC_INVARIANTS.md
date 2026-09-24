@@ -1,7 +1,8 @@
 # Scientific invariants and method registry
 
-These are scientific requirements; known enforcement gaps are explicitly listed below. Current
-implementation evidence is at `42b05d40e6edafec0b8613e7dd154a60a46e4fee`.
+These are scientific requirements; known enforcement gaps are explicitly listed below. Architecture
+evidence is at `42b05d40e6edafec0b8613e7dd154a60a46e4fee`; the Stage 1 contract additions are based on
+`fb52305b3d42a39b05f6c269bbfa3d6213fd51d2` (2026-09-25).
 [Domain contracts](DOMAIN_MODELS.md) distinguish current records from proposed typed versions.
 
 ## Claim and ownership boundary
@@ -83,12 +84,21 @@ cannot prove arbitrary generated prose scientifically faithful.
 
 ## Known enforcement gaps, not assurances
 
-The metric helper accepts OBSERVED with null value; state/evidence fields are dictionary
-conventions rather than validated records. Cached answer hydration lacks domain validation;
-unknown state versions can fall through historical identity handling. Dossier revision read
+Stage 1 closes the metric constructor's OBSERVED-null/bool/count hole and rejects unknown versions
+in legacy identity handling. Standalone v3 constructors/readers enforce explicit observations,
+unavailability reasons, entity/frame membership, immutable nested records, coverage and check-count
+consistency. Scientific and operational sources are separate; no generated-text field exists in a
+measurement. These checks do not prove the scientific truth of a supplied finite number.
+
+Production state/evidence consumers still use dictionaries; migration is Stage 2/3. Cached answer
+hydration still lacks domain validation. Dossier revision read
 failure can become an empty payload under an OBSERVED section. These are documented precisely in
 [the Python review](PYTHON_CORE_REVIEW.md); do not claim actual live measurement corruption where
 only a constructor or malformed-artifact path was demonstrated.
+
+The legacy builder also still raises INVALID_METRIC when entirely absent expression availability
+produces an empty sum alongside NOT_OBSERVED. This is a reproduced fail-closed composition defect,
+not an observed false-zero publication; Stage 3 must represent that branch explicitly as unavailable.
 
 The typed transition must enforce these requirements at construction and deserialization without
 reparsing trusted records throughout deterministic science. Keep JSON at real boundaries.

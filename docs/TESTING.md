@@ -1,11 +1,36 @@
 # Verification and prospective calibration
 
-Baseline `42b05d40e6edafec0b8613e7dd154a60a46e4fee`.
+Architecture baseline `42b05d40e6edafec0b8613e7dd154a60a46e4fee`.
 Default tests are offline, with outbound network blocked except loopback test servers. Existing
 coverage uses replay GDC, stub Jev adapters, real temporary SQLite/artifacts, immutable event/identity
-tests and strict malformed-provider cases. No tests or dependencies changed in this documentation pass.
+tests and strict malformed-provider cases. Stage 0–1 implementation at
+`fb52305b3d42a39b05f6c269bbfa3d6213fd51d2` adds the verification described below.
 
-## Evidence actually available
+## Stage 0–1 contract verification (IMPLEMENTED)
+
+New offline tests:
+
+- `tests/test_scientific_baseline.py`: fixed v1/v2 scientific hashes, canonical projection byte hash,
+  Wide/Deep/hypothesis question hashes and the 71-event fixture type/stage ordering hash.
+- `tests/unit/test_scientific_contracts.py`: invalid numeric/status/unit variants, immutable nested
+  fields, entity/population binding, coverage accounting, minimum summary n, revision/check counts,
+  v3 round trips, strict composition and operational/scientific identity separation.
+- `tests/unit/test_versioned_readers.py`: all 12 v1 fixture patterns and revisions, v2 records,
+  malformed schemas/values/populations, and offline v2 E0/E1/E2 replay with explicit event ordering.
+  Existing fixture/replay helpers supply synthetic data; no public response is newly imported.
+
+Run focused tests before the full suite. Python CI now also runs `python -m mypy`, configured in
+pyproject.toml for seven explicit files: domain measurements/scientific/evidence/_json/codecs/
+legacy_codecs and research/specs. Strict checking applies to that scope; `follow_imports = "silent"`
+retains imported signatures without turning this into a whole-repository typing campaign. There are
+no blanket ignore flags or new type assertions. Expand the checked file list when consumers transition.
+Configuration follows the [official mypy guidance](https://mypy.readthedocs.io/en/stable/config_file.html).
+
+The [Stage 0–1 handoff](STAGE_01_HANDOFF.md) records exact environment, commands and outcomes.
+Storage checksum/binding, dossier/cache/hypothesis hardening and typed runtime lane tests remain
+Stage 2/3 work. A standalone codec passing tests is not proof that every current consumer uses it.
+
+## Historical verification available at the architecture baseline
 
 The supplied audit at this SHA reports Ruff passed and pytest reached 100% with exit 0; pytest emitted
 an ignored Windows temporary-directory cleanup PermissionError. This pass reuses that verification,
@@ -19,7 +44,7 @@ tests/science/test_actions.py, tests/science/test_nextmove.py, tests/jev/test_se
 tests/jev/test_evidence_projection.py, tests/integration/test_live_replay.py,
 tests/integration/test_deep_slice.py, tests/integration/test_hypothesis_stage.py,
 tests/test_persistence_guards.py and tests/llm/test_openrouter_adapter.py.
-CI Python runs Ruff and pytest; no static checker currently runs.
+At that historical baseline CI ran Ruff/pytest only. The current scoped static gate is described above.
 
 ## PLANNED contract acceptance
 

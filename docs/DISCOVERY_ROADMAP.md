@@ -1,9 +1,29 @@
 # Discovery implementation roadmap and deliverable index
 
-Documentation architecture contract, reviewed against
+Historical documentation architecture contract, reviewed against
 `42b05d40e6edafec0b8613e7dd154a60a46e4fee` (main) on 2026-09-24 UTC.
 No discovery code, tests, dependencies or frontend were changed; no commit/push.
-The next implementation task must explicitly authorize code changes.
+The user subsequently authorized staged implementation. The latest implementation unit is
+**Stage 0 followed by Stage 1 only**, based on `fb52305b3d42a39b05f6c269bbfa3d6213fd51d2`.
+See [implementation status](IMPLEMENTATION_STATUS.md) and the [Stage 0–1 handoff](STAGE_01_HANDOFF.md).
+
+## Implementation journal — 2026-09-25
+
+Stage 0 baseline and Stage 1 standalone contracts/readers are implemented; the old live/fixture
+writers and runtime remain active. New v3 serializers are exercised offline, not wired into
+acquisition, storage hydration, Jev or policy. Stage 2 is next. The original table below remains
+the dependency order, not a claim that all typed consumers or discovery are implemented.
+
+The authorized continuation is: Stage 2 integrity of consumption, then Stage 3 typed composition,
+then independently gated mutation discovery, optional 100-gene expression arm, survivor CNV and
+held-data descriptive actions. Preserve wide-policy-v2 mutation-required admission. No new semantic
+question set, reranking or autoresearch belongs to this implementation pass. Default cutover and
+removal of obsolete execution branches occur **only after all Stages 1–7 pass**. Historical readers,
+identities and offline comparators remain. Stage 8 stops without the labelled prospective corpus;
+Stage 9 remains deferred inference.
+
+Stage 3 also owns the reproduced legacy all-expression-availability-absent builder failure:
+`sum(empty)=0` conflicts with NOT_OBSERVED and raises INVALID_METRIC. Do not weaken the metric guard.
 
 ## Decision
 
@@ -17,14 +37,14 @@ cross-modal inference or scientific Jev value.
 
 | Stage | Concrete work | Acceptance before proceeding |
 |---|---|---|
-| 0: factual baseline | This documentation reconciliation and bounded reality campaign | Current/proposed/historical authority clear; no forbidden diff; evidence limitations explicit |
+| 0: implementation baseline | Record clean HEAD/environment; offline baseline; historical identity/projection/question/event goldens; retain prior captures | Baseline understood, capture integrity verified, no new live claims |
 | 1: scientific contracts | Frozen measurement/population/quality/state/evidence/check variants; direct version codecs; typed existing seams | Observed-null impossible; malformed/unknown schemas fail typed; v1/v2 artifacts/hashes preserved; scoped static gate and focused offline tests |
 | 2: integrity of consumption | Hash+schema-validate dossier inputs, cache answers, candidate evidence; typed hypothesis drafts | Corrupt/missing revisions never OBSERVED; invalid cache never drives policy; unknown test IDs rejected; old valid fixtures replay unchanged |
 | 3: lane composition | Separate common acquisition frame from mutation/expression results; compute before serialization | Same current accepted measurements/identity for legacy path; row/batch permutation tests; no repeated internal reparsing |
 | 4: bounded broad universe | Explicit release/filter/ordered 1,000-gene manifest, count batches, deterministic reduction | Unique IDs/totals/page guards; absence not zero; all selection/rejection reasons retained; within original request/byte caps |
 | 5: independent expression arm | Optional explicitly budgeted case-labelled descriptors and within-gene extremes | Complete declared population/missingness; not tumor-normal/causal; no sample-matching claim; report lane-specific recall/coverage |
 | 6: narrow CNV lane | Fixed builders and strict occurrence parser; complete survivor queries only | Real fixtures for generic Loss, missing sample ID, mixed callers; conflict/dedup policy; no neutral/negative inference; budget exhaustion gives PARTIAL/INELIGIBLE |
-| 7: actions and semantic experiments | Reuse investigation loop; registered held-data descriptor actions; separate experimental questions/features | Method contracts/units/populations and authorization enforced; explicit model attempt/token budget; unchanged wide-v3/deep-v1 behavior |
+| 7: descriptive actions and cutover | Reuse investigation loop; expression-tail/CNV-category actions; typed versioned projections; no new semantic questions | Held-data methods and authorization enforced; explicit model attempt/token budget; unchanged judgments/policies; all Stage 1–7 gates before default cutover |
 | 8: prospective evaluation | Blinded grouped labels, fixed dev/holdout, ablations and resource comparison | Pre-registered improvement/tolerance gate met with uncertainty or remain experimental/disable; no ranking-only value claim |
 | 9: conditional inferential extensions | Matched mutation-expression/CNV-expression, survival, later scRNA | Separate source/matching/reference/censoring/statistical review; not unlocked by finishing earlier engineering stages |
 

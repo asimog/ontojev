@@ -1,6 +1,41 @@
 # Implementation status
 
-## Current truth — documentation reconciliation, 2026-09-24 UTC
+## Current truth — implementation Stages 0–1, 2026-09-25
+
+Starting HEAD: `fb52305b3d42a39b05f6c269bbfa3d6213fd51d2`, clean `main`.
+This implementation unit is **Stages 0 and 1 only**. No commit or push; HEAD is unchanged.
+See the [Stage 0–1 handoff](STAGE_01_HANDOFF.md) for contracts, compatibility, verification and limitations.
+
+- IMPLEMENTED: frozen measurement/context/quality/coverage records, typed mutation and local
+  expression summaries, narrow CNV occurrence records, StatisticalStateV3, EvidenceStateV3,
+  evidence checks and derived summaries. These are **standalone contracts, not a new runtime**.
+- IMPLEMENTED: direct v3 readers/writers and historical v1/v2 boundary readers, with explicit
+  version dispatch, scientific identity checks, immutable nested values and original legacy bytes.
+  Unknown versions no longer fall through the legacy identity functions to fixture handling.
+- IMPLEMENTED: ResearchSpecV2 composition and strict reader, without registering a production
+  profile. LUAD_RESEARCH_V1 and the existing v2 live writers remain the production path.
+- IMPLEMENTED: the legacy metric constructor rejects observed-null, boolean/non-numeric,
+  negative/fractional count and nonfinite values. Valid numerical behavior and hashes are preserved.
+- IMPLEMENTED: mypy development dependency and strict seven-module CI scope; not whole-core typing.
+- VERIFIED baseline: Ruff passed; 380 offline tests passed, two live tests deselected. Retained
+  capture integrity rechecked: 69 bodies, 6,093,958 bytes, all original hashes/lengths match.
+  These are historical files, not new provider measurements.
+- VERIFIED final Stage 0–1 gate: **494 passed, 2 deselected**, Ruff passed, scoped mypy passed
+  (seven files), diff/new-file whitespace checks passed and 40 local documentation links resolved.
+  Focused suite: 144 passed. The baseline's pytest-asyncio/Windows cleanup warnings remain.
+- PLANNED, not fixed here: Stage 2 storage/binding readers, dossier publication refusal,
+  cached-answer validation and hypothesis draft hardening. Current production consumers still
+  use legacy dictionaries. SQLite remains schema 4; Jev projections/questions/policies are unchanged.
+- Newly demonstrated existing limitation: with expression availability entirely absent, the legacy
+  builder supplies `0` with NOT_OBSERVED for `cases_with_expression_total`; the metric guard raises
+  INVALID_METRIC. It fails closed, not as published false-zero evidence. Correct composition in
+  Stage 3; the v3 contracts already represent disabled/unacquired lanes explicitly.
+
+No discovery lane, endpoint, action, frontend, API behavior, scientific runtime dependency,
+plugin configuration or paid-model integration changed. No new GDC or paid-model calls.
+Stages 2–9 are not completed by this handoff; discovery remains blocked on Stages 2–3.
+
+## Historical documentation reconciliation, 2026-09-24 UTC
 
 Audited starting HEAD: `42b05d40e6edafec0b8613e7dd154a60a46e4fee`, clean local `main`
 matching `origin/main` at inspection. This pass changes documentation only; it does not implement

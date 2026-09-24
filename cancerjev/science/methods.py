@@ -217,12 +217,21 @@ METHODS: dict[str, MethodDefinition] = {
 
 def metric(name: str, value: float | int | None, unit: str, *, availability: str = "OBSERVED",
            reason_code: str | None = None, observation_ref: str | None = None) -> dict[str, Any]:
+    if availability == "OBSERVED" and value is None:
+        raise ScienceError("INVALID_METRIC", f"{name}: observed metric requires a value")
     if value is not None and availability != "OBSERVED":
         raise ScienceError("INVALID_METRIC", f"{name}: value present with availability {availability}")
     if value is not None:
-        number = float(value)
+        if type(value) not in (int, float):
+            raise ScienceError("INVALID_METRIC", f"{name}: expected a non-boolean number")
+        try:
+            number = float(value)
+        except OverflowError as exc:
+            raise ScienceError("NONFINITE_METRIC", f"{name}: outside finite numeric range") from exc
         if not math.isfinite(number):
             raise ScienceError("NONFINITE_METRIC", f"{name}: {value!r}")
+        if unit in {"cases", "count"} and (number < 0 or not number.is_integer()):
+            raise ScienceError("INVALID_METRIC", f"{name}: count must be a nonnegative integer")
         value = int(value) if float(value).is_integer() and unit in {"cases", "count"} else number
     return {
         "name": name, "value": value, "unit": unit, "availability": availability,

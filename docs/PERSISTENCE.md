@@ -60,6 +60,13 @@ Keep the existing `Repository` and `ArtifactStore` narrow; there are no separate
 
 ## Proposed typed hydration and compatibility (PLANNED)
 
+Stage 1 (2026-09-25) adds standalone scientific `domain/codecs.py` readers and canonical v3 writers;
+they are not yet wired into Repository, ArtifactStore, dossier, cache or API consumption. Direct
+historical readers preserve original bytes and hash semantics; v3 returns frozen records. SQLite
+remains schema 4 and current artifact writers remain v1/v2. The next Stage 2 must wrap those readers
+with confined-path, size/byte-hash and relational binding checks. This does not fix the dossier gap
+described above. See [contract compatibility](DOMAIN_MODELS.md) and [handoff](STAGE_01_HANDOFF.md).
+
 Keep SQL/JSON as boundary representations. Add named version-dispatching readers for scientifically
 consumed states, evidence revisions, cached answers and hypothesis records, returning validated
 frozen records or explicit unsupported/corrupt outcomes. `_decode_row` remains a generic SQL
