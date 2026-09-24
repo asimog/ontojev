@@ -3,8 +3,10 @@
 ## Current truth — Stage 3 implementation, 2026-09-25
 
 Stage 0–1 was published as `63d991a6ded2988bc6da0090f80ee69775cf770d`; Stage 2 as
-`7f13f611c89fe2db190ecd2f798f68aa4f2b0871`. Stage 3 completes the requested continuation;
-see [Stage 3 handoff](STAGE_03_HANDOFF.md) for files, boundaries and verification.
+`7f13f611c89fe2db190ecd2f798f68aa4f2b0871`; and Stage 3 as
+`756becacbbc35d7d361a55165a3a59fa3e332a3c`. Local `main`, `origin/main` and GitHub's
+`refs/heads/main` were rechecked at the Stage 3 SHA for this handoff. See
+[Stage 3 handoff](STAGE_03_HANDOFF.md) for files, boundaries and verification.
 
 - IMPLEMENTED: separate common cohort, mutation-count and expression acquisition functions;
   typed mutation/expression computations before compatible v2 state serialization.
@@ -17,6 +19,11 @@ see [Stage 3 handoff](STAGE_03_HANDOFF.md) for files, boundaries and verificatio
 - VERIFIED: **547 passed, 2 deselected**; Ruff, scoped strict mypy and whitespace checks pass.
   Identity/projection/question/event goldens and full offline Deep/hypothesis/dossier replay pass.
   Existing pytest-asyncio and Windows cleanup warnings remain non-fatal.
+- REVERIFIED FOR HANDOFF: the pasted work log agrees with the Git ancestry
+  `63d991a` → `7f13f61` → `756beca`. A fresh documentation-handoff run on local Python 3.14.3
+  again passed **547 tests with 2 deselected** in 109.80 seconds. Its first roughly 30 seconds
+  overlapped a second diagnostic pytest process, which was stopped, so this duration is evidence of
+  completion rather than a clean performance comparison with the original 96.46-second Stage 3 gate.
 - UNCHANGED: SQLite schema 4, v1 fixture/v2 live writers, scientific identities, method versions,
   Jev questions/projections/policies, provider caps and default LUAD_RESEARCH_V1 workflow.
 - Explicit boundaries: v2 artifact integrity inspection, provenance/event envelopes, historical

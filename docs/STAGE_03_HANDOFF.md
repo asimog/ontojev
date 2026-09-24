@@ -89,6 +89,30 @@ No dependency changes in this stage, frontend changes, pipeline installation or 
 The NGS skills informed assay/missingness/provider-summary distinctions; TypeSafe guidance informed
 typed answers and deterministic policy. Neither supplied scientific evidence or acquisition authority.
 
+## Commit, chat and timing handoff verification
+
+Rechecked on 2026-09-25 after the implementation chat was supplied for verification:
+
+- The chat's three publication claims match Git history in order: Stage 0–1 is
+  `63d991a6ded2988bc6da0090f80ee69775cf770d`, Stage 2 is
+  `7f13f611c89fe2db190ecd2f798f68aa4f2b0871`, and Stage 3 is
+  `756becacbbc35d7d361a55165a3a59fa3e332a3c`.
+- Local `main`, remote-tracking `origin/main`, `origin/HEAD`, and GitHub's queried
+  `refs/heads/main` all resolved to the Stage 3 commit before this documentation handoff.
+- A fresh `python -m pytest --durations=30` run on local Python 3.14.3 completed with
+  **547 passed, 2 deselected, 1 warning in 109.80 seconds**. Live GDC, Jev and provider tests were
+  excluded by the default markers; outbound non-loopback network is blocked by the test fixtures.
+- The run was slow, not hung. The suite repeatedly creates temporary SQLite databases and artifact
+  stores and executes full replay, cache, API, corruption, Deep and hypothesis paths. The slowest
+  individual test took 3.54 seconds, so most wall time is distributed across the large offline suite.
+  For about the first 30 seconds a delegated diagnostic accidentally ran a second pytest process;
+  that process was stopped, so 109.80 seconds is not a clean regression comparison with 96.46 seconds.
+- Browser acceptance is a separate sequential gate. One real-time UI scenario requests a 2.5-second
+  delay for each fixture stage and Playwright is configured for one worker; that intentional pacing is
+  independent of the offline Python result above.
+- At the user's stop request, no pytest run remained and two dormant Playwright `test-server`
+  helpers were stopped. No further test was started for this documentation-only handoff.
+
 ## Next authorized unit must be explicit
 
 Stage 4 is PLANNED: bounded ordered universe and indexed mutation reduction, with its own official

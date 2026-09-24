@@ -14,6 +14,14 @@ Its full gate is **547 passed, 2 deselected**; Ruff and strict mypy on **19 modu
 The pre-existing absent-expression composition failure now has a null/unavailable regression test,
 plus rejection of a coherently rehashed malformed false-zero artifact. See [Stage 3](STAGE_03_HANDOFF.md).
 
+The full gate is expected to take roughly minutes rather than seconds on a local Windows checkout.
+It executes 547 offline tests, including repeated temporary SQLite bootstrap, artifact publication and
+hash validation, complete replay/investigation paths, API reads, cache validation and corruption refusal.
+This is not a hidden live-provider wait: default markers exclude live GDC/Jev tests and the shared fixture
+blocks outbound non-loopback networking. The 2026-09-25 timing handoff measured a 3.54-second slowest
+individual test; the wall time is distributed across the suite. Browser E2E is separate and sequential,
+and one UI scenario deliberately uses 2.5-second fixture-stage delays to make progress observable.
+
 Architecture baseline `42b05d40e6edafec0b8613e7dd154a60a46e4fee`.
 Default tests are offline, with outbound network blocked except loopback test servers. Existing
 coverage uses replay GDC, stub Jev adapters, real temporary SQLite/artifacts, immutable event/identity
