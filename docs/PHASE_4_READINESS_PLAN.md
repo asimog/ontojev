@@ -1,5 +1,11 @@
 # Phase 4 Readiness Plan
 
+> Historical record; superseded for current status and implementation instructions on 2026-09-24.
+> Original dates, results and proposals below are preserved, not newly verified claims.
+> Use [implementation status](IMPLEMENTATION_STATUS.md), [architecture](ARCHITECTURE.md),
+> [GDC strategy](GDC_STRATEGY.md) and [discovery roadmap](DISCOVERY_ROADMAP.md).
+> Existing question versions remain unchanged; historical proposals do not authorize new behavior.
+
 Status: **PHASE 4–6 CORE IMPLEMENTED (2026-09-23): bounded multi-step arc, live dossier, bounded
 hypothesis engine with `hypothesis-v2`, and an offline evaluation harness. Phase 7 is deliberately
 not implemented.** This document sequences bounded deterministic follow-up work. It does not

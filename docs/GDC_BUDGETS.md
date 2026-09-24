@@ -1,146 +1,116 @@
-# Hard budgets and exact enforcement design
+# Budgets: implemented limits, observations and proposals
 
-These are application limits, not GDC service guarantees. Real enforcement ships and is
-adversarially tested; a code/document mismatch is resolved toward the stricter safe value. Lowering
-limits is allowed. This design rejects above-default limits in V1; it deliberately does not
-implement an optional expanded-budget override. Freeze validated effective limits in every run.
+Baseline `42b05d40e6edafec0b8613e7dd154a60a46e4fee`; review 2026-09-24 UTC.
+Limits below are application ceilings, not provider guarantees. No limit or dependency changed.
 
-## Implemented caps (code is authoritative)
+## IMPLEMENTED
 
-| Constant | Hard cap | Enforcement point |
+| Resource | Bound | Enforcement / caveat |
 |---|---:|---|
-| MAX_GDC_RESPONSE_BYTES | 5,242,880 (5 MiB) | `BudgetCaps.per_response_bytes`; stream reader and header preflight |
-| MAX_GDC_TOTAL_BYTES_PER_RUN | 67,108,864 (64 MiB) | `BudgetCaps.max_bytes`; shared run ledger reserves bytes before dispatch; all bodies, including failures, count |
-| MAX_GDC_REQUESTS_PER_RUN | 150 | `BudgetCaps.max_requests`; atomic attempt reservation immediately before every actual dispatch; retries count |
-| MAX_GDC_PAGES_PER_QUERY | 10 | `BudgetCaps.max_pages_per_query`; logical-query page ledger, preserved across smaller-page retries and partitions |
-| MAX_CASE_IDS_PER_REQUEST | 250 | `MAX_CASE_IDS` in the request builder plus `BudgetCaps.max_case_ids`; validated request builder and final encoded filter/body inspection |
-| MAX_GENE_IDS_PER_REQUEST | 100 | `MAX_GENE_IDS` in the request builder plus `BudgetCaps.max_gene_ids`; same inspection for gene IDs |
-| MAX_GDC_RETRIES | 2 | `BudgetCaps.max_retries`; bounded retries for safe GETs only |
-| GDC_SOCKET_TIMEOUT | 30 s | `BudgetCaps.timeout_seconds`; one socket timeout for connect/read |
-| MAX_CASES_PAGE | 250 | `cases_request` size validation |
-| MAX_FILES_PAGE | 5 | `files_expression_request` size validation |
-| MAX_PROJECTS_PAGE | 100 | `projects_request` size validation |
-| MAX_DISCOVERY_HITS | 20 | `top_mutated_genes_request` size validation |
-| MAX_COHORT_CASES | `case_page_size × 10` (≤2,500) | `AcquisitionSpec`: the ten-page query budget |
-| MAX_JEV_WIDE_STATES_PER_RUN | 1,000 | `Settings.jev_max_states`; persist distinct state admissions before cache/provider evaluation; reevaluation cannot reset admission budget |
-| JEV_REQUEST_TIMEOUT | 30 s | `Settings.jev_timeout_seconds` (`CANCERJEV_JEV_TIMEOUT_SECONDS`, bounded-seconds pattern); one provider request timeout, may be lowered only |
-| LLM_REQUEST_TIMEOUT | 120 s | `Settings.llm_timeout_seconds` (`CANCERJEV_LLM_TIMEOUT_SECONDS`, bounded-seconds pattern); one generated-text provider request, may be lowered only. 120 s because a reasoning model spends part of its bounded completion (`MAX_OUTPUT_TOKENS = 6000`, `reasoning.effort = low`) on reasoning before returning content |
-| MAX_HYPOTHESES_PER_CANDIDATE | 3 | `cancerjev.research.hypotheses.MAX_HYPOTHESES`; generated text is bounded per statement and per list (`MAX_TEXT_CHARS`, `MAX_LIST_ITEMS`), never evidence and never a measured field |
-| MAX_EVENT_DATA_BYTES | 65,536 | `domain.events.DATA_LIMIT`; UTF-8 serialized payload validation before event commit |
-| MAX_PROJECTION_BYTES | 65,536 | `jev.projection.PROJECTION_BYTE_CAP`; fail-closed projection size |
-| WIDE_PROMOTION_LIMIT | 3 | `research.ranking.PROMOTION_LIMIT`; top-K wide admission (a maximum, not a quota) |
+| GDC consumed body per response | 5 MiB | BudgetCaps/stream reader, error bodies included |
+| GDC consumed bodies per run | 64 MiB | RunBudget shared byte accounting |
+| GDC network attempts per run | 150 | reserve before dispatch; retries consume attempts |
+| GDC logical page number | <=10 | request.page check; current case loop advances monotonically; not a general repartition-proof query planner |
+| Explicit case/gene IDs per request | 250 /100 | fixed endpoint builders and transport validation |
+| Safe GET retries | <=2 after initial | no POST retry, no401/403 retry; each attempt charged |
+| GDC socket timeout | <=30 s | operation timeout, not a whole-campaign deadline |
+| Cases/projects/files/discovery page size | 250 /100 /5 /20 | endpoint builder validation |
+| Production cohort ceiling | 1000 | LUAD_RESEARCH_V1; general AcquisitionSpec must fit page_size x10 |
+| Production gene selection | discovery 20, count limit 100, candidate 10 | current provider-ranked slice, not a 1000-gene universe |
+| Wide states per invocation | Settings.jev_max_states<=1000 | capped prefix in run_wide_evaluation; not an underlying HTTP-attempt ledger |
+| Promotion slots | 3 | ranking/operator selection share cap |
+| Follow-ups per candidate | 3 | deep.FOLLOWUP_LIMIT; current two-action registry/revision cap is tighter |
+| Evidence revision index | 0..2 | E0 plus at most E1/E2; deep.EVIDENCE_ITERATION_LIMIT and event schema |
+| Hypotheses per candidate | 3 | hypotheses.MAX_HYPOTHESES, lifetime admission check |
+| Jev request timeout setting | <=30 s | adapter passes SDK timeout; retries have separate behavior below |
+| LLM timeout setting | <=120 s | config; adapter default 30 unless caller config supplied |
+| OpenRouter response/completion | 32,768 bytes /6000 output tokens | bounded reader; reasoning shares completion budget |
+| Event data / whole envelope | 65,536 /98,304 bytes | RunEvent validation |
+| Jev projection | 65,536 bytes | projection fail-closed byte check; NOT a token-limit proof |
 
-The per-response cap was previously documented as 5 MiB while the code defaulted to 8 MiB; the
-code was lowered to the documented 5 MiB (a regression test asserts the default). Case/gene limits
-count the combined supplied identifiers, not 250 for each subgroup. Reject repeated IDs in raw
-user-like inputs to avoid count ambiguity; generated queries use canonical deduplicated lists.
-Arbitrary filter input is not accepted; unknown ID-bearing fields fail closed. A project filter is
-not an explicit case ID list, but its response remains subject to all other caps.
+Settings.from_env rejects above-hard-cap values and supports lower limits. Direct construction of
+internal objects is not a public arbitrary-budget authorization. GDC host/method/field allowlists,
+anonymous access and no downloads remain fixed code. Physical network/TLS buffers and headers are
+outside consumed-body accounting. Unexpected compression and redirects are refused.
 
-## Planned Phase 4 caps (documented, not enforced)
+Old proposals for 20 deep candidates, 6 hypotheses and 1420 evaluations are superseded, not enforced
+runtime policy. Current three-candidate/two-revision/three-hypothesis bounds give at most
+W + 3*(2 deep +3 hypothesis) = W+15 logical Jev evaluations for a single bounded arc, assuming one
+review per generated hypothesis/revision. Current production W<=10, hence<=25; configured wider
+invocation W<=1000 gives<=1015. These are derived logical-call envelopes, not guaranteed HTTP counts.
+Early failures, abstentions, unavailable hypotheses and cache hits reduce work. At most one generation
+stage per investigated candidate in the current loop: up to 3 logical generative calls when injected.
 
-| Constant | Planned cap | Note |
-|---|---:|---|
-| MAX_DEEP_CANDIDATES | 20 | Deep promotion slots; not implemented |
-| MAX_FOLLOWUPS_PER_CANDIDATE | 3 | Execution slots; not implemented |
-| MAX_RESEARCH_ITERATIONS_PER_CANDIDATE | 2 | Evidence-changing rounds after baseline iteration 0; not implemented |
-| MAX_HYPOTHESES_PER_CANDIDATE | 6 | Lifetime candidate count; not implemented |
+## SDK retries and resource-accounting gap
 
-The old `MAX_PROJECTS_PER_RUN = 12` and `MAX_GDC_CONCURRENCY = 4` rows are removed: the current
-specification selects exactly one project, and the transport is a single sequential process
-(concurrency 1, no semaphore). The old `MAX_WIDE_HITS_PER_PROJECT_LANE = 100` is covered by
-`MAX_GENE_IDS` and the `ResearchSpec` candidate-gene limit.
+The installed typesafe-sdk 0.7.1 RetryPolicy defaults to 2 retries after initial, retryable
+408/429/5xx plus connection/timeouts, backoff and a 30-second retry budget. The adapter does not supply
+an explicit retry policy. The SDK's stop-before-next-delay rule is not a hard cancellation of an
+already-running attempt. Application counters record adapter-level evaluations, not every SDK HTTP
+attempt. A single logical evaluation can therefore attempt up to 3 HTTP calls; W+15 could become
+3*(W+15) attempts in a conservative retry-count scenario. Actual billing of failed requests is unknown.
 
-## Sole transport path
+PLANNED before larger paid discovery: explicit no-hidden-retry policy (prefer 0 initially), shared
+attempt/token/spend reservations, terminal usage including unknown values, bounded review/retry
+authorization and cancellation tests. Do not claim current Jev/LLM dollar budgets are enforced.
+Current GDC transport ledger does not cover model calls.
 
-Every GDC operation, including inventory, mapping queries, errors, retries and contract probes,
-goes through `GDCTransport.request(run_budget, validated_request)`. No science, Jev, LLM, API route
-or helper creates its own network client. Fixed HTTPS host `api.gdc.cancer.gov`, allowlisted
-paths/methods, no GDC Authorization/X-Auth-Token, no redirect following, no automatic library
-retries. `/data`, manifests, BAM slicing and archive downloads are absent from the allowlist. The
-contract-capture probe is the same transport with a capture sink; it cannot reach endpoints the
-runtime allowlist excludes, and its own budgets are bounded per invocation.
+## Measured anonymous architecture campaign
 
-Steps:
+69 attempts /6,093,958 bytes, all HTTP 200. Per-session maximum was 14 requests; largest session
+2,523,861 bytes. Largest individual body 284,276 bytes. Campaign ceilings 150/64MiB, session 30/8MiB,
+response 5MiB, genes 100/cases 250, pages 10, concurrency 1, timeout 30 s, no retries. Every attempted request
+has a terminal entry. [Register](GDC_DISCOVERY_CAPTURES.md) and [workloads](GDC_STRATEGY.md) include
+exact hashes, requests, measurements and the limited full-cohort extrapolation.
 
-1. Validate frozen scope, endpoint contract, final ID counts, requested fields, format, and
-   logical-query page allowance. Normalize request identity without changing filter semantics.
-2. Check cache and hash/size/contract validity. A fresh valid hit has zero network bytes/calls,
-   still records the source request and consumes logical page/state work allowances. Never use a
-   cached body larger than the run's configured response cap.
-3. Reserve one attempt under the ledger mutex; refuse when the request cap is reached, when the
-   requested page exceeds the per-query page cap, or when the run byte cap is already reached.
-   Persist attempt start and reservation before sending.
-4. Send with `Accept-Encoding: identity`; disable automatic decompression, redirect following and
-   retry. Header preflight rejects a Content-Length above the allowance before intentional body
-   reads. An unexpected content encoding is rejected; do not decompress an unbounded payload.
-5. Read incrementally, each requested read size ≤ `min(64 KiB, allowance - bytes_read)`. Charge
-   every yielded body byte before buffering/parsing or publishing. No `response.content`, eager
-   `.json()`, or download-then-check code path. Check cancellation between reads.
-6. At the allowance boundary, accept only when protocol framing has already established complete
-   body termination. Otherwise close and classify as size-limit/incomplete, without reading an
-   extra sentinel byte. An aborted/truncated JSON/TSV body never becomes evidence or a cache entry.
-7. On close, persist charged consumption and release unused reservation. Validate status, framing,
-   response schema and completeness; hash and publish only accepted results. Error response bytes
-   and partial failed attempts remain charged. If a fatal process crash prevents final accounting,
-   retire the run rather than resume/reuse its budget.
+The campaign is not a production run and did not enter production data. HTTP 200 with incomplete search
+pagination or missing scientific fields is not admitted evidence.
 
-Reservation is pessimistic; actual consumption is counted separately. A dispatch reservation may
-remain conservatively charged when it is impossible to determine whether a send reached GDC. Never
-refund an uncertain attempt and retry past the cap. Cache hits do not receive network reservations.
-An exhausted run can continue over cached/held evidence and finish/defer dossiers.
+## Current documented TypeSafe price/limits (not account guarantees)
 
-**Physical-network limitation:** an application cannot guarantee zero extra bytes arrive in OS/TLS
-buffers after it cancels a request. The hard guarantee here is a maximum response-body consumption
-at the controlled reader and maximum persisted/admitted data, with immediate cancellation. It is
-not a packet-level ISP billing guarantee and excludes HTTP/TLS headers. Literal total NIC-byte
-enforcement remains **RISK**, not silently declared solved. No extra infrastructure is proposed to
-hide this limitation.
+Official [models page](https://docs.typesafe.ai/models), checked 2026-09-24:
+jev-1.13.0 input $0.042 per million tokens ($42/billion), output free; 64k tokens/request,
+state plus longest question<=32k; 250,000 tokens/s and 1200 requests/min, explicitly subject to change.
+Choice<=255 options and Score 2–10 levels are documented primitive limits and checked in current
+question definitions. Byte limits do not imply token limits. No account price/quota or invoice was queried.
 
-## Retry, pagination and exhaustion
+### Scenario arithmetic — ESTIMATED, not paid/benchmarked
 
-Implemented: one socket timeout of 30 s and at most two retries after the initial safe read
-request, only for connection resets/timeouts, 429 and selected transient 500/502/503/504 responses;
-every retry reserves another request and bytes. Never retry 401/403; record `UNAVAILABLE_ACCESS`.
-Never automatically retry oversized responses with a larger cap. Separate connect deadlines,
-whole-attempt deadlines, exponential backoff with jitter and Retry-After handling are **PLANNED**
-refinements, not implemented.
+Let N states, S state tokens, Q total question tokens, L one request latency. Shared-state fan-out:
+input=N*(S+Q). Separate questions repeat S; k equal-size questions cost=N*(k*S+Q).
+Price estimate=input/1,000,000*0.042. Add provider/tokenizer overhead and actual retries when measured.
 
-Pagination identity is `(endpoint, science scope, semantic filters, fields, format, units,
-lane/query purpose)`, excluding cursor and page-size mechanics. Track requested page advances
-separately from network attempts: retrying a failed page consumes request budget but not a second
-successful-page slot. Reducing page size or splitting the same query shares the original ≤10
-advance slots. Detect repeated cursors/pages, duplicates, inconsistent totals and empty pages; stop
-PARTIAL rather than loop. The implemented case-frame path additionally fails closed on an
-inconsistent provider `from` offset (`CASE_PAGE_OFFSET_INCONSISTENT`), a total that disagrees with
-the inventory or changes across pages (`CASE_TOTAL_INCONSISTENT`), premature empty pages,
-cross-page duplicate IDs and unexpected project IDs.
+| Scenario | Assumptions | Logical requests | Input tokens | Estimated input cost |
+|---|---|---:|---:|---:|
+| Wide100, seven-question fan-out | S1500, Q700 | 100 | 220,000 | $0.00924 |
+| Wide1000 same workload | S1500, Q700 | 1000 | 2,200,000 | $0.09240 |
+| Wide100, seven separate calls | each question100 tokens | 700 | 1,120,000 | $0.04704 |
+| Survivor rerank10 | one profile1500 + rubric200 | 10 | 17,000 | $0.000714 |
+| Deep3 candidates x2 revisions | state3000 + five questions500 | 6 | 21,000 | $0.000882 |
+| Hypothesis reviews9 | state3000 + questions300 | 9 | 29,700 | $0.0012474 |
+| Optional cascade100 | verifier1700 tokens each | 100 verifier calls | 170,000 | $0.00714 + UNKNOWN generator/escalation cost |
 
-GDC budget exhaustion emits `GDC_REQUEST_BUDGET_EXHAUSTED` or `GDC_RUN_BYTE_BUDGET_EXHAUSTED`;
-response rejection emits `GDC_RESPONSE_LIMIT_EXCEEDED`. Page/ID/work limits use typed reason codes
-in a policy event. A blocked candidate becomes DEFERRED with reason `DEFERRED_BUDGET`, not FAILED
-or a negative scientific result. Retrieval stops immediately; already-held data can still be
-judged/rendered.
+A 100-state batched stage takes roughly 100L sequentially, versus 700L for serial separate questions.
+If L were 0.6s (assumption), these are 60s versus 420s; this is not a measured LUAD latency.
+Batching different states into a giant context is not the same optimization as independent questions
+over one shared state and can impair relevance/context budget. Keep concurrency 1 initially; fan-out
+inside a provider request does not authorize application concurrency.
 
-## Current single-cohort envelope
+For cascade escalation fraction r, total cost=Ccheap+N*Cverify+r*N*Creasoning. Conditional latency is
+Lcheap+Lverify plus Lreasoning for escalated cases; no generator price or r is established here.
+Optional semantic stage followed by unchanged Wide adds both stages' costs. Cache hits avoid new
+provider input charges but retain source usage provenance. Changing model/question/state invalidates
+cache; changing only ranking weights need not. Worst-case three-attempt input estimates may be 3x;
+actual failed-attempt billing remains unknown, not zero.
 
-Caps are ceilings, not quotas. One `LUAD_RESEARCH_V1` slice is roughly 15–25 requests and well
-under 2 MiB: 1 `/status`, 1 `/projects`, 1 `top_mutated_genes_by_project`, 1
-`top_cases_counts_by_genes`, 1 `mutated_cases_count_by_project`, 1 `/genes`, ⌈N/250⌉ `/cases`
-pages, 1 `/files`, ⌈N/250⌉ `gene_expression/availability` batches and ⌈N/250⌉
-`gene_expression/values` batches, plus one `gene_selection` only when the whole cohort fits one
-≤250-case request. With `max_cohort_cases ≤1,000`, each paginated lane is ≤4 requests. Bytes always
-override the request ceiling. The contract-verification probe is a separate bounded invocation
-(≤30 requests, ≤8 MiB) reproducible through the `probe` command; probe captures are written under
-`data/gdc-contract-captures-<date>/` with per-request metadata and hashes.
+## Historical OntoJev observations (not new measurements)
 
-Jev's 1,000-state cap is not a 1,000-question cap: the implemented `wide-v3` set has seven questions
-(up to 7,000 judgments). The superseded `wide-v2` set remains only for interpreting historical
-evaluations. **PLANNED** Phase 4 bounds are separate and not enforced: at most three
-evidence versions, ≤60 deep evaluations, and six hypotheses × three versions × 20 candidates ≤360
-additional calls; total planned Jev evaluations ≤1,420 before any retries. No live retries until a
-separate provider call/token/spend policy is frozen. The TypeSafe documentation (see
-`docs/SOURCE_REVIEW.md`) states `jev-1.13.0` at 64k context (32k state budget), ~250k tok/s, 1200
-requests/min, and $42/Btok input with output free; those are **DOCUMENTED**, not a contract, and
-actual prices, quotas and cancellation billing for the intended live configuration remain
-**UNVERIFIED**. Display unknown cost as unknown, never $0.
+From [dated status records](IMPLEMENTATION_STATUS.md), retained without re-running providers:
+
+- 2026-09-22 wide-v2, projection-v1, jev-1.13.0: 10 calls, 28,294 input/2,020 output, about 0.9–1.2s/call.
+- 2026-09-23 single-cohort wide-v3 acceptance: 10 calls, 19,659 reported input tokens; provider cost unknown.
+- 2026-09-23 deep-v1 over E1, jev-1.13.0: 3,606 input/174 output, 587 ms for one call.
+- Historical wide/deep cache replay reported zero fresh provider calls. A cache demonstration is not
+  model reproducibility or scientific validation.
+
+Do not mix historical question workloads or use their latency as a present guarantee.

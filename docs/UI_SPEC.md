@@ -1,6 +1,6 @@
 # Next.js App Router UI
 
-CancerHawk references were inspected at commit `b87e98c76c4264acc28fa9ae920b5d3eab2637dd`. It uses Pages Router in the requested files. Carry over interaction ideas, not its routing code or backend. Source links and observations are in SOURCE_REVIEW.
+This is a presentation specification, not an independent scientific-status authority. The 2026-09-24 documentation reconciliation updates backend capability descriptions only; it does not audit or change `apps/web/`. OntoJev does not inherit prior-project architecture.
 
 Useful ideas: clickable persistent run cards; readable status badges/time/goal; frequent active-run polling; expandable stage events; model/usage context alongside judgments; visible errors with retry; final result link; filtering event categories. Improve on the reference by retaining existing cards during refresh, stable event IDs/sequences, cursor fetching, and explicit unknown-vs-zero values.
 
@@ -42,8 +42,9 @@ Pipeline displays run-wide discovery stages and selected candidate stage occurre
 
 No standalone `/autonomous-logs` is needed: EventFeed within run detail provides the useful behavior from that reference without
 duplicating a product surface. Global event search, `/candidates`, `/evaluations`, animations and extensive charting are deferred. Deep evidence,
-hypotheses and dossier panels remain available for fixture runs; for live runs the deep evidence panel is populated only when an operator
-explicitly selected a candidate (`--deep-candidate`), and the hypothesis/dossier panels stay empty until later phases are approved.
+hypotheses and dossier panels remain available for fixture runs. Live evidence requires an operator-selected
+candidate (`--deep-candidate`); implemented authorized investigation arcs can produce hypotheses and live
+dossiers. Render their recorded availability, not a blanket assumption that later phases are absent.
 
 **Live hypotheses and dossier**: for a live run, generated statements render in their own section
 labelled "GENERATED HYPOTHESES — NOT EVIDENCE" with the generator, statement, hypothetical mechanism and

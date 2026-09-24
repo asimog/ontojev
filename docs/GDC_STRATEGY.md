@@ -1,62 +1,126 @@
-# API-first GDC strategy
+# GDC strategy and reality matrix
 
-Authority: the official GDC documentation repository `https://github.com/NCI-GDC/gdc-docs/tree/develop/docs` (branch `develop`; see `docs/SOURCE_REVIEW.md` for the exact files reviewed) for provider behavior, and live anonymous captures in `data/gdc-contract-captures-2026-09-22/` (30 captures, 80,653 bytes; release 46.0, API tag 8.5.0) for retained live behavior. The supplied `API_UG.pdf` and master specification are superseded as provider authority and kept only as historical Phase 0 inputs. Where the docs and live behavior differ, the live capture wins and the difference is recorded. **VERIFIED** = retained live capture; **DOCUMENTED** = official source; **UNVERIFIED** = not established. Documentation is not an integration test; the contract-capture command reproduces the verification.
+Baseline `42b05d40e6edafec0b8613e7dd154a60a46e4fee`; investigated 2026-09-24 UTC.
+ADMIT NOW means suitable for the proposed implementation phase **after its acceptance gates**,
+not already runtime-allowlisted. HTTP 200 is not scientific admission.
+[Capture register](GDC_DISCOVERY_CAPTURES.md) preserves requests, hashes and measurements.
 
-Before any file acquisition, evaluate in order: (1) analysis endpoint, (2) metadata/search, (3) bounded expression endpoint, (4) bounded SSM/CNV occurrences, (5) another small targeted query. **OntoJev performs no GDC file acquisition.** `/data`, manifests, BAM/VCF/MAF/FASTQ, archives and `gdc-client` are outside the transport allowlist. If a requirement needs a large file, the answer is `UNSUPPORTED_IN_V1`.
+## Investigation and reproducibility
 
-## Phase 2 admitted slice (the smallest useful evidence set)
+69 anonymous sequential attempts, 6,093,958 consumed response-body bytes, all terminal HTTP 200.
+No credentials, redirects, retries or files downloaded. Fixed api.gdc.cancer.gov; 30-second socket
+timeout; campaign 150 attempts/64 MiB; session 30/8 MiB; response 5 MiB; explicit genes 100/cases 250;
+ten pages per logical query. Shared on-disk ledger spans sessions. Failed/incomplete bytes would count.
+This is consumed-body accounting, not network/TLS billing.
 
-| Lane | Endpoints | Bound | Purpose |
+The temporary isolated harness lives outside production run data:
+`C:/Users/Rahul Khatri/AppData/Local/Temp/ontojev-architecture-20260924/`.
+It was used uniformly so runtime-supported and research-only endpoints shared one campaign ledger;
+runtime allowlists and globals were not changed. Existing parsers were reused offline against all ten
+mutation-count batches and twelve expression-value captures. Captures are local audit evidence, not
+committed fixtures. Required fixtures below must be retained under a future separately scoped change.
+
+Official sources: [API data analysis](https://docs.gdc.cancer.gov/API/Users_Guide/Data_Analysis/),
+[search/retrieval](https://docs.gdc.cancer.gov/API/Users_Guide/Search_and_Retrieval/),
+[expression pipeline](https://docs.gdc.cancer.gov/Data/Bioinformatics_Pipelines/Expression_mRNA_Pipeline/),
+[CNV pipeline](https://docs.gdc.cancer.gov/Data/Bioinformatics_Pipelines/CNV_Pipeline/).
+Endpoint mappings were captured before scientific probes. Documentation supports endpoint intent;
+captures establish deployed fields; scientific interpretation still needs a defensible unit/population.
+
+## Reality matrix
+
+Capture numbers below refer to the register. Runtime means current allowlist, not future approval.
+
+| Family / operation | Official support; live evidence | Entity, IDs and filters | Population, absence and joins | Shape/workflow/completeness | Cost and decision |
+|---|---|---|---|---|---|
+| Status/projects | API; 001/002/012 | release; exact project_id=TCGA-LUAD | 585 cases, not an assay denominator | DR46.0, API8.5.0, project inventory | Small; ADMIT NOW; runtime current |
+| Cases | mapping 003; 013/026/027/024/069 | case_id ordered; project.project_id | 585 unique sorted cases; case may have multiple tumor/normal samples | Three pages 250/250/85; sample/aliquot links optional | ~100 KiB basic frame; ADMIT NOW; runtime current |
+| Genes / broad universe | mapping 005; 014/028–036 | gene_id, symbol, biotype; protein_coding; gene_id ascending | 1,000 unique sorted of reported 19,843; lexicographic subset bias | Ten pages 100; release/filter/offset manifest required | 106,739 B /12.801 s; ADMIT NOW bounded slice; enumeration builder NEW |
+| Top mutated genes | 022; official analysis endpoint | project filter; ranked gene IDs and provider score | Mutation-selected universe, score is not measurement | Ranking metadata only | ADMIT NOW for historical comparison, not broad-universe authority; runtime current |
+| Mutation case counts | 037–046; existing parser accepts all complete | gene_ids100; project buckets | 1,000 requested LUAD buckets; explicit values preserved; missing bucket not wild type | Aggregation completeness checked; all-project response, extract exact LUAD | 2,523,861 B /28.419 s for1,000; ADMIT NOW counts, not recurrence rates; runtime current |
+| SSM coverage | 023 | per-project case_with_ssm | Indexed SSM-data coverage, not per-gene callable-negative set | Separate from mutation numerator | ADMIT NOW context only; runtime current |
+| SSMs | mapping 006; 015 | variant ID, GRCh38 coordinates, alleles; occurrence project filter | Variant != case; transcript rows are not independent mutations | Small partial search, explicit paging required | LATER variant-enrichment; NOT ADMITTED as complete mutation burden |
+| SSM occurrences | mapping 007; 016/052 | case + ssm IDs, transcript gene IDs; TP53/project filter | 299 occurrences reported; multiple callers same sample observed; dedup by case/gene for case counts | Leaf observation fields work; broad case.observation field gave warning | LATER detailed lane; sample ID present in example, negative callability absent |
+| Gene CNVs | mapping 008; 017 | cnv_id + consequence.gene.gene_id, project filter | TP53 has 3 indexed category entities; not 3 cases | GRCh38, gene_level_cn; categories Loss/Gain/Amplification | ADMIT NOW identity/category context for narrow lane; runtime NEW |
+| CNV occurrences | mapping 009; 018/050/051/055/067/068 | case + cnv + gene IDs, source file, caller | TP53 264 distinct occurrences/cases: 236 Loss, 25 Gain, 3 Amplification; no negative denominator | Complete two-page TP53 query; ASCAT3 source file confirmed; requested tumor sample ID absent | ADMIT NOW bounded positive occurrence descriptors; NEW parser/builder required |
+| CNV 100 workload | 067 | first 100 universe genes + LUAD | 21,032 occurrence total; two sample hits only | Full scan would need 85 pages 250, exceeds 10; facets count occurrences, not assured unique cases | REJECT full broad occurrence scan; reduce first; full 1,000 cost UNMEASURED |
+| Segment CNVs | mapping 010; 019 | segment ID, chromosome, start/end/length | 30,681 LUAD entities; no direct gene join admitted | Position/category response; projection to genes needs overlap/build policy | LATER; no segment discovery lane now |
+| Segment occurrences | mapping 011; 020/053 | case/segment/source file IDs, copy number | 32,385 reported; only 2 inspected; no complete cohort distribution | Leaf fields work; missing sample mapping | LATER; full scan outside current page budget |
+| Expression availability | 047 | explicit case/gene IDs | first 250 cases:221 available/29 unavailable; first 100 genes:91 available/9 unavailable | Independent case/gene availability is not guarantee every matrix cell exists | ADMIT NOW; runtime current |
+| Expression values | 049/056–066 | gene row and case column labels; UQFPKM | 1,000x250 requested ->946 gene rows x221 case columns across batches;100x585 ->91x518 | Twelve captures accepted existing strict TSV parser; missing rows/columns preserved; sample mapping unresolved | ADMIT NOW case-labelled descriptive summaries; runtime current |
+| Expression selection | 048 | explicit100 genes/250 cases, selection_size100 | Only that requested population; not full LUAD | Provider medians/stddev retained, estimator details not independently established | ADMIT NOW metadata only; no averaging batch medians/SDs |
+| Open expression file metadata | mapping 004; 021 | file/case/sample/aliquot IDs; access=open | 601 files reported, not 601 independent cases | Five sampled STAR - Counts files, not complete workflow census | ADMIT NOW bounded provenance context; cannot establish matrix-cell sample linkage |
+| Clinical metadata | 024/069 | case, demographic, diagnoses, samples | Null/missing follow-up; multiple samples/diagnoses possible | Two-case sample, no definitive diagnosis selection contract | LATER; preserve raw context only, no clinical scoring |
+| Survival analysis | 054, documented GET | filters array with cases.project.project_id | 509 donor records returned for LUAD, versus585 inventory; exclusion/censoring audit unresolved | results/donors with time,censored,ID; nonempty unlike 2026-09-22 probes | LATER; endpoint works, inferential survival NOT ADMITTED |
+| scRNA | official API; metadata025 | case OR HDF5 file ID; documented<=10 genes | LUAD open scRNA metadata query returned 0; no applicable source selected | Cell-level units and normalization need separate contract | LATER; live value capability UNVERIFIED |
+| Downloads, arbitrary query, controlled evidence | Outside approved runtime | /data, manifest, slicing, auth | Not in scope | No probe or file acquisition | REJECT / DO NOT BUILD in this phase |
+
+The five-category CNV field is not reliably five mutually exclusive biological states in these
+responses: cohort facets contained lower-case loss/gain/amplification/homozygous deletion and no
+neutral bucket. Preserve case-sensitive raw labels; normalize only through an explicit parser table.
+Loss is not proof of heterozygous deletion. Absence is not proof of neutral/diploid.
+
+## Measured versus extrapolated workloads
+
+| Workload | Requests | Bytes | Summed request wall time | Scope |
+|---|---:|---:|---:|---|
+| Gene inventory 1,000 | 10 | 106,739 | 12.801 s | Measured, sorted protein-coding prefix |
+| Mutation counts 100 | 1 | 246,042 | 2.771 s | Measured first batch, all-project response |
+| Mutation counts 1,000 | 10 | 2,523,861 | 28.419 s | Measured, LUAD extracted |
+| Expression 100 x250 | 1 | 176,337 | 2.246 s | Measured;91x221 returned |
+| Expression 1,000 x250 | 10 | 1,834,776 | 25.203 s | Measured;946x221 returned |
+| Expression 100 x585 | 3 | 414,305 | 6.478 s | Measured;91x518 returned |
+| Expression 1,000 x585 | 30 | ~4.14 MB | ~64.8 s | ESTIMATE by 10×100-gene full-frame workload; not measured |
+| Full CNV 100 occurrences | >=85 pages 250 | Unknown | Unknown | Page estimate from 21,032 total; not acquired |
+
+The 1,000x585 expression estimate is a feasibility scenario, not an admitted query plan: splitting
+queries must not evade the ten-page logical-query budget. A design must declare independently bounded
+gene batches/populations and shared campaign reservations, or use richer evidence only for survivors.
+Neither latency nor body size estimates are provider guarantees.
+
+## Admitted field-to-result trace
+
+Proposed parser names describe required functions, not implemented symbols. Existing parser symbols
+are named explicitly. Every result also binds response/request hashes, release, method and population.
+
+| Result fields | Endpoint and provider field | Parser/interpretation | Deterministic method / typed result |
 |---|---|---|---|
-| Release identity | `GET /status` | 1 request | Provenance: release, commit, tag |
-| Scope inventory | `GET /projects` | 1 request, size ≤100 | Deterministic project selection and composition context |
-| Population frame | `GET /cases` | deterministic `from`/`size` pages, size ≤250, ≤10 pages/query, `sort=case_id` | Complete bounded examined-case frame for the configured cohort |
-| Open provenance | `GET /files` | ≤2 requests, **`access=open` mandatory** | Expression workflow/strategy comparability |
-| Entity identity | `GET /genes` | 1 request, ≤100 gene IDs | Symbol, biotype, cancer-census flag |
-| Discovery (selection only) | `GET /analysis/top_mutated_genes_by_project` | 1 request per project, size ≤20 | Candidate gene universe; `_score` is quarantined ranking metadata |
-| Mutation counts | `GET /analysis/top_cases_counts_by_genes` | 1 request, `gene_ids` ≤100 | Gene-specific per-project affected-case counts |
-| Mutation coverage | `GET /analysis/mutated_cases_count_by_project` | 1 request, `size=0`, **no filters** | Per-project `case_with_ssm` availability |
-| Expression coverage | `POST /gene_expression/availability` | deterministic batches, each ≤250 cases × ≤10 genes | Per-case presence flags merged without changing missingness |
-| Expression provider summary | `POST /gene_expression/gene_selection` | only when the complete cohort fits one ≤250-case request | Provider median/stddev retained separately; unavailable for batched cohorts rather than falsely aggregated |
-| Expression local summary | `POST /gene_expression/values` | deterministic batches, each ≤250 cases × ≤10 genes, `tsv_units=uqfpkm` | Exact per-case UQFPKM merged before the cohort-wide local deterministic method |
+| cohort/project, eligible inventory count | projects.project_id, summary.case_count | existing parse_projects; count not assay eligibility | PopulationFrame inventory |
+| examined IDs / membership / sample context | cases.case_id, project.project_id; samples IDs/types/aliquots | existing parse_cases for case frame; NEW sample-link parser if used | unique sorted case frame; sample links remain multivalued |
+| gene identity/universe | genes.gene_id,symbol,biotype; pagination.total | existing parse_genes + NEW paginated-universe envelope validation | EntityRef/TestedUniverse, explicit bounded subset |
+| mutation affected cases | aggregations.projects.buckets[].genes.my_genes.gene_id.buckets[].doc_count | existing parse_gene_case_counts; retain complete flag | MUTATION_AFFECTED_CASE_COUNT_V1 -> ObservedCount or unavailable |
+| SSM coverage | project case_summary.case_with_ssm.doc_count | existing parse_mutated_cases_count | PROJECT_SSM_COVERAGE_V1, no recurrence denominator |
+| assay availability | cases/genes.details[].has_gene_expression_values | existing parse_expression_availability; requested membership checks | Coverage, independent axis flags |
+| expression values/missing IDs | values TSV header case IDs and gene_id rows | existing parse_expression_values; finite nonnegative UQFPKM; label joins | EXPRESSION_LOG2_SUMMARY_V1 on log2(x+1), explicit n and missingness |
+| provider selection summaries | gene_selection[].log2_uqfpkm_median/stddev | existing parse_gene_selection | EXPRESSION_PROVIDER_SUMMARY_V1 metadata, unavailable for multi-batch cohort summary |
+| file/workflow context | files.access, analysis.workflow_type, cases/samples/aliquots | existing parse_files_provenance for sampled context; NEW link-preserving parser for matching | Provenance only; no inferred cell-level workflow |
+| CNV category evidence | cnv_occurrence_id,case.case_id,cnv.cnv_id,cnv.consequence[].gene.gene_id,cnv.cnv_change/_5_category | NEW strict occurrence parser, required IDs/category; dedup and exact filter membership | CNV_INDEXED_POSITIVE_CASES_V1 proposed: unique cases per category over complete query |
+| CNV contextual values | case.observation[].copy_number,src_file_id,variant_calling.variant_caller,sample_ploidy_integer | NEW optional-value variants; missing != invalid; sample UUID may be absent | ProviderObservation, not cross-caller numerical effect |
+| quality/completeness | pagination count,total,from; warnings; transport terminal status; missing sets | shared validated envelope + lane-specific completion checks | Quality/Coverage; warnings about requested scientific fields prevent admission |
+| derived extremes | parsed expression values and frame/universe above | no new provider field | proposed EXPRESSION_WITHIN_GENE_EXTREME_V1 in roadmap; descriptive only |
 
-Every admitted request passes the endpoint admission gate: documentation review, open-access review, live contract check, scientific-semantics check. The full matrix, including rejected endpoints, is in `docs/GDC_JEV_FIT_ANALYSIS.md` §G.
+Scientific annotations such as dependency, druggability, clinical benefit, mutation-expression
+coherence or CNV-expression causation receive no field in the admitted measured contract.
 
-## Endpoint behavior confirmed live
+## Joins and denominators
 
-- `top_mutated_genes_by_project` returns `gene_id`, `symbol`, `_score`. Documentation states `_score` “does not represent the number of mutations in a given gene, but a calculation that is used to determine which genes have the greatest number of unique mutations.” It is stored only as `provider_discovery_rank`.
-- `top_cases_counts_by_genes` returns a raw aggregation envelope: `hits.total`, `aggregations.projects.buckets[]` with `doc_count`, `genes.my_genes.gene_id.buckets[].{key,doc_count}`; multi-gene requests are verified live (3 genes → per-project gene buckets); completeness fields `timed_out`, `_shards`, `doc_count_error_upper_bound`, `sum_other_doc_count` are preserved. An absent project or gene bucket is `NOT_OBSERVED`, never zero.
-- `mutated_cases_count_by_project` documents `case_summary.case_with_ssm.doc_count`. A live call with a `case.project.project_id` filter returned empty buckets while the unfiltered call returned 93 complete project buckets; filtered calls are therefore forbidden by policy, not merely discouraged.
-- `gene_expression/values` returns TSV only, header `gene_id` + one column per case UUID, one row per gene; `tsv_units` is exactly one of `uqfpkm` or `median_centered_log2_uqfpkm`. Values are joined by returned labels, never by request order.
-- `gene_expression/gene_selection` requires exactly one of `gene_ids` or `gene_type=protein_coding`; the provider median/stddev estimators are not documented (live two-case capture is consistent with a population denominator).
-- `/cases` field selection warns through `warnings.fields` for unrecognized fields instead of failing; parsers surface warnings as quality metadata and never assume a requested field exists.
-- Per-endpoint field discovery is `GET /<endpoint>/_mapping` (verified for `/projects`); the bare `/_mapping` is 404. Mapping output is used for contract verification only.
-- `/analysis/survival` is documented as GET with a JSON array of filter groups; GET and POST probes both returned empty donor sets for attempted shapes, so the contract is not established and the endpoint stays disabled.
+Case/gene ID joins between indexed observations are feasible for descriptive presence intersection.
+They do not establish matched assays. CNV source-file lookup returned both a tumor and a blood-normal
+sample; the expression API supplies case columns without the chosen sample/aliquot. SSM observations
+can repeat across callers and transcripts. Never count these as independent cases or choose the first
+sample/file. Exact duplicate records may deduplicate by declared keys; inconsistent duplicates fail
+or remain conflicts.
 
-Search filters use `{op,content:{field,value}}` and compound `{op:"and",content:[...]}`. `exclude` differs from `excludeifany` for multivalued properties. Endpoint-specific field prefixes differ (`case`, `cases`, `gene`, `genes`); no global field translation is reused blindly. Standard search pagination uses `from`/`size` and `data.pagination`; aggregations need their own parser and completion rules. Missing pagination is not proof of completion. `timed_out`, shard failures, aggregation error bounds and `sum_other_doc_count` are preserved; a nonzero error/truncation makes totals partial.
+Eligible inventory, examined cases, available assays, returned columns and finite values remain
+separate. Mutation-negative and CNV-neutral sets are not established. Mutation-expression and
+CNV-expression association actions are INELIGIBLE until exact sample selection, negative/reference
+semantics and common analyzable population are independently validated.
 
-## Inventory, scope selection and traversal
+## Required future fixtures
 
-Phase 2 takes its scientific scope from one small frozen `ResearchSpec`. The only production specification is `LUAD_RESEARCH_V1` (`domain=lung cancer`, `cohort_id=TCGA-LUAD`, `project_id=TCGA-LUAD`) with explicit acquisition bounds. The live orchestrator selects exactly that project from the open inventory; it does not use a case-count window or pool projects. Gene selection takes the configured number of genes from that cohort's provider top-mutated ranking. The specification identity and all bounded acquisition parameters are recorded in run scope, the inventory and selection artifacts, scope events, and each StatisticalState. A different single-cohort specification is exercised only in tests; there is no production registry or universal cohort framework.
-
-Case collections are deterministic: sorted stable IDs (`sort=case_id`), validated `from` offsets, consistent provider totals, duplicate rejection across pages, exact project membership, a persisted frame hash, `eligible_n`, `examined_n` and completeness. Acquisition stops when the reported total is collected. A total above `max_cohort_cases`, a changed total, an empty premature page, an unexpected project, or a duplicate case fails closed. Expression case IDs are partitioned by the configured batch size (never above the endpoint's 250-ID cap); returned values and missing columns are merged by identifiers before deterministic cohort-wide summaries are computed.
-
-Validity prefilter rejects unusable/malformed/provenance-free states; it does not threshold p/q or demand a large effect. Diversity downselection is not needed for the bounded Phase 2 universe (≤10 gene states); the recorded rule for a larger universe remains strata `(project, lane, modality, anomaly_shape, direction)` with stable hash order and a 1,000-state cap. No model judgment occurs before this cap.
-
-Top-k endpoint discovery remains selection-biased even after local filtering. The state records the discovery lane, the examined gene count and the selection bias, and no claim is made that the gene set explores all possible signals.
-
-## Contract capture and reproducibility
-
-The contract-capture command runs the same sole transport with a capture sink and writes one directory per invocation under `data/gdc-contract-captures-<date>/`: the exact response bytes, plus per-request metadata (method, endpoint, normalized parameters/body, HTTP status, response headers, `retrieved_at`, byte count, SHA-256, truncation flag, error, completeness, parser version). Captures are never scientific evidence by themselves; parsers consume them only through the normal pipeline, and every state cites the response artifact hashes it used. Research captures from 2026-09-22 are retained and indexed in `INDEX.json`.
-
-## Scientific limits of the API-first approach
-
-- `case_with_ssm` is source availability context, not proof of whole-genome callable negatives. Matched recurrence denominators require consistent source/filter semantics; absent denominator means count-only evidence. Phase 2 stores counts and coverage separately and never divides them.
-- Expression responses omit unavailable cases. Returned labels and an explicit missingness manifest are used; alignment by request order is forbidden.
-- Case-level expression may hide sample selection/aggregation. Exact sample resolution, workflow selection and tie-breaking are **UNVERIFIED**; sample-matched cross-modal claims are refused.
-- Categorical CNV cannot be passed to a continuous correlation method without a newly defined valid estimator; deferred.
-- Survival group semantics (time origin, censoring, group eligibility) and the estimator are not documented; disabled.
-- GDC release atomicity across requests and historical replay by a snapshot token are **UNVERIFIED**. Raw responses/hashes and retrieval times are preserved and the `/status` release identity is recorded. Reproducibility means replay from retained inputs, not that a future request returns identical bytes.
-- Provider ranking (`_score`) is not comparable across projects and is never treated as science.
-
-The first registered follow-up remains `STRATIFY_BY_PROJECT_V1`, using already-held deterministic observations (Phase 4). Expression-by-mutation, CNV and survival lanes are added only after their eligibility and mapping contracts pass. The registry is not a commitment to implement every proposed method.
+Retain bounded redacted-free public captures with request specifications and hashes for: sorted
+universe paging/duplicates/changed totals; explicit mutation zero versus absent bucket and truncated
+aggregation; expression omitted genes/cases across batches; CNV Loss in five-category field, mixed
+callers, duplicate/conflicting calls and missing sample UUID; source file with tumor+normal samples;
+nonempty survival with missing follow-up/censoring cases. Add synthetic malformed variants separately
+labelled SYNTHETIC. No fixture/test was changed in this pass.

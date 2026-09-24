@@ -1,5 +1,11 @@
 # GDC × Jev fit analysis — what open GDC evidence should feed Jev
 
+> Historical record; superseded for current status and implementation instructions on 2026-09-24.
+> Original dates, results and proposals below are preserved, not newly verified claims.
+> Use [implementation status](IMPLEMENTATION_STATUS.md), [architecture](ARCHITECTURE.md),
+> [GDC strategy](GDC_STRATEGY.md) and [discovery roadmap](DISCOVERY_ROADMAP.md).
+> Existing question versions remain unchanged; historical proposals do not authorize new behavior.
+
 Status: **PROPOSED** analysis for Phase 2/3 approval. Written 2026-09-22 against repository HEAD `43653cfad1657acda4ff578a20db726d44c6dc31` and live public GDC API captures recorded in `data/gdc-contract-captures-2026-09-22/` (30 captures, 80,653 bytes read, anonymous access, no authentication headers, redirects refused, 512 KiB per-response cap). Labels: **VERIFIED** = observed in a retained live capture or in this repository's tested code; **DOCUMENTED** = stated by an official source cited inline; **INFERRED** = derived from captured bytes by explicit reasoning; **UNVERIFIED** = not confirmed.
 
 This document answers one question before any Phase 2 code is written:

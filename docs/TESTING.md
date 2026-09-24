@@ -1,98 +1,128 @@
-# Verification strategy
+# Verification and prospective calibration
 
-This is the test plan for the implemented phases. Phase 1 (offline fixture slice), Phase 2 (real open GDC evidence), Phase 3 (real Jev wide evaluation) and the Phase 4 deterministic first slice, deep Jev fan-out, next-move decision record and one authorized dispatch are implemented; the rest of Phase 4+ remains a plan. Use focused tests first, then the full relevant offline checks. No default test, build or CI command contacts GDC, TypeSafe or an LLM. Executed results live in IMPLEMENTATION_STATUS.md.
+Baseline `42b05d40e6edafec0b8613e7dd154a60a46e4fee`.
+Default tests are offline, with outbound network blocked except loopback test servers. Existing
+coverage uses replay GDC, stub Jev adapters, real temporary SQLite/artifacts, immutable event/identity
+tests and strict malformed-provider cases. No tests or dependencies changed in this documentation pass.
 
-## Default offline boundary
+## Evidence actually available
 
-The autouse test guard denies every outbound socket connection whose host is not loopback. Loopback is permitted only so transport tests can run adversarial local HTTP servers; GDC's host is never reachable from the default suite. Tests marked `live_gdc` or `live_jev` are opt-in, disabled by default, and each has explicit per-test budgets. Fixture mode must not construct a live provider even if credentials happen to be present in the environment.
+The supplied audit at this SHA reports Ruff passed and pytest reached 100% with exit 0; pytest emitted
+an ignored Windows temporary-directory cleanup PermissionError. This pass reuses that verification,
+not a claim of newly running the full suite. It additionally exercised the null-observed metric and
+empty-revision dossier paths offline, and ran existing count/expression parsers against the campaign:
+ten count batches complete, twelve expression captures accepted with missingness retained.
+See [Python review](PYTHON_CORE_REVIEW.md).
 
-## Phase 1 gates
+Relevant current tests: tests/contracts/test_parsers.py, tests/science/test_methods.py,
+tests/science/test_actions.py, tests/science/test_nextmove.py, tests/jev/test_service.py,
+tests/jev/test_evidence_projection.py, tests/integration/test_live_replay.py,
+tests/integration/test_deep_slice.py, tests/integration/test_hypothesis_stage.py,
+tests/test_persistence_guards.py and tests/llm/test_openrouter_adapter.py.
+CI Python runs Ruff and pytest; no static checker currently runs.
 
-| Layer | Required proof |
+## PLANNED contract acceptance
+
+| Change | Required focused verification |
 |---|---|
-| Domain | Legal/illegal transitions; null vs zero; finite numbers; immutable state identity; counts and lifetime caps |
-| Event/storage | Ordered contiguous per-run sequences; idempotent append; invalid payload rollback; projection equivalence; oversized data moves to artifacts; no truncated history |
-| Artifacts | Same bytes/hash; path confinement; write/rename failure; crash after rename before DB commit leaves only unreferenced file; corrupted/missing artifact reports an error |
-| Orchestration | Demo traverses every stage and one fixture follow-up changes evidence; old state remains unchanged; at most one dossier/candidate; defer/fail/no-result branches |
-| Ownership/recovery | Second research process refused; abrupt kill leaves history intact; next owner records interruption without replaying side effects; Ctrl+C is coherent; API restart doesn't mark runs stopped |
-| API | Correct list/event cursor semantics during concurrent writes, 404/422/503, no secret leakage, terminal events drained, actual usage zero in fake mode |
-| Browser | Start CLI while /runs open, card appears, detail progresses, events append without full-log refetch, fake dossier opens, browser refresh and API restart preserve results; API disconnect retains stale data with explicit error |
-| CLI/UI consistency | Compare event IDs/sequences from committed store, captured CLI JSON rendering, and API; both renderers consume identical records |
-| Offline boundary | Deny outbound provider/network calls in tests; fixture mode cannot construct a live provider even if credentials happen to be in environment |
+| Measurement variants | Reject observed-null, bool counts, nonfinite, negative counts, unknown units/status, unavailable-with-value; genuine observed zero survives |
+| Lane composition | Required frame/universe/method refs; disabled/missing/partial distinct; row order invariant; no semantic output in measurements |
+| Versioned hydration | v1 fixture/v2 live preserved; v3 explicit; malformed/unknown versions typed failures; original hashes unchanged |
+| Dossier hardening | Missing/truncated/wrong-hash/invalid revision cannot publish OBSERVED sections; valid earlier revision must not silently substitute for corrupt latest |
+| Cached evaluations | Validate original roster/primitive/distribution/model/projection/version before reuse; invalid cache cannot influence admission |
+| CNV parser | Requested ID membership, correct project/gene, paging/duplicates, Loss in five-category field, unknown label, missing sample ID, mixed/conflicting callers |
+| Expression | Omitted rows/columns, multiple batches, duplicate case/sample relationships, n<2 SD, zero MAD/IQR, no aggregate provider batch summaries |
+| Actions | Typed input kind, estimator eligibility, no failure promotion, deterministic results/identity, budget reserved before acquisition, authorized dispatch only |
+| Seams | Injected narrow clients, offline replay, provider errors contained; no global SDK replacement needed for new tests |
+| Static gate | Incremental type check of new domain/codecs/lanes and consumers, alongside Ruff/pytest; tool/dependency choice belongs to implementation |
+| Resource accounting | Each provider HTTP attempt counted including SDK retries/timeouts; token/spend unknown preserved; no cap reset by repartition/restart |
+| Identity | Operational IDs/times do not change science; population/method/units/universe changes do; semantic features never enter measured identity |
 
-## Phase 2 gates (real GDC)
+Keep fixture and live records separate. New public captures need immutable fixtures plus synthetic
+malformed variants before endpoint admission. Tests must not call providers by default, weaken
+scientific assertions, or infer correctness from HTTP 200. A later live acceptance requires explicit
+authorization and frozen resource envelope; no paid calls are part of this pass.
 
-| Layer | Required proof |
+## PLANNED prospective Jev incremental-value protocol
+
+Objective: does a semantic stage improve *reviewable bounded research decisions* over deterministic
+selection at matched workload, without increasing unsupported claims? This is not a clinical or
+biological target-validation study. Existing evaluation.py reports overlap/label hits; it does not
+implement this protocol or establish superiority.
+
+### Corpus and labels
+
+Freeze cohort release, candidate universe, acquisition manifest, deterministic methods and exact
+candidate evidence before generating labels. Include rejected, missing, partial and no-signal cases,
+not only promoted candidates. Keep a mutation-ranked historical comparator and the broad-slice arm
+separate. Primary review unit is gene/evidence context; all revisions, duplicate profiles and
+hypotheses of one gene stay together. Labels:
+
+- Scientific input eligibility: readable, correctly scoped, adequate for the declared descriptive task.
+- Material unresolved question: a named uncertainty not settled by supplied facts.
+- Follow-up usefulness: an eligible bounded action could distinguish named interpretations.
+- Unsupported assertion: numerical, population, mechanistic, causal or clinical overclaim.
+- Disposition: investigate / stop / abstain / external evidence required, with written rationale.
+- Hypothesis review: testable within declared evidence/action scope versus unsupported or ambiguous.
+
+Two independent qualified reviewers see identical anonymized evidence and declared action contracts,
+without method name, candidate rank, model answers or historical “known target” label. Adjudicate
+disagreements with a third reviewer; retain raw labels, uncertainty, agreement and reasons.
+Blinding cannot hide all recognizable biology; record that limitation. Known biology may inform
+external evaluation strata/labels, never production selection features or a handpicked success set.
+
+### Splits and leakage control
+
+Pre-register approximately 60/20/20 train/development/held-out groups using deterministic seeded
+assignment by gene family/related context where available; all same-gene revisions share a group.
+Related genes/shared acquisition blocks must not be scattered merely to inflate sample count.
+Freeze group assignments before prompt/policy tuning. Overlapping patients in a single LUAD cohort
+limit independence: this evaluates decision support on this evidence, not independent patient-level
+replication. Reserve a later external cohort/time-release evaluation for generalization claims.
+
+Choose corpus size with reviewers and a precision/power calculation before evaluation; a small
+pilot may test annotation feasibility but is not a powered value result. No fixed minimum case count
+is evidence of inferential power. Held-out labels and errors are unavailable to question/feature
+generation or iterative autoresearch; one locked final evaluation, then a new holdout for further tuning.
+
+### Arms and ablations
+
+| Arm | Purpose |
 |---|---|
-| Transport | Host and endpoint allowlists; GET/POST method allowlist; no redirect following; per-response cap at cap−1/cap/cap+1; run byte cap under concurrent reservations; request cap at limit and limit+1; page cap; case/gene ID caps; attempt ledger charges every retry and body failure; every attempt that started reaches a terminal status (`COMPLETED`/`FAILED`/`CACHE_HIT`) even when publishing or registering the received body fails; the cache key is qualified by transport contract version so an older-version row cannot replay as current or block storing the current entry; cache hit performs no network I/O; no larger-cap retry after a limit breach |
-| Open access | No `Authorization`, no `X-Auth-Token`, no token env var read, no credential loader, no `/data` route, `access=controlled` result rejected and never admitted, 401/403 become `UNAVAILABLE_ACCESS` with no credential lookup or retry |
-| Adversarial server | Misleading/missing `Content-Length`, chunked body over cap, huge chunk declaration, partial JSON, compressed response despite identity request, abrupt disconnect, redirect, 401/403, 429 accounting, slow trickle; instrument real read behavior, never mock away read-ahead |
-| Parsers | Real captured response fixtures (from `data/gdc-contract-captures-2026-09-22/`, copied into `tests/contracts/fixtures/` with provenance); unknown/missing fields; changed schema; duplicate IDs; missing cases; nonfinite values; impossible negative provider counts (project case/file counts, aggregation `doc_count`, SSM coverage counts, expression availability counts, provider totals) fail closed while an observed zero stays valid; UTF-8 BOM tolerated before the TSV header; a `/files` record without an explicit `access` fails closed as non-open; `warnings.fields` surfaced; aggregation completeness fields preserved; absent bucket stays `NOT_OBSERVED` |
-| Science | Duplicate-case handling; matched numerator/denominator rules (never divide unmatched); units; missingness; partial populations; eligibility; estimator definitions; same scientific input → same state hash; changed input/membership/unit/version → changed hash; row permutation invariance; merged expression batches keep observed and missing genes disjoint and a gene omitted by one batch never becomes a reported missing gene |
-| Orchestration | Exact single-cohort project selection from `ResearchSpec`; bounded paginated case frame with offset/total/duplicate fail-closed checks; deterministic expression batching merged by identifier; real StatisticalStates from the live loop against a replay transport; partial response never treated as complete; budget exhaustion stops admission with a typed event |
-| API/UI | State list and full-state route expose v2 fields with explicit availability; `NOT_OBSERVED` never rendered as zero; zero Jev and zero LLM calls in a Phase 2 run |
+| A: current deterministic mutation-count baseline | Historical policy comparator, same accepted inputs |
+| B: broad universe + deterministic lane/discovery features | Value of acquisition/feature change without Jev |
+| C: B + optional separately stored semantic features/reranking | Incremental semantic ranking value |
+| D: C + versioned Wide admission | Incremental admission/abstention value |
+| E: D + current or separately versioned Deep judgment | Follow-up selection/stopping quality |
+| F: full workflow with explicit uncertainty abstention | Coverage versus error tradeoff |
 
-## Phase 3 gates (real Jev)
+Evaluate current wide-v3/deep-v1 separately from proposed sets. Do not change acquisition and attribute
+all improvement to Jev. Compare same universe, evidence access, maximum promotions, reviewer effort
+and provider budget. Ablate each question, feature family, semantic stage, thresholds, optional
+composite weights and hypothesis generation. Keep an always-stop and deterministic-eligibility-only
+control to detect pointless follow-ups.
 
-| Layer | Required proof |
-|---|---|
-| Projection | Deterministic bytes from a fixed state; projection hash stable; version and included-field contract persisted; no field recomputed from raw responses |
-| Questions | Definition hash covers wording/criteria/roster/applicability rule; question IDs never sent; applicability computed deterministically; excluded questions absent; malformed definitions fail at import (Choice >255, Score outside 2–10, unknown primitive/applicability, empty instructions) |
-| Contracts | Noul probability range; Choice chosen value in roster; Choice/Score probability keys match roster/levels and sum to 1; Score level within declared range; confidence range; NaN/Infinity rejected; missing answer, unknown ID, wrong primitive and malformed provider payload all fail closed |
-| Adapter | Provider wire/SDK confined to the adapter; owned contracts everywhere else; requested vs resolved model persisted; usage and latency recorded; provider errors/timeouts preserved without fabricated defaults; a response whose shape does not match the owned contract (missing `model`, null `answers`, missing answer field) becomes `JevProviderError(PROVIDER_RESPONSE_MALFORMED)` and a persisted failed evaluation instead of aborting the run; one malformed state defers while other states evaluate and the run continues; terminal statuses map to `PROVIDER_AUTH`/`PROVIDER_VALIDATION`/`PROVIDER_RATE_LIMIT`/`PROVIDER_OVERLOADED` (nested `response.status_code` included), else `PROVIDER_ERROR` |
-| Config | `.env.local` loads only names absent from the real environment; comments, blanks, `export`, quoted values and invalid names handled; blank values inert; `CANCERJEV_NO_DOTENV=1` disables; missing file inert; values never logged |
-| Cache | Identity binds projection bytes + question bytes + `question_set_hash` (wording, criteria, primitive, version and applicability rule) + pinned model identity + adapter version; policy version excluded; reuse requires a pinned/versioned model name whose provider resolution equals that name, so a mutable alias is always evaluated and a divergent resolution is never cached; cache hit creates an evaluation with `cache_source_evaluation_id` and zero usage; `FAKE` and `LIVE` caches disjoint |
-| Ranking | Baseline and Jev rankings persisted for the same states; policy deterministic for identical stored evaluations; raw dimensions preserved; promotion bounded; a Jev error defers the state rather than scoring it |
-| Deterministic actions (Phase 4 first slice) | Registered action contract complete (question, interpretation, method/version, unit, required evidence, limitations); eligibility is fail-closed with explicit reasons; each integrity check is exercised as `VERIFIED`, `CONTRADICTED` and `NOT_OBSERVED`; tampered selection bytes, unlinked attempts and absent retained artifacts never pass; execution is deterministic and leaves the input snapshot byte-identical; an ineligible action refuses to execute |
-| Deep slice | E0 acceptance verifies the retained artifact hash and recorded `state_hash`; the baseline revision (iteration 0) and E1 (parent E0) are recorded with deterministic ids; the selected action, input artifact hashes, checks, missingness and provenance are persisted; replaying the same evidence records `FOLLOWUP_SKIPPED` and creates no duplicate revision; a selection matching no promoted candidate records `DEEP_SELECTION_UNAVAILABLE`; a requested ineligible action, exhausted follow-up limit and exhausted revision limit record typed `FOLLOWUP_ABSTAINED`; an action failure records `FOLLOWUP_FAILED`, writes a `FAILED` execution row, creates no revision and leaves the candidate and E0 unchanged; wide admission never dispatches a follow-up |
-| Operator-approved selection | `slot:N`/gene symbol resolve only to policy-promoted candidates; a wide-evaluated state can be named by `<SYMBOL>`, `gene:<SYMBOL>` or `state:<STATE_ID>`; the created candidate records `operator-selection-v1`, `OPERATOR_APPROVED_SELECTION`, the raw selection and `auto_dispatched: false`; an unevaluated state is refused as `STATE_NOT_EVALUATED`; the promotion cap is enforced; an ambiguous gene symbol is refused; wide admission still selects nothing on its own |
-| Deep Jev fan-out | The evidence projection is deterministic and free of operational ids, tracks check outcomes/evidence hashes and rejects other evidence schemas; deep applicability follows the recorded checks; one evaluation per revision is persisted with `purpose=DEEP`/`input_ref_kind=EVIDENCE_STATE` plus full answers/applicability; a second run with identical revision content reuses the judgment from cache; a provider or validation failure is a persisted `JEV_EVALUATION_FAILED` that leaves the revision intact; `provider_usage` counts the deep provider call exactly once and adds its tokens |
-| Next-move policy | One typed move per revision with named thresholds and `executed: false`; contradicted checks, an unreliable revision, a failed judgment and a warranted step without a distinct action each produce their named reason; a conservative fallback abstains; the policy is deterministic and echoes its dimensions |
-| Bounded arc (Phase 4 completion) | One judgment per revision, never a duplicate; `FOLLOWUP_LIMIT`/`EVIDENCE_ITERATION_LIMIT` and the loop guard bound the arc; the authorized path reaches `E2`, judges it once and stops on `MOVE_NOT_FOLLOW_UP`; several explicitly selected candidates each get an independent chain, one promotion slot, a dossier and their own caps; `deep.candidates[]` reports `first_step`, `steps`, `dispatch`, `last_dispatch`, `decisions`, `hypothesis` and `dossier` |
-| Hypothesis engine (Phase 6) | Deterministic generation quotes only recorded numbers and labels itself; the policy's `GENERATE_HYPOTHESES` move requires authorization and yields `HYPOTHESES_GENERATED` with a template generator and no provider call; at most two statements are stored per candidate; each is judged under `hypothesis-v2` with `purpose=HYPOTHESIS`/`input_ref_kind=HYPOTHESIS` and all three questions applicable; an injected generator is strictly validated and its output labelled; a raising or malformed generator is a typed `UNAVAILABLE` outcome that stores nothing and still counts the attempt in `llm_calls` |
-| Live dossier (Phase 5) | Every declared section is present with an availability and reason; live runs carry the live notice and never the synthetic warning; recorded sections (deterministic evidence, project evidence, judgments, follow-ups, hypotheses, provenance, method versions) are `OBSERVED`, unacquired ones (`cross_project_evidence`, `cross_modal_evidence`, wet-lab proposal) are `NOT_ACQUIRED` with reasons; the JSON and Markdown artifacts are registered and served by the API |
-| Provider adapter (optional) | Offline with an injected transport: a successful completion returns entries and bounded usage; the credential never enters the request body; a missing credential, HTTP error, timeout, empty content, oversized body and malformed/fenced output are each typed (`LLM_KEY_MISSING`, `LLM_HTTP_<status>`, `LLM_PROVIDER_ERROR`, `LLM_EMPTY_CONTENT`, `LLM_RESPONSE_TOO_LARGE`, `LLM_RESPONSE_MALFORMED`); `max_tokens` and a whole-request deadline bound a reasoning model; the open-access guard asserts GDC has zero authorization literals and exactly one allow-listed provider module; an injected provider is named, pinned and counted in `provider_usage.llm_*` |
-| Evaluation harness | Label files require protocol version, declaration time, source, rationale and limitations and are hashed into the report; missing baseline/Jev rankings fail closed; `k` is bounded to 1..3; the report states overlap, per-symbol ranks and labelled hits with an explicit no-superiority claim and is written under the data directory |
-| Dispatch stage | Action input kinds are declared and eligibility follows them (a state action is ineligible for a revision and the reverse, and a baseline revision is ineligible for a revision action); the second action's restatement, provenance (including parser version), source-artifact-identity and chain checks are each exercised as `VERIFIED`/`CONTRADICTED`/`NOT_OBSERVED`, with a retired producing-action version reported as not observed and an unregistered one contradicted; an authorized `FOLLOW_UP` dispatches exactly one new revision (`E2`, parent `E1`, citing its producing action) that is judged again and yields `NO_FURTHER_REGISTERED_ACTION`; unauthorized, `COMPLETE`, follow-up-cap (including a `FAILED` attempt consuming budget) and iteration-cap attempts are refused with typed reasons and create no revision; execution records the input revision's identity hash and stays deterministic and non-mutating |
-| Owning boundary | `research/*` and `jev/*` contain no persistence SQL and `JevService` never touches `repository.database`; every persistence write goes through a narrow `Repository` method inside the atomic event + registrations transaction; dangling candidate/evidence/follow-up/hypothesis provenance fails the event transaction; a `StatisticalState` source links to the attempt that supplied the response while operational attempt/cache/artifact fields never change scientific identity |
-| UI | Deterministic facts and Jev judgments visibly separated; judgment vectors render full probabilities; no LLM content exists anywhere in the run |
+### Metrics and gates
 
-Implemented `wide-v3` / `wide-policy-v2` gates (specification in `docs/PHASE_3_PLAN.md` §6):
-projection v2 is single-cohort with no `cross_project` payload and copies deterministic state
-fields; `wide-v3` validates at import and applicability matches observed/absent mutation and
-expression; an out-of-roster `dominant_limitation` is rejected; the admission gate excludes
-incomplete/unobserved states; threshold misses yield `ABSTAIN` with zero promotions; promotion is
-capped by `PROMOTION_LIMIT`; raw answers, full Choice distribution, applicability and exclusion
-reasons are retained; and failed evaluations remain auditable but cannot be promoted.
+Pre-register primary precision@3 for adjudicated useful investigations plus coverage/abstention.
+Report recall within the labelled declared universe, shortlist recall, nDCG for ordinal usefulness,
+unsupported-claim rate, wrong-population/matching errors, action utility, human minutes, calls/tokens,
+actual/unknown spend and end-to-end latency p50/p95. Report paired differences with grouped bootstrap
+confidence intervals and denominators. Correlated gene/patient evidence limits those intervals;
+document grouping and sensitivity, not independent-observation fiction.
 
-CI after implementation: Python install, Ruff, offline pytest; frontend npm ci, TypeScript typecheck, production build. Browser smoke against a local API with fixture runs; no provider credentials. Cache setup dependencies, not results that could hide missing integration. No live calls in ordinary CI. Never weaken scientific tests to obtain a pass; document any scientific method change and exclusion.
+For labelled binary Noul propositions report Brier score/reliability curves; for Choice report
+confusion and distribution calibration. Score expected level uses ordinal agreement, not a false
+binary-probability interpretation. Measure risk-coverage curves and threshold-near repeat variability.
+Service failures, unavailable inputs and schema failures are separate from model errors and count in
+workflow coverage. Do not drop abstentions or failures from denominators.
 
-Live tests stay separate behind explicit `live_gdc` and `live_jev` opt-in markers with real
-resource ceilings: `live_gdc` performs the small bounded contract probe (≤30 requests, ≤8 MiB);
-`live_jev` evaluates one state with the pinned model and records usage. A full live acceptance run
-uses the existing `python -m cancerjev run --live --jev` bounded LUAD path, which exercises the
-anonymous GDC API and the configured Jev provider together. The Phase 4 deterministic deep slice
-adds no provider and therefore no live marker: it is verified offline end-to-end with the replay
-transport and stub adapter, and an optional operator-selected live acceptance
-(`--deep-candidate`) is a separately approved run, not part of CI. `live_llm` is reserved for
-Phase 6 and is not implemented.
+Error taxonomy: acquisition incomplete; wrong entity/population/sample; parser/codec corruption;
+deterministic method error; missingness misread; unsupported biological assertion; semantic
+misclassification; uncalibrated policy; provider outage/retry accounting; reviewer disagreement.
 
-## Later budget/contract tests
-
-Adversarial loopback HTTP server: misleading/missing Content-Length, chunked body larger than 5 MiB, huge chunk declaration, partial JSON, exact-cap unknown length, compressed response despite identity request, abrupt disconnect, redirect, 401/403, 429, eligible 5xx, slow trickle. Instrument actual transport read behavior; do not mock away read-ahead when testing physical limitations.
-
-Test per-response cap−1/cap/cap+1 against the documented 5 MiB default; run 64 MiB cap under concurrent reservations; request 150 admitted and 151 rejected; every retry/body failure charged; cache hit no network; no secret header; no larger-cap retry. Test request IDs split across groups, duplicates/aliases, project scope leakage, page 11 refusal, retry page sharing, repeated cursor, reshaped query cannot reset page cap. Test cap reductions and forbidden increases. Large/incomplete responses never produce accepted evidence.
-
-Saved documentation-shaped fixtures are labeled synthetic, not real captures. Later authorized bounded live captures retain request/provenance/hash. Endpoint parsers separately cover search hit envelopes, aggregation envelopes, expression TSV, omitted cases, SSM/CNV multiple observations and survival groups. Unknown fields may be retained for provenance; missing required scientific fields fail the method contract.
-
-Jev fixtures prove correct primitive construction, one request with independent questions/state, Noul no invented confidence, full Choice/Score probabilities/legend, invalid keys/sums/ranges, missing question answers, resolved-model changes, cache separation and failure preservation. Never assume identical model output on repeated network calls.
-
-LLM tests reject measured-number fields, unresolved factual refs, unsupported actions and generated executable content. Malicious prose cannot write evidence or run code. Schema validation is not proof of semantic truth: factual dossier rendering uses deterministic references/templates.
-
-## Scientific tests when methods are introduced
-
-Synthetic null and known effects; weak repeated effects; direction reversal; convergence/contradiction; missingness; small-project domination; assay incompatibility; duplicate keys; zero variance; finite filtering; multiple-testing family membership; row permutation invariance; identity changes with input/membership/unit/version/family. Validate method-specific confidence intervals and inferential assumptions, not just an API success path.
-
-Reference current CancerJEV golden-test ideas without importing its runtime. Do not treat unrun reference tests as passed in this project.
-
-Live tests stay separate behind explicit `live_gdc`, `live_jev`, `live_llm` opt-in and phase approval, with real resource ceilings. Phase 2 verifies one small API-first route before adding more endpoints; later phases verify each provider independently before enabling a combined loop.
+Release gate: reviewers approve the protocol and safety tolerance before unblinding; demonstrate a
+pre-specified useful paired improvement or non-inferiority/resource benefit with uncertainty, while
+meeting the unsupported-claim tolerance. Otherwise retain baseline/experimental labeling or disable
+the semantic stage. Changed rankings, cookbook accuracy, one plausible hypothesis or a low dollar
+estimate are not incremental value. Clinical claims always require separate external validation.

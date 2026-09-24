@@ -1,5 +1,11 @@
 # Phase 3 implementation plan — TCGA-LUAD Wide Jev semantic/admission redesign
 
+> Historical record; superseded for current status and implementation instructions on 2026-09-24.
+> Original dates, results and proposals below are preserved, not newly verified claims.
+> Use [implementation status](IMPLEMENTATION_STATUS.md), [architecture](ARCHITECTURE.md),
+> [GDC strategy](GDC_STRATEGY.md) and [discovery roadmap](DISCOVERY_ROADMAP.md).
+> Existing question versions remain unchanged; historical proposals do not authorize new behavior.
+
 Status: **IMPLEMENTED (2026-09-23).** This document is the completed Phase 3 design and acceptance
 record. The implementation and observed live result are in `docs/IMPLEMENTATION_STATUS.md`.
 

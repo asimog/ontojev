@@ -1,5 +1,76 @@
 # Implementation status
 
+## Current truth — documentation reconciliation, 2026-09-24 UTC
+
+Audited starting HEAD: `42b05d40e6edafec0b8613e7dd154a60a46e4fee`, clean local `main`
+matching `origin/main` at inspection. This pass changes documentation only; it does not implement
+discovery, modify tests/dependencies/frontend, install lint tools, commit or push.
+
+| Capability | Current status at this SHA |
+|---|---|
+| Offline synthetic fixture | IMPLEMENTED, separate from live evidence |
+| Anonymous bounded GDC + deterministic measurements | IMPLEMENTED; one production LUAD ResearchSpec; no LUAD/LUSC pooling |
+| Wide semantic judgment and admission | IMPLEMENTED: `jev-state-projection-v2`, `wide-v3`, at most three promoted candidates |
+| Deep evidence/actions | IMPLEMENTED: E0/E1/E2, two registered integrity actions, explicit operator selection/authorization |
+| Deep judgment/policy | IMPLEMENTED: `deep-v1`, `deep-policy-v2`; COMPLETE/FOLLOW_UP/GENERATE_HYPOTHESES/ABSTAIN; Python dispatches separately |
+| Hypotheses | IMPLEMENTED: deterministic default, optional injected OpenRouter adapter, at most three per candidate, `hypothesis-v2`; generated text is not evidence |
+| Live dossiers | IMPLEMENTED after successful candidate arcs; early failure can omit dossier; artifact-availability defect remains |
+| Enforcement | GDC request/byte/page bounds and candidate/follow-up/revision/hypothesis caps exist; SDK HTTP retry accounting and a total paid-model spend gate do not |
+| Scientific domain typing | PARTIAL: typed provider/spec/action definitions, dictionary StatisticalState/EvidenceState/hypothesis payloads |
+| Persistence/API | SQLite schema 4, immutable artifacts/events, read-only API; no silent database migration/reset |
+| Systematic discovery lanes, CNV runtime | PLANNED, not implemented by this pass |
+| Offline autoresearch and demonstrated Jev incremental value | NOT IMPLEMENTED / UNVERIFIED |
+
+The prior claims that deep judgment, hypotheses, dossiers or a concrete LLM adapter are absent
+are stale. `cancerjev/llm/openrouter.py` exists and the CLI can inject it on an authorized path.
+Its credential is environment-only on that CLI path; the adapter does not verify immutable model
+resolution. `/api/system` still reports hard-coded `phase: 3` and `providers.llm: false`; those
+fields are a known stale capability-reporting defect, not proof the adapter is absent.
+
+### Evidence and verification for this documentation pass
+
+- All Python layers, tests/CI and documentation were reviewed against this SHA, including the
+  supplied prior audit. [Python review](PYTHON_CORE_REVIEW.md) separates reproduced defects from risks.
+- The isolated anonymous GDC campaign completed **69 requests, 6,093,958 response bytes**, all HTTP
+  200/terminal COMPLETE, within campaign/session/query caps. No authentication, redirects, automatic
+  retries or file downloads. The runtime transport allowlist was not changed.
+- Measured: 1,000 gene identities, ten 100-gene indexed-count batches; expression for 1,000 requested
+  genes × 250 requested cases and 100 × 585. The 1,000 × 585 expression workload is an estimate,
+  not a measured result. One complete TP53 CNV occurrence query was inspected; broad CNV is not admitted.
+- Existing parsers accepted all ten count batches and twelve expression matrices offline. Isolated
+  checks reproduced the OBSERVED-null metric constructor and empty-revision dossier path without
+  modifying repository tests or production data. No claim that a real run's measurements were corrupted.
+- The supplied same-SHA audit's Ruff/pytest baseline is reused: Ruff passed; pytest reached 100%
+  and exit 0 with a reported Windows temporary-directory cleanup warning. This pass does not claim
+  a freshly rerun full Python suite. Documentation link/diff checks are recorded in the handoff.
+- The installed TypeSafe skill was read and matched against its official repository (newline
+  normalization only); live official documentation/cookbooks and historical runs informed the design.
+  **No paid Jev or generative-model calls were made.** Prices/scenarios are not measured invoices.
+- Final read-only checks: all 69 capture hashes/byte lengths matched their ledger; 86 local Markdown
+  link targets resolved; `git diff --check` passed. The working-tree changes are confined to README,
+  AGENTS and Markdown under docs; HEAD remains unchanged.
+
+### Authoritative design and next work
+
+[Roadmap and 32-deliverable index](DISCOVERY_ROADMAP.md) is the handoff. Ownership/execution:
+[architecture](ARCHITECTURE.md). Contracts/identity: [domain models](DOMAIN_MODELS.md).
+Sources/decisions: [GDC strategy](GDC_STRATEGY.md) and [capture register](GDC_DISCOVERY_CAPTURES.md).
+Semantics: [Jev design](JEV_DESIGN.md) and [questions](JEV_QUESTIONS.md).
+Evaluation: [testing](TESTING.md). Resource limits/scenarios: [budgets](GDC_BUDGETS.md).
+
+Before discovery implementation, stabilize measurement/lane/state/evidence types and versioned
+hydration, fix dossier artifact handling, and preserve valid historical identities/artifacts.
+Then implement bounded universe reduction, independent descriptive lanes and only justified actions.
+Callable negatives, CNV neutral references, matched expression specimens, survival semantics and
+Jev incremental value remain unresolved gates, not assumed biology.
+
+## Historical implementation journal — superseded status snapshots
+
+Everything below is retained historical evidence from earlier stages, with its original dates,
+commands and observed results. Its CURRENT/NEXT/remaining/absence statements apply only to the
+stage described and are **not current instructions or current capability claims**. The current
+table above supersedes conflicting snapshots. No old live result is presented as rerun today.
+
 Factual source of truth for the current repository state. The Phase 3 single-cohort semantic and
 admission redesign is implemented and validated; see the acceptance and verification records below.
 

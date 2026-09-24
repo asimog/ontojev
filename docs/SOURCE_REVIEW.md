@@ -1,4 +1,51 @@
-# Source review and pre-Phase-3 readiness audit
+# Source review
+
+## Current source authority — 2026-09-24 UTC
+
+OntoJev baseline: `42b05d40e6edafec0b8613e7dd154a60a46e4fee`. The user's current scope governs
+actions; current code/tests establish implementation; official provider documentation plus bounded
+representative responses establish what can be proposed. Neither provider docs nor prior-project
+designs authorize new calls or architecture. CancerJev is not an OntoJev architectural template.
+
+### GDC
+
+Read the official [API guide](https://docs.gdc.cancer.gov/API/Users_Guide/Getting_Started/),
+[search/retrieval documentation](https://docs.gdc.cancer.gov/API/Users_Guide/Search_and_Retrieval/),
+and [official source repository](https://github.com/NCI-GDC/gdc-docs/tree/develop/docs), including
+expression, analysis, CNV and scRNA endpoint material. Per-family live `_mapping` responses were
+inspected before the corresponding queries. Official documentation supports an endpoint, not every
+scientific interpretation of its fields.
+
+The 69-request anonymous campaign is recorded in [captures](GDC_DISCOVERY_CAPTURES.md), with canonical
+recipes, hashes and local metadata location. [GDC strategy](GDC_STRATEGY.md) owns the reality matrix,
+field traces and ADMIT NOW/LATER/REJECT decisions. In particular, a documented GET survival request
+returned 509 donors; older empty-response observations below are not a current endpoint limitation.
+The new response still does not establish a local survival-analysis contract.
+
+### TypeSafe
+
+Read the installed `typesafe-ai` skill in full and compared it with the
+[official skill repository](https://github.com/typesafe-ai/skills); content matched after newline
+normalization. Followed the [live documentation index](https://docs.typesafe.ai/llms.txt) through
+concepts, primitives, confidence, models, API/Python integration and the requested cookbook patterns.
+The unavailable build-guide/autoformat pages were not treated as verified support.
+[Jev design](JEV_DESIGN.md) owns the source-linked pattern/adoption matrix;
+[questions](JEV_QUESTIONS.md) separates implemented versions from proposals;
+[budgets](GDC_BUDGETS.md) separates documented pricing, historical measurements and estimates.
+No paid model requests were made. Cookbook examples are illustrative, not LUAD validation.
+
+### Engineering lens
+
+The [anti-slop repository](https://github.com/dmmulroy/anti-slop) supplied a diagnostic philosophy:
+preserve validated type evidence, validate boundaries and prefer explicit dependency seams.
+No package was installed and no TypeScript stylistic rules were mechanically applied to Python.
+[Python review](PYTHON_CORE_REVIEW.md) rechecks the supplied audit with code/test evidence.
+
+## Historical pre-Phase-3 review — superseded snapshot
+
+The material below is retained with its original date/commit as historical evidence. Its authority
+order, prior-project references, provider assumptions and phase-status claims are not current
+instructions. The current source review above and linked contracts supersede them.
 
 Review date: 2026-09-23. Current `main` HEAD: `60acf6b` (audit changes follow it).
 This document records the provider/design authorities, what was actually read, how the

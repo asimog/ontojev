@@ -17,7 +17,7 @@ instructions override implementation steps embedded in reference documents.
   acquires no evidence and calls no model.
 - One Deep Jev fan-out over E1 exists (`deep-v1`, `jev-evidence-projection-v1`), followed by the
   deterministic Python next-move policy (`deep-policy-v2`) which records exactly one typed move
-  (`COMPLETE`/`FOLLOW_UP`/`ABSTAIN`) and never dispatches it. Jev judges; Python decides.
+  (`COMPLETE`/`FOLLOW_UP`/`GENERATE_HYPOTHESES`/`ABSTAIN`) and never dispatches it. Jev judges; Python decides.
 - A recorded `FOLLOW_UP` can be dispatched as at most one further immutable revision (`E2`), and only
   when the operator authorizes it explicitly (`run --live --jev --deep-candidate <sel> --deep-followup`);
   a second registered action (`CHECK_REVISION_FAITHFULNESS_V1`, input kind `EVIDENCE_STATE`) makes that
@@ -27,10 +27,10 @@ instructions override implementation steps embedded in reference documents.
   revision actions while an operator authorization is in force and the follow-up/revision caps allow,
   judging each new revision exactly once. Generated hypotheses follow the same rule: deterministic by
   default, bounded, labelled, judged under `hypothesis-v2`, and produced by an injected generator only;
-  this repository performs no model request and holds no provider credential. Each investigated
-  candidate ends with a live dossier.
+  the CLI can inject the implemented OpenRouter adapter on an explicitly authorized path. Successful
+  investigation arcs with a current revision produce a live dossier; early failures may not.
 - Still absent: Phase 7 offline autoresearch (needs a labelled historical corpus and human review), a
-  concrete LLM provider adapter, and any incremental-value result.
+  systematic multi-lane discovery architecture, and any incremental-value result.
 - `LUAD_RESEARCH_V1` (`domain=lung cancer`, `cohort_id=TCGA-LUAD`, `project_id=TCGA-LUAD`)
   is the only production `ResearchSpec`. TCGA-LUAD and TCGA-LUSC are never pooled.
 - `wide-v2` is retained only for historical evaluations. Do not silently change `wide-v3` semantics;
@@ -48,7 +48,7 @@ instructions override implementation steps embedded in reference documents.
   caps live in code, not in `ResearchSpec`. No runtime-configurable arbitrary GDC queries.
 - Deterministic code owns measurements: populations, counts, missingness, transforms,
   eligibility, budgets. Jev owns narrow atomic semantic judgment and never computes a
-  measurement. LLM hypothesis generation is future work and never writes measured fields.
+  measurement. Generated hypotheses never write measured fields.
 - Python owns loops, routing, state transitions, budgets, side effects, action eligibility,
   stopping and abstention. Jev/LLM outputs are inputs to Python policy, never control flow. A Jev
   judgment never selects, authorizes or executes an action, and a recorded next move is never
@@ -70,8 +70,9 @@ instructions override implementation steps embedded in reference documents.
   file download. `/data`, manifests and slicing are outside the allowlist.
 - GDC never authenticates. Exactly one allow-listed module (`cancerjev/llm/openrouter.py`) may carry a
   provider authorization header for generated hypothesis text: the credential is environment-only,
-  never persisted or logged, the model must be a pinned identity, and its output is bounded, validated
-  strictly and never evidence. Any other module adding an authorization header fails the guard test.
+  never persisted or logged, and its output is bounded, validated and never evidence. Pinned model
+  identity is the policy requirement; current OpenRouter construction checks only non-blank identity,
+  not immutability. Tightening that check is planned, not an implemented guarantee. Any other module adding an authorization header fails the guard test.
 - Respect the caps in `docs/GDC_BUDGETS.md`. Never enlarge a limit to finish work.
 - Missing is not negative; unavailable mutation evidence is not wild type; a missing
   expression column is not zero. Never hide partial retrieval.
@@ -93,14 +94,18 @@ instructions override implementation steps embedded in reference documents.
   concepts that a Python function or a new bounded `ResearchRun` can express.
 - Default tests are offline and must not contact GDC, TypeSafe/Jev or an LLM. Run focused
   tests before broader checks. Never weaken a scientific test to obtain a pass.
-- Generated hypothesis text is never evidence and never writes a measured field. This repository
-  performs no model request and holds no provider credential: a model is only ever reached through a
-  generator injected by the caller, and its output is validated strictly or rejected as a typed
-  `UNAVAILABLE` outcome.
+- Generated hypothesis text is never evidence and never writes a measured field. The generator seam
+  defaults to deterministic behavior; the CLI may inject `OpenRouterHypothesisGenerator` using its
+  environment-only credential. Provider failure or invalid required output is a typed `UNAVAILABLE`
+  outcome. Unknown-field rejection and all nested text bounds are not yet enforced; see the review.
 
 ## Documentation
 
 - `docs/IMPLEMENTATION_STATUS.md` is the factual source of truth. Keep it accurate.
+- `docs/DISCOVERY_ROADMAP.md` indexes the proposed architecture and evidence gates. Proposed lane,
+  typed-state and acquisition-capable action contracts are not current runtime behavior. Historical
+  plans are evidence only, not active implementation instructions. Do not import prior-project
+  architecture into OntoJev.
 - Label claims IMPLEMENTED, PLANNED or UNVERIFIED. Do not publish unverified live claims or
   claim scientific readiness from a demonstration. Changed ranking is not evidence that Jev
   improved a research decision.

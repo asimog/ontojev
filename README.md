@@ -2,8 +2,9 @@
 
 OntoJev retrieves public, open-access GDC data through one bounded anonymous transport,
 measures it with deterministic scientific methods, and asks Jev narrow semantic questions
-about the resulting compact state. Python policy decides what happens next. There is no LLM
-hypothesis generation, no GDC authentication, and no GDC file download.
+about the resulting compact state. Python policy decides what happens next. Operator-selected
+candidates can enter a bounded deep investigation, with optional generated hypotheses and live
+dossiers. There is no GDC authentication or GDC file download.
 
 ```text
 ResearchSpec (reproducible scope)
@@ -31,8 +32,9 @@ identifier before cohort-wide deterministic summaries.
 
 The Python package is named `cancerjev`; the product is OntoJev. Phase 1 remains available as
 an offline synthetic vertical slice (`run --fixture demo`) and is never mixed with live
-records. Phases 4–7 (deep evidence, registered follow-ups, generative hypotheses, autoresearch)
-are documented only.
+records. Deep evidence revisions, two registered integrity actions, Deep Jev, bounded hypothesis
+generation/review and live dossiers are implemented. Offline autoresearch and systematic multi-lane
+discovery are not. See the [current status](docs/IMPLEMENTATION_STATUS.md).
 
 ## Run locally
 
@@ -75,8 +77,8 @@ Configuration:
 For local development, copy `.env.local.example` to `.env.local` and fill in the provider keys;
 `.env.local` is gitignored and loaded automatically by `cancerjev.config.load_local_env()` (real
 environment variables win, blank values are ignored, values are never logged). Set
-`CANCERJEV_NO_DOTENV=1` to disable. It includes `TYPESAFE_API_KEY`, `OPENROUTER_API_KEY` (reserved
-for future Phase 6 hypothesis generation, not used by any code today), the operational
+`CANCERJEV_NO_DOTENV=1` to disable. It includes `TYPESAFE_API_KEY`, `OPENROUTER_API_KEY` (used
+for optional explicitly authorized OpenRouter hypothesis generation), the operational
 `CANCERJEV_*` settings below, and the frontend URL.
 
 - `CANCERJEV_DATA_DIR` — local persistence directory; defaults to `./data`.
@@ -90,8 +92,8 @@ for future Phase 6 hypothesis generation, not used by any code today), the opera
 - `NEXT_PUBLIC_CANCERJEV_API_URL` — browser API URL; defaults to `http://127.0.0.1:8000`.
 
 `--jev` requires `--live`; the fixture path never constructs a live provider. Persistence
-schema is version 3; earlier data directories are intentionally not migrated and should be
-moved or deleted.
+schema is version 4; earlier schemas are explicitly rejected, not automatically migrated or
+reset. Retain historical databases and artifacts; use a separate compatible data directory.
 
 ## Open-access guarantees
 
@@ -126,13 +128,16 @@ counts or live results of its own.
 
 ## Scope boundary
 
-Phase 4+ is not implemented: no deep evidence revisions, no registered follow-up execution, no
-generative hypotheses, no LLM calls. Jev judgments are semantic policy inputs, never
+The deep actions currently check retained evidence integrity; they acquire no new data and compute
+no new biological measurement. The default hypothesis generator is deterministic; the optional
+OpenRouter adapter can make paid model calls only on the authorized CLI path. Jev judgments are semantic policy inputs, never
 measurements, significance, or clinical claims. Public GDC evidence alone does not establish
 dependency, druggability, therapeutic efficacy, safety, clinical benefit, biomarker
 qualification, or drug success; OntoJev's claim boundary is **candidate-target investigation**,
 not therapeutic target validation. Scientific contracts live in `docs/`, including the central
-[GDC × Jev fit analysis](docs/GDC_JEV_FIT_ANALYSIS.md).
+[discovery roadmap and 32-deliverable index](docs/DISCOVERY_ROADMAP.md).
+The documentation architecture pass at `42b05d40e6edafec0b8613e7dd154a60a46e4fee`
+made no paid model calls and changed no production code or tests.
 
 See [architecture](docs/ARCHITECTURE.md), [domain models](docs/DOMAIN_MODELS.md),
 [scientific invariants](docs/SCIENTIFIC_INVARIANTS.md), [GDC strategy](docs/GDC_STRATEGY.md),
