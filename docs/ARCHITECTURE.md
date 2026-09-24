@@ -7,6 +7,11 @@ reader. These are not wired into the production flow below; current writers, que
 transport and database schema are unchanged. [Implementation status](IMPLEMENTATION_STATUS.md) owns current
 facts; [the roadmap](DISCOVERY_ROADMAP.md) separates implementation gates from design.
 
+Stage 2 connects validated legacy readers to Deep acceptance and scientific API reads. Dossier
+assembly accepts only verified authoritative revisions/hypotheses/evaluations; corruption refuses
+publication. Cache hydration validates its original artifacts and contracts before policy can use
+answers. Internal scientific composition remains the Stage 3 transition, not a new v3 runtime yet.
+
 ## IMPLEMENTED: bounded deterministic-first research
 
 The fixture slice remains offline. Production has one frozen LUAD_RESEARCH_V1, never LUAD/LUSC pooling.

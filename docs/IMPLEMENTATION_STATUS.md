@@ -1,6 +1,30 @@
 # Implementation status
 
-## Current truth — implementation Stages 0–1, 2026-09-25
+## Current truth — Stage 2 implementation, 2026-09-25
+
+Stage 0–1 was committed and pushed to `main` as
+`63d991a6ded2988bc6da0090f80ee69775cf770d`. Stage 2 extends scientific boundary acceptance,
+not discovery. See [Stage 2 handoff](STAGE_02_HANDOFF.md) for its verification gate.
+
+- IMPLEMENTED: named artifact/state/candidate/revision/hypothesis/evaluation/dossier readers;
+  confined paths, recorded byte size/hash, schema/identity and operational binding validation.
+- IMPLEMENTED: dossier publication refusal with `DOSSIER_UNAVAILABLE`; invalid authoritative
+  revisions are not replaced with earlier ones and cannot mark a candidate DOSSIER_READY.
+- IMPLEMENTED: invalid Jev cache hydration records UNUSABLE_CACHE with empty answers, consumes
+  no provider attempt and leaves immutable cache history intact. Question semantics are unchanged.
+- IMPLEMENTED: bounded immutable HypothesisDraft and typed answer variants; reject unexpected
+  generator fields, oversized nested text and unknown/ineligible test IDs instead of filtering them.
+- IMPLEMENTED: API state/evidence/dossier detail validation, unchanged successful envelopes/ETags;
+  dossier SQL lookup now belongs to Repository. Strict mypy scope is ten explicit modules.
+- UNCHANGED: SQLite schema 4, scientific v1/v2 writers and identities, existing projections,
+  questions, policies, action definitions and provider boundaries. No new provider calls or dependencies.
+- PLANNED: Stage 3 typed lane composition and internal consumer transition. Legacy presentation
+  conversions remain explicit at current consumer interfaces; no claim of fully typed runtime yet.
+- VERIFIED Stage 2 gate: **527 passed, 2 deselected**, Ruff passed, strict mypy passed on ten
+  modules, whitespace checks passed. Historical scientific/projection/question/event goldens and
+  valid Deep/hypothesis replay pass. The same pytest-asyncio and Windows cleanup warnings remain.
+
+## Historical Stage 0–1 handoff, 2026-09-25 (before publication)
 
 Starting HEAD: `fb52305b3d42a39b05f6c269bbfa3d6213fd51d2`, clean `main`.
 This implementation unit is **Stages 0 and 1 only**. No commit or push; HEAD is unchanged.

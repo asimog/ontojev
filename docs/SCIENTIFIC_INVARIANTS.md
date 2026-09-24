@@ -90,11 +90,11 @@ unavailability reasons, entity/frame membership, immutable nested records, cover
 consistency. Scientific and operational sources are separate; no generated-text field exists in a
 measurement. These checks do not prove the scientific truth of a supplied finite number.
 
-Production state/evidence consumers still use dictionaries; migration is Stage 2/3. Cached answer
-hydration still lacks domain validation. Dossier revision read
-failure can become an empty payload under an OBSERVED section. These are documented precisely in
-[the Python review](PYTHON_CORE_REVIEW.md); do not claim actual live measurement corruption where
-only a constructor or malformed-artifact path was demonstrated.
+Stage 2 validates storage/cache boundaries and refuses dossier publication on corrupt authoritative
+revisions; failure no longer becomes an empty payload under an OBSERVED section. Production internal
+state/evidence consumers still use legacy dictionary conversions pending Stage 3. Historical findings
+remain in [the Python review](PYTHON_CORE_REVIEW.md); malformed-artifact execution paths were
+demonstrated, not corruption of a particular live measurement.
 
 The legacy builder also still raises INVALID_METRIC when entirely absent expression availability
 produces an empty sum alongside NOT_OBSERVED. This is a reproduced fail-closed composition defect,

@@ -34,8 +34,10 @@ jev-hypothesis-projection-v1. Existing versions and provisional thresholds remai
 See [questions](JEV_QUESTIONS.md). The current Deep policy has four moves including
 GENERATE_HYPOTHESES; policy never dispatches its own decision.
 
-Adapter validation is good; cached-answer hydration and typed internal answers need the
-[contract transition](DOMAIN_MODELS.md). Pinned requested/resolved Jev identity gates cache reuse.
+Stage 2 validates cached-answer hydration against recorded artifacts, original question definitions,
+rosters, distributions, projection/applicability and model identity. Invalid cache yields
+UNUSABLE_CACHE abstention with no replacement call. Typed answer variants are available; remaining
+internal consumer migration is Stage 3. Pinned requested/resolved Jev identity gates cache reuse.
 Operational IDs are excluded from projections where required. A historical ranking change or
 successful provider call does not establish incremental research value.
 

@@ -1,5 +1,15 @@
 # Persistence and local runtime
 
+## Stage 2 verified reads — IMPLEMENTED (2026-09-25)
+
+`storage/readers.py` validates recorded sizes/hashes, confined paths, scientific schema/identity
+and record bindings before Deep acceptance, dossier assembly and scientific detail API responses.
+Repository row decoding remains infrastructure, not scientific validation. Corrupt authoritative
+latest revisions refuse dossier publication (`DOSSIER_UNAVAILABLE`); no earlier-revision fallback.
+Cached evaluations validate original question/projection artifacts and answer contracts; invalid
+entries cause an unusable-cache abstention with no replacement provider call or cache mutation.
+See [Stage 2 handoff](STAGE_02_HANDOFF.md). SQLite schema 4 and immutable historical bytes remain.
+
 Use Python's SQLite support and explicit small SQL statements. WAL, foreign_keys=ON, busy_timeout=5000 ms, synchronous=FULL for research writes. Keep transactions short; no network calls or artifact serialization inside a database transaction. Schema version is recorded via a small bootstrap/version check; do not port old migrations or introduce an ORM hierarchy. Phase 2 persistence schema version is **4** (`schema_info` holds one `UNIQUE` version row; bootstrap closes its connection and commits its version check in one short `BEGIN IMMEDIATE` transaction). A data directory from an earlier revision fails with an actionable `unsupported database schema 3; this build expects schema 4` error instead of being migrated or silently reset; retain historical databases and artifacts; no deletion or silent reinterpretation is part of the compatibility policy. Schema 4 adds the relational constraints listed below and re-keys `gdc_cache`; it does not redesign tables.
 
 

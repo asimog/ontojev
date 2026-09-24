@@ -16,7 +16,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from cancerjev.domain.events import canonical_json, utc_now
+from cancerjev.domain.hypotheses import read_hypothesis_draft
+from cancerjev.domain.measurements import ContractError
 from cancerjev.research.deep import stable_id
+from cancerjev.science.actions import ACTION_REGISTRY
 
 MAX_HYPOTHESES = 3
 MAX_TEXT_CHARS = 2_000
@@ -228,22 +231,13 @@ def validate_generated_drafts(entries: Any, *, eligible_action_ids: list[str],
                                     f"{len(entries)} hypotheses exceed the bound {MAX_HYPOTHESES}")
     drafts: list[dict[str, Any]] = []
     for entry in entries:
-        if not isinstance(entry, dict) or not all(key in entry for key in REQUIRED_DRAFT_KEYS):
-            raise HypothesisUnavailable("GENERATOR_RESPONSE_MALFORMED", "a hypothesis misses required fields")
-        for key in ("statement", "proposed_mechanism"):
-            if not isinstance(entry[key], str) or not entry[key].strip():
-                raise HypothesisUnavailable("GENERATOR_RESPONSE_MALFORMED", f"{key} must be a non-empty string")
-            if len(entry[key]) > MAX_TEXT_CHARS:
-                raise HypothesisUnavailable("GENERATOR_RESPONSE_MALFORMED",
-                                            f"{key} exceeds {MAX_TEXT_CHARS} characters")
-        for key in REQUIRED_DRAFT_LISTS:
-            value = entry[key]
-            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-                raise HypothesisUnavailable("GENERATOR_RESPONSE_MALFORMED", f"{key} must be a list of strings")
-            if len(value) > MAX_LIST_ITEMS:
-                raise HypothesisUnavailable("GENERATOR_RESPONSE_MALFORMED",
-                                            f"{key} exceeds {MAX_LIST_ITEMS} items")
-        tests = [test for test in entry["distinguishing_tests"] if test in eligible_action_ids]
+        try:
+            draft = read_hypothesis_draft(
+                entry, allowed_action_ids=frozenset(eligible_action_ids) & frozenset(ACTION_REGISTRY),
+            )
+        except ContractError as exc:
+            raise HypothesisUnavailable("GENERATOR_RESPONSE_MALFORMED", str(exc)) from exc
+        tests = list(draft.distinguishing_tests)
         drafts.append(_draft(
             generator, LLM_HYPOTHESIS_LABEL,
             statement=entry["statement"],

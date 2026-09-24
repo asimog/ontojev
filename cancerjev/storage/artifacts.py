@@ -63,8 +63,20 @@ class ArtifactStore:
                     os.unlink(temporary)
         return PublishedArtifact(artifact_id_for(relative_path.replace("\\", "/"), digest), relative_path.replace("\\", "/"), digest, len(content), media_type, purpose)
 
-    def read(self, relative_path: str, expected_hash: str | None = None) -> bytes:
-        content = self._resolve(relative_path).read_bytes()
+    def read(self, relative_path: str, expected_hash: str | None = None,
+             *, expected_size: int | None = None) -> bytes:
+        target = self._resolve(relative_path)
+        if expected_size is None:
+            content = target.read_bytes()
+        else:
+            if type(expected_size) is not int or expected_size < 0:
+                raise ValueError("invalid artifact size")
+            if target.stat().st_size != expected_size:
+                raise OSError("artifact size mismatch")
+            with target.open("rb") as handle:
+                content = handle.read(expected_size + 1)
+            if len(content) != expected_size:
+                raise OSError("artifact size mismatch")
         if expected_hash and hashlib.sha256(content).hexdigest() != expected_hash:
             raise OSError("artifact checksum mismatch")
         return content

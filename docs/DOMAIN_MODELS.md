@@ -8,6 +8,11 @@ The [source-field trace](GDC_STRATEGY.md) limits admitted scientific content.
 
 ## Current production contract assessment
 
+Stage 2 adds immutable HypothesisDraft and Noul/Choice/Score answer records, plus verified stored
+state/revision/hypothesis/evaluation wrappers. Legacy JSON remains at explicitly named consumer
+boundaries pending Stage 3. The historical dictionary classifications below still describe the
+untransitioned internal runtime, not the new validated persistence entrypoints.
+
 | Concept | Classification | Protected invariant in transition |
 |---|---|---|
 | ResearchSpec, CohortSpec, AcquisitionSpec | STRONGLY TYPED | Validated bounded scope |

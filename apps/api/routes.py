@@ -11,6 +11,12 @@ from fastapi.responses import JSONResponse, Response
 
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.database import SCHEMA_VERSION
+from cancerjev.storage.readers import (
+    read_artifact,
+    read_dossier_record,
+    read_evidence_record,
+    read_state_record,
+)
 from cancerjev.storage.repositories import Repository
 
 router = APIRouter()
@@ -136,7 +142,7 @@ def state_detail(state_id: UUID, request: Request):
     if not metadata:
         raise HTTPException(503, detail="state artifact metadata missing")
     try:
-        content = artifacts.read(metadata["relative_path"], metadata["sha256"])
+        content = read_state_record(repository, artifacts, str(state_id)).artifact.content
     except (OSError, ValueError) as exc:
         raise HTTPException(503, detail="state artifact unavailable or corrupt") from exc
     headers = {"ETag": f'"{metadata["sha256"]}"', "X-Artifact-Id": metadata["artifact_id"], "X-Artifact-SHA256": metadata["sha256"]}
@@ -193,7 +199,7 @@ def evidence_detail(evidence_state_id: UUID, request: Request):
     if not metadata:
         raise HTTPException(503, detail="evidence artifact metadata missing")
     try:
-        content = artifacts.read(metadata["relative_path"], metadata["sha256"])
+        content = read_evidence_record(repository, artifacts, str(evidence_state_id)).artifact.content
     except (OSError, ValueError) as exc:
         raise HTTPException(503, detail="evidence artifact unavailable or corrupt") from exc
     headers = {"ETag": f'"{metadata["sha256"]}"', "X-Artifact-Id": metadata["artifact_id"], "X-Artifact-SHA256": metadata["sha256"]}
@@ -218,8 +224,7 @@ def dossiers(request: Request, limit: Annotated[int, Query(ge=1, le=100)] = 20, 
 @router.get("/api/dossiers/{dossier_id}")
 def dossier(dossier_id: UUID, request: Request, format: Literal["json", "markdown"] = "json"):
     repository, artifacts = services(request)
-    with repository.database.read() as connection:
-        row = connection.execute("SELECT * FROM dossiers WHERE dossier_id=?", (str(dossier_id),)).fetchone()
+    row = repository.get_dossier(str(dossier_id))
     if not row:
         raise HTTPException(404, detail="dossier not found")
     artifact_id = row["json_artifact_id"] if format == "json" else row["markdown_artifact_id"]
@@ -227,7 +232,9 @@ def dossier(dossier_id: UUID, request: Request, format: Literal["json", "markdow
     if not metadata:
         raise HTTPException(503, detail="dossier artifact metadata missing")
     try:
-        content = artifacts.read(metadata["relative_path"], metadata["sha256"])
+        authoritative = read_dossier_record(repository, artifacts, str(dossier_id))
+        content = (authoritative.content if format == "json" else
+                   read_artifact(repository, artifacts, artifact_id, run_id=row["run_id"]).content)
     except (OSError, ValueError) as exc:
         raise HTTPException(503, detail="dossier artifact unavailable or corrupt") from exc
     headers = {"ETag": f'"{metadata["sha256"]}"', "X-Artifact-Id": metadata["artifact_id"], "X-Artifact-SHA256": metadata["sha256"]}

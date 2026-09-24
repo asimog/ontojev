@@ -1,5 +1,12 @@
 # Verification and prospective calibration
 
+Stage 2 adds `test_scientific_reads.py`, `test_cache_validation.py` and
+`test_hypothesis_contract.py`: corrupted bytes/metadata/bindings, unknown schemas, authoritative
+latest revision refusal, unusable cache without provider fallback, and strict generated-text bounds.
+Some tests deliberately disable immutable UPDATE triggers in isolated temporary databases to
+simulate corruption beyond normal application writes. Production triggers remain unchanged.
+Strict mypy now checks ten explicit domain/reader/answer modules. See [Stage 2](STAGE_02_HANDOFF.md).
+
 Architecture baseline `42b05d40e6edafec0b8613e7dd154a60a46e4fee`.
 Default tests are offline, with outbound network blocked except loopback test servers. Existing
 coverage uses replay GDC, stub Jev adapters, real temporary SQLite/artifacts, immutable event/identity

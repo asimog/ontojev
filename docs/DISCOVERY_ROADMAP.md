@@ -3,15 +3,17 @@
 Historical documentation architecture contract, reviewed against
 `42b05d40e6edafec0b8613e7dd154a60a46e4fee` (main) on 2026-09-24 UTC.
 No discovery code, tests, dependencies or frontend were changed; no commit/push.
-The user subsequently authorized staged implementation. The latest implementation unit is
-**Stage 0 followed by Stage 1 only**, based on `fb52305b3d42a39b05f6c269bbfa3d6213fd51d2`.
-See [implementation status](IMPLEMENTATION_STATUS.md) and the [Stage 0–1 handoff](STAGE_01_HANDOFF.md).
+The user subsequently authorized staged implementation and publication after each stage.
+Stage 0–1 is published at `63d991a6ded2988bc6da0090f80ee69775cf770d`.
+See [implementation status](IMPLEMENTATION_STATUS.md), [Stage 0–1 handoff](STAGE_01_HANDOFF.md)
+and [Stage 2 handoff](STAGE_02_HANDOFF.md).
 
 ## Implementation journal — 2026-09-25
 
 Stage 0 baseline and Stage 1 standalone contracts/readers are implemented; the old live/fixture
 writers and runtime remain active. New v3 serializers are exercised offline, not wired into
-acquisition, storage hydration, Jev or policy. Stage 2 is next. The original table below remains
+acquisition, Jev or policy. Stage 2 adds verified storage hydration, cache acceptance, strict
+hypothesis parsing and dossier refusal. Stage 3 is next after its acceptance gate. The original table below remains
 the dependency order, not a claim that all typed consumers or discovery are implemented.
 
 The authorized continuation is: Stage 2 integrity of consumption, then Stage 3 typed composition,

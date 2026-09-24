@@ -1,5 +1,10 @@
 # FastAPI contract, version 2
 
+Stage 2: state/evidence details validate scientific versions, identity and record/artifact bindings
+in addition to byte hashes. Dossier reads validate authoritative revision references. Unavailable
+or corrupt authoritative content returns 503; successful payloads and ETags are unchanged.
+No frontend changes or frontend rendering acceptance are included.
+
 All routes are local read APIs. JSON serialization is strict (no NaN/Infinity). `/api/system` reports provider/configuration flags and local runtime metadata, never secrets. Its current `phase: 3` and `providers.llm: false` values are hard-coded and stale relative to implemented deep/OpenRouter paths; they are not authoritative capability discovery. CORS allows only the configured local web origin; bind to loopback. No account/auth/RBAC system is needed for this local slice. No route performs a GDC or Jev call; research runs remain CLI/worker-owned.
 
 List envelope: `{items:[...], next_cursor:string|null, has_more:boolean}`. Opaque cursor binds ordering/filter; keyset ordering avoids skipped/duplicated rows when new runs appear. Run/dossier feed defaults 20, max100. Child lists default100, max200. UUID path parameters and numeric bounds are validated; SQL is parameterized. Cursor decoding checks structure and filter binding, but does not fully enforce all decoded field types or input lengths. Strict cursor boundary validation is planned; do not describe it as complete. Unknown ID=404, malformed request=422. Error envelope `{error:{code,message,request_id}}` for every error, including FastAPI request-validation failures (bad UUID, out-of-range limit, bad cursor) which use code `VALIDATION_ERROR`; 503 for unavailable storage, not an empty successful list. No stack traces/secrets in responses.

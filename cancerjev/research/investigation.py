@@ -162,13 +162,17 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
         if hypothesis.get("status") == "GENERATED":
             status = "HYPOTHESIZED"
     dossier: dict[str, Any] | None = None
+    error_code: str | None = None
     if current.revision is not None:
         dossier = stage("DOSSIER", lambda: run_dossier_stage(
             run_id=run_id, candidate=candidate, repository=repository, artifacts=artifacts,
             state=plan.candidate.state, decisions=decisions, publish_json=publish_json, emit=emit,
         ))
+        if dossier.get("status") == "UNAVAILABLE":
+            status, stop_reason = "ABSTAINED", "DOSSIER_UNAVAILABLE"
+            error_code = dossier["error_code"]
     return CandidateInvestigation(
         candidate_id=candidate["candidate_id"], selection=selection, status=status,
         final_move=final_move, stop_reason=stop_reason, steps=tuple(steps),
-        decisions=tuple(decisions), error_code=None, hypothesis=hypothesis, dossier=dossier,
+        decisions=tuple(decisions), error_code=error_code, hypothesis=hypothesis, dossier=dossier,
     )

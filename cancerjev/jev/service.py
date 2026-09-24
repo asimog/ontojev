@@ -44,6 +44,7 @@ from cancerjev.jev.questions import (
 )
 from cancerjev.jev.typesafe_adapter import ADAPTER_VERSION, JevProviderError, TypeSafeAdapter
 from cancerjev.storage.artifacts import ArtifactStore
+from cancerjev.storage.readers import read_artifact, read_evaluation_record, require_equal
 from cancerjev.storage.repositories import Repository
 
 # A cacheable model identity must be pinned/versioned, for example ``jev-1.13.0``
@@ -199,6 +200,33 @@ class JevService:
         answer_set = adapter.evaluate(projection, questions)
         return answer_set, validate_answers(questions, answer_set.answers)
 
+    def _validate_cached(self, source: dict[str, Any] | None, *, projection: dict[str, Any],
+                         definitions: tuple[QuestionDefinition, ...], version: str, set_hash: str,
+                         purpose: str, applicability: dict[str, Any]) -> dict[str, Any]:
+        """Hydrate the original immutable artifacts before reusing a judgment.
+
+        Failure is an abstention, never permission for a replacement provider call.
+        """
+        try:
+            if source is None:
+                raise ValueError("cache origin evaluation missing")
+            stored = read_evaluation_record(self.repository, self.artifacts, source["evaluation_id"])
+            vector = stored.artifact.boundary_representation()
+            require_equal(vector["error"], None, "successful cache origin")
+            require_equal(vector["purpose"], purpose, "evaluation purpose")
+            require_equal(vector["requested_model"], self.settings.jev_model, "requested model")
+            require_equal(vector["resolved_model"], self.settings.jev_model, "resolved model")
+            require_equal(source["model"], self.settings.jev_model, "stored model")
+            require_equal(vector["adapter_version"], ADAPTER_VERSION, "adapter")
+            require_equal(vector["question_hash"], set_hash, "question hash")
+            require_equal(vector["question_set_version"], version, "question version")
+            require_equal(vector["projection_hash"], projection_hash(projection), "projection hash")
+            require_equal(vector["projection_version"], projection["projection_version"], "projection version")
+            require_equal(vector["applicability"], applicability, "question applicability")
+            return source
+        except (ValueError, KeyError, TypeError, JevContractError) as exc:
+            raise JevContractError("UNUSABLE_CACHE", str(exc)) from exc
+
     def evaluate(self, *, run_id: str, state: dict[str, Any], emit: Callable[..., Any]) -> dict[str, Any]:
         projection = build_projection(state)
         projection_id, p_hash, _ = self._register_projection(run_id=run_id, state=state, projection=projection,
@@ -208,6 +236,20 @@ class JevService:
             run_id, version=WIDE_QUESTION_SET_VERSION, definitions=WIDE_QUESTIONS,
             set_hash=wide_question_set_hash(),
         )
+        try:
+            row = self.repository.find_projection(state["state_id"], PROJECTION_VERSION)
+            if row is None:
+                raise ValueError("projection registration missing")
+            retained = read_artifact(self.repository, self.artifacts, row["artifact_id"])
+            require_equal(retained.boundary_representation(), projection, "projection content")
+            require_equal(p_hash, projection_hash(projection), "registered projection identity")
+            require_equal(row["source_state_hash"], state["state_hash"], "projection source state")
+        except (ValueError, KeyError, TypeError) as exc:
+            return self._record_failure(
+                run_id, state, projection_id, p_hash, question_artifact, applicability,
+                JevContractError("UNUSABLE_CACHE", f"retained projection: {exc}"), emit,
+                provider_attempted=False,
+            )
         requested_model = self.settings.jev_model
         cache_key = self._cache_key(projection_hash_value=p_hash,
                                     question_set_hash_value=wide_question_set_hash(),
@@ -215,12 +257,19 @@ class JevService:
         if cache_key is not None:
             cached_id = self.repository.jev_cache_get(cache_key)
             if cached_id is not None:
-                source = self.repository.get_evaluation(cached_id)
-                if source is not None:
-                    evaluation = self._cached_evaluation(state, source, projection_id, p_hash,
-                                                         question_artifact, applicability)
-                    return self._persist_evaluation(run_id, state, evaluation, emit, cache_key=cache_key,
-                                                    provider_attempted=False)
+                try:
+                    source = self._validate_cached(
+                        self.repository.get_evaluation(cached_id), projection=projection,
+                        definitions=WIDE_QUESTIONS, version=WIDE_QUESTION_SET_VERSION,
+                        set_hash=wide_question_set_hash(), purpose="WIDE", applicability=applicability,
+                    )
+                except JevContractError as exc:
+                    return self._record_failure(run_id, state, projection_id, p_hash, question_artifact,
+                                                applicability, exc, emit, provider_attempted=False)
+                evaluation = self._cached_evaluation(state, source, projection_id, p_hash,
+                                                     question_artifact, applicability)
+                return self._persist_evaluation(run_id, state, evaluation, emit, cache_key=cache_key,
+                                                provider_attempted=False)
         adapter = (
             self.adapter_factory() if self.adapter_factory is not None
             else TypeSafeAdapter(model=requested_model, timeout=self.settings.jev_timeout_seconds)
@@ -433,8 +482,23 @@ class JevService:
         if cache_key is not None:
             cached_id = self.repository.jev_cache_get(cache_key)
             if cached_id is not None:
-                source = self.repository.get_evaluation(cached_id)
-                if source is not None:
+                try:
+                    source = self._validate_cached(
+                        self.repository.get_evaluation(cached_id), projection=projection,
+                        definitions=spec.questions, version=spec.question_set_version,
+                        set_hash=spec.set_hash, purpose=spec.purpose, applicability=applicability,
+                    )
+                except JevContractError as exc:
+                    evaluation = {
+                        **common, "requested_model": requested_model, "resolved_model": None,
+                        "answers": {}, "raw_answers_hash": None, "request_id": None,
+                        "usage": {"input_tokens": None, "output_tokens": None}, "latency_ms": None,
+                        "cache_source_evaluation_id": None,
+                        "error": {"code": exc.code, "detail": exc.detail},
+                    }
+                    return self._persist_evaluation(run_id, subject_record, evaluation, emit,
+                                                    cache_key=None, provider_attempted=False, **persist)
+                else:
                     evaluation = {
                         **common,
                         "requested_model": source["model"], "resolved_model": source["model"],

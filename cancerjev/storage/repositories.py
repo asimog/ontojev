@@ -458,7 +458,12 @@ class Repository:
     def get_state(self, state_id: str) -> dict[str, Any] | None:
         with self.database.read() as connection:
             row = connection.execute("SELECT * FROM statistical_states WHERE state_id=?", (state_id,)).fetchone()
-        return _decode_row(row) if row else None
+            return _decode_row(row) if row else None
+
+    def get_candidate(self, candidate_id: str) -> dict[str, Any] | None:
+        with self.database.read() as connection:
+            row = connection.execute("SELECT * FROM candidates WHERE candidate_id=?", (candidate_id,)).fetchone()
+            return _decode_row(row) if row else None
 
     def page_projections(self, run_id: str, limit: int, cursor: str | None) -> dict[str, Any]:
         return self.page_child("jev_projections", run_id, limit, cursor, {})
@@ -609,6 +614,11 @@ class Repository:
     def artifact(self, artifact_id: str) -> dict[str, Any] | None:
         with self.database.read() as connection:
             row = connection.execute("SELECT * FROM artifacts WHERE artifact_id=?", (artifact_id,)).fetchone()
+            return dict(row) if row else None
+
+    def artifact_at_path(self, relative_path: str) -> dict[str, Any] | None:
+        with self.database.read() as connection:
+            row = connection.execute("SELECT * FROM artifacts WHERE relative_path=?", (relative_path,)).fetchone()
             return dict(row) if row else None
 
     def heartbeat(self, owner_id: str) -> None:

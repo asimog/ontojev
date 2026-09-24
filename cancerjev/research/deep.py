@@ -12,8 +12,6 @@ follow-up never rewrites E0 and never promotes or advances a candidate on its ow
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -23,7 +21,6 @@ from cancerjev.domain.events import canonical_json, utc_now
 from cancerjev.domain.identity import (
     content_hash,
     evidence_state_identity_payload,
-    statistical_state_identity_payload,
 )
 from cancerjev.research.nextmove import DEEP_POLICY_VERSION, next_move
 from cancerjev.science.actions import (
@@ -38,6 +35,7 @@ from cancerjev.science.actions import (
     execute,
 )
 from cancerjev.science.methods import METHODS
+from cancerjev.storage.readers import ScientificReadError, read_candidate_state, read_revision_chain
 
 FOLLOWUP_LIMIT = 3
 EVIDENCE_ITERATION_LIMIT = 2
@@ -383,29 +381,17 @@ def _followup_evidence(outcome: ActionOutcome, candidate: CandidateEvidence, sta
 def load_candidate_evidence(repository: Any, artifacts: Any, candidate: dict[str, Any]) -> CandidateEvidence:
     """Accept the candidate's immutable StatisticalState evidence, or fail closed."""
     state_id = candidate["source_state_id"]
-    row = repository.get_state(state_id)
-    if row is None:
-        raise DeepError("EVIDENCE_STATE_MISSING", f"candidate {candidate['candidate_id']} names an unknown state")
-    metadata = repository.artifact(row["artifact_id"])
-    if metadata is None:
-        raise DeepError("EVIDENCE_ARTIFACT_MISSING", f"state {state_id} has no artifact metadata")
     try:
-        content = artifacts.read(metadata["relative_path"])
-    except (OSError, ValueError) as exc:
-        raise DeepError("EVIDENCE_ARTIFACT_UNAVAILABLE", f"state {state_id}: {exc}") from exc
-    if hashlib.sha256(content).hexdigest() != metadata["sha256"]:
-        raise DeepError("EVIDENCE_ARTIFACT_CORRUPT", f"state {state_id} artifact bytes do not match its hash")
-    state = json.loads(content)
-    recomputed = content_hash(statistical_state_identity_payload(state))
-    if recomputed != row["state_hash"] or state.get("state_hash") != row["state_hash"]:
-        raise DeepError(
-            "EVIDENCE_STATE_HASH_MISMATCH",
-            f"state {state_id}: recorded {row['state_hash']}, recomputed {recomputed}",
-        )
+        stored = read_candidate_state(repository, artifacts, candidate["candidate_id"])
+        if repository.evidence_revisions(candidate["candidate_id"]):
+            read_revision_chain(repository, artifacts, candidate["candidate_id"])
+    except ScientificReadError as exc:
+        raise DeepError(exc.code, exc.detail) from exc
+    state = stored.artifact.boundary_representation()
     return CandidateEvidence(
         candidate_id=candidate["candidate_id"], entity=candidate["entity"],
         promotion_slot=candidate["promotion_slot"], state_id=state_id, state=state,
-        state_artifact_id=row["artifact_id"], state_artifact_sha256=metadata["sha256"],
+        state_artifact_id=stored.artifact.artifact_id, state_artifact_sha256=stored.artifact.sha256,
     )
 
 

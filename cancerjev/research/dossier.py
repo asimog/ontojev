@@ -10,7 +10,6 @@ support. No measurement is computed here and no model is called.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from typing import Any
 
@@ -18,6 +17,14 @@ from cancerjev.domain.dossier import DOSSIER_SECTIONS
 from cancerjev.domain.events import canonical_json, utc_now
 from cancerjev.dossier.renderer import render_markdown
 from cancerjev.research.deep import stable_id
+from cancerjev.science.actions import ACTION_REGISTRY
+from cancerjev.storage.readers import (
+    ScientificReadError,
+    read_candidate_state,
+    read_evaluation_record,
+    read_hypothesis_record,
+    read_revision_chain,
+)
 
 LIVE_NOTICE = (
     "REAL OPEN-ACCESS GDC EVIDENCE — DETERMINISTIC RESEARCH WITH GENERATED HYPOTHESES — "
@@ -265,36 +272,60 @@ def run_dossier_stage(*, run_id: str, candidate: dict[str, Any], repository: Any
                       publish_json: Callable[[str, str, Any, str], Any],
                       emit: Callable[..., Any]) -> dict[str, Any]:
     """Persist the authoritative JSON dossier, its derived Markdown, and its record."""
+    try:
+        return _publish_dossier_stage(
+            run_id=run_id, candidate=candidate, repository=repository, artifacts=artifacts,
+            decisions=decisions, publish_json=publish_json, emit=emit,
+        )
+    except ScientificReadError as exc:
+        summary = {"status": "UNAVAILABLE", "candidate_id": candidate["candidate_id"],
+                   "error_code": exc.code, "detail": exc.detail}
+        emit(run_id, "DOSSIER_UNAVAILABLE", f"dossier:{candidate['candidate_id']}:unavailable",
+             "Dossier publication refused: authoritative evidence is unavailable or corrupt.",
+             stage="DOSSIER", candidate_id=candidate["candidate_id"], level="error", data=summary)
+        return summary
+
+
+def _publish_dossier_stage(*, run_id: str, candidate: dict[str, Any], repository: Any, artifacts: Any,
+                           decisions: list[dict[str, Any]],
+                           publish_json: Callable[[str, str, Any, str], Any],
+                           emit: Callable[..., Any]) -> dict[str, Any]:
+    # Reload authoritative storage, not a stale caller copy or an earlier valid revision.
+    stored_state = read_candidate_state(repository, artifacts, candidate["candidate_id"])
+    state = stored_state.artifact.boundary_representation()
+    chain = read_revision_chain(repository, artifacts, candidate["candidate_id"])
+    if not chain:
+        raise ScientificReadError("EVIDENCE_STATE_MISSING", "dossier requires accepted evidence")
     revisions: list[dict[str, Any]] = []
-    for row in repository.evidence_revisions(candidate["candidate_id"]):
-        metadata = repository.artifact(row["artifact_id"])
-        payload = {}
-        if metadata is not None:
-            try:
-                payload = json.loads(artifacts.read(metadata["relative_path"]))
-            except (OSError, ValueError):
-                payload = {}
-        revisions.append({**row, "revision": payload})
+    for revision in chain:
+        row = repository.get_evidence_state(revision.evidence_state_id)
+        revisions.append({**row, "revision": revision.artifact.boundary_representation()})
     executions = repository.followup_executions_for(candidate["candidate_id"])
     hypothesis_rows = repository.page_child("hypotheses", run_id, 100, None,
                                             {"candidate_id": candidate["candidate_id"]})["items"]
-    hypotheses = [row["hypothesis"] for row in hypothesis_rows]
+    hypotheses = [read_hypothesis_record(
+        repository, artifacts, row["hypothesis_id"], candidate_id=candidate["candidate_id"],
+        allowed_action_ids=frozenset(ACTION_REGISTRY),
+    ).artifact.boundary_representation() for row in hypothesis_rows]
     hypothesis_ids = {row["hypothesis_id"] for row in hypothesis_rows}
     hypothesis_evaluations = [
-        row["vector"] for row in repository.page_child(
+        read_evaluation_record(repository, artifacts, row["evaluation_id"]).artifact.boundary_representation()
+        for row in repository.page_child(
             "jev_evaluations", run_id, 100, None,
             {"purpose": "HYPOTHESIS", "candidate_id": candidate["candidate_id"]},
         )["items"]
         if row["input_ref_id"] in hypothesis_ids
     ]
     deep_evaluations = [
-        row["vector"] for row in repository.page_child(
+        read_evaluation_record(repository, artifacts, row["evaluation_id"]).artifact.boundary_representation()
+        for row in repository.page_child(
             "jev_evaluations", run_id, 100, None,
             {"purpose": "DEEP", "candidate_id": candidate["candidate_id"]},
         )["items"]
     ]
     wide_evaluations = [
-        row["vector"] for row in repository.page_child("jev_evaluations", run_id, 100, None,
+        read_evaluation_record(repository, artifacts, row["evaluation_id"]).artifact.boundary_representation()
+        for row in repository.page_child("jev_evaluations", run_id, 100, None,
                                                       {"purpose": "WIDE"})["items"]
         if row["input_ref_id"] == candidate.get("source_state_id")
     ]
