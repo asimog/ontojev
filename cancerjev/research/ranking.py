@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
+
+from cancerjev.domain.state_summary import StateSummary
+from cancerjev.jev.contracts import EvaluationRecord
 
 BASELINE_POLICY_VERSION = "baseline-wide-v2"
 JEV_POLICY_VERSION = "wide-policy-v2"
@@ -18,6 +22,29 @@ _ADMISSION_THRESHOLDS = {
     "evidence_quality_adequate_min": ADMISSION_MIN_QUALITY,
     "signal_explained_by_coverage_max": ADMISSION_MAX_CONFOUND,
 }
+
+
+@dataclass(frozen=True)
+class RankingState:
+    state_id: str
+    state_hash: str
+    gene_symbol: str
+    affected_cases: float | int | None
+    coverage_imbalance: bool
+    completeness: str
+    expression_availability: str
+
+
+def _ranking_state(state: StateSummary | dict[str, Any]) -> RankingState:
+    if isinstance(state, StateSummary):
+        project = state.projects[0] if len(state.projects) == 1 else None
+        affected = project.affected_cases if project and state.project_id in (None, project.project_id) else None
+        return RankingState(state.state_id, state.scientific_hash, state.gene_symbol, affected,
+                            state.coverage_imbalance, state.completeness, state.expression_availability)
+    mutation, scope = _project_result(state)
+    return RankingState(state["state_id"], state["state_hash"], state["entity"]["gene_symbol"],
+                        _metric_value(mutation.get("affected_case_count")), scope["coverage_imbalance"],
+                        state["quality"]["completeness"], state["expression"]["availability"])
 
 
 def _metric_value(metric: dict[str, Any] | None) -> float | None:
@@ -41,19 +68,18 @@ def _project_result(state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, An
     return mutation, state["cross_project"]
 
 
-def baseline_ranking(states: list[dict[str, Any]]) -> dict[str, Any]:
+def baseline_ranking(states: list[StateSummary] | list[dict[str, Any]]) -> dict[str, Any]:
     entries = []
-    for state in states:
-        mutation, scope = _project_result(state)
-        affected = mutation.get("affected_case_count")
+    for raw_state in states:
+        state = _ranking_state(raw_state)
         entries.append({
-            "state_id": state["state_id"],
-            "state_hash": state["state_hash"],
-            "gene_symbol": state["entity"]["gene_symbol"],
+            "state_id": state.state_id,
+            "state_hash": state.state_hash,
+            "gene_symbol": state.gene_symbol,
             "dimensions": {
-                "affected_cases": _metric_value(affected),
-                "mutation_observed": bool(affected and affected.get("availability") == "OBSERVED"),
-                "coverage_imbalance": scope["coverage_imbalance"],
+                "affected_cases": state.affected_cases,
+                "mutation_observed": state.affected_cases is not None,
+                "coverage_imbalance": state.coverage_imbalance,
             },
         })
     entries.sort(key=lambda entry: (
@@ -75,32 +101,35 @@ def baseline_ranking(states: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _applicable(evaluation: dict[str, Any], question_id: str) -> bool:
+def _applicable(evaluation: EvaluationRecord | dict[str, Any], question_id: str) -> bool:
+    if isinstance(evaluation, EvaluationRecord):
+        return evaluation.is_applicable(question_id)
     return evaluation.get("applicability", {}).get(question_id, {}).get("applicable") is True
 
 
-def _eligibility_exclusions(state: dict[str, Any]) -> list[str]:
-    mutation, _ = _project_result(state)
+def _eligibility_exclusions(state: RankingState) -> list[str]:
     reasons = []
-    if state["quality"]["completeness"] != "COMPLETE":
+    if state.completeness != "COMPLETE":
         reasons.append("INCOMPLETE_ACQUISITION")
-    if not mutation.get("affected_case_count") or mutation["affected_case_count"].get("availability") != "OBSERVED":
+    if state.affected_cases is None:
         reasons.append("MUTATION_NOT_OBSERVED")
-    if state["expression"]["availability"] not in {"OBSERVED", "PARTIAL"}:
+    if state.expression_availability not in {"OBSERVED", "PARTIAL"}:
         reasons.append("EXPRESSION_NOT_OBSERVED")
     return reasons
 
 
-def _answer_probability(evaluation: dict[str, Any], question_id: str) -> float | None:
+def _answer_probability(evaluation: EvaluationRecord | dict[str, Any], question_id: str) -> float | None:
     if not _applicable(evaluation, question_id):
         return None
+    if isinstance(evaluation, EvaluationRecord):
+        return evaluation.answers.probability(question_id) if evaluation.answers is not None else None
     answer = evaluation.get("answers", {}).get(question_id)
     if not answer or answer.get("kind") != "noul":
         return None
     return answer["probability_yes"]
 
 
-def _admission_exclusions(state: dict[str, Any], evaluation: dict[str, Any]) -> list[str]:
+def _admission_exclusions(state: RankingState, evaluation: EvaluationRecord | dict[str, Any]) -> list[str]:
     reasons = _eligibility_exclusions(state)
     if reasons:
         return reasons
@@ -126,7 +155,9 @@ def _admission_exclusions(state: dict[str, Any], evaluation: dict[str, Any]) -> 
     return reasons
 
 
-def _raw_dimensions(evaluation: dict[str, Any]) -> dict[str, Any]:
+def _raw_dimensions(evaluation: EvaluationRecord | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(evaluation, EvaluationRecord):
+        evaluation = evaluation.boundary_representation()  # Ranking artifact presentation.
     answers = evaluation.get("answers", {})
     dimensions = {
         question_id: answer.get("probability_yes")
@@ -162,28 +193,33 @@ def _ascending_probability(entry: dict[str, Any], question_id: str) -> float:
     return probability if probability is not None else 1.0
 
 
-def jev_ranking(states: list[dict[str, Any]], evaluations: list[dict[str, Any]]) -> dict[str, Any]:
-    by_state = {evaluation["input_ref_id"]: evaluation for evaluation in evaluations}
+def jev_ranking(states: list[StateSummary] | list[dict[str, Any]],
+                evaluations: list[EvaluationRecord] | list[dict[str, Any]]) -> dict[str, Any]:
+    by_state = {(evaluation.input_ref_id if isinstance(evaluation, EvaluationRecord) else evaluation["input_ref_id"]):
+                evaluation for evaluation in evaluations}
     entries = []
-    for state in states:
-        evaluation = by_state.get(state["state_id"])
+    for raw_state in states:
+        state = _ranking_state(raw_state)
+        evaluation = by_state.get(state.state_id)
+        error = (evaluation.error_code if isinstance(evaluation, EvaluationRecord)
+                 else evaluation.get("error") if evaluation else None)
         exclusion_reasons = _eligibility_exclusions(state)
         if evaluation is None:
             exclusion_reasons.append("EVALUATION_MISSING")
-        elif evaluation.get("error") is not None:
+        elif error is not None:
             exclusion_reasons.append("EVALUATION_FAILED")
         else:
             exclusion_reasons = _admission_exclusions(state, evaluation)
-        dimensions = _raw_dimensions(evaluation) if evaluation and evaluation.get("error") is None else {}
-        mutation, _ = _project_result(state)
+        dimensions = _raw_dimensions(evaluation) if evaluation and error is None else {}
         entries.append({
-            "state_id": state["state_id"],
-            "state_hash": state["state_hash"],
-            "gene_symbol": state["entity"]["gene_symbol"],
-            "evaluation_id": evaluation.get("evaluation_id") if evaluation else None,
+            "state_id": state.state_id,
+            "state_hash": state.state_hash,
+            "gene_symbol": state.gene_symbol,
+            "evaluation_id": (evaluation.evaluation_id if isinstance(evaluation, EvaluationRecord)
+                              else evaluation.get("evaluation_id") if evaluation else None),
             "dimensions": {
                 **dimensions,
-                "affected_cases": _metric_value(mutation.get("affected_case_count")),
+                "affected_cases": state.affected_cases,
             },
             "qualified": not exclusion_reasons,
             "excluded_reason": "; ".join(exclusion_reasons) or None,

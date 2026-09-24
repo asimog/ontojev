@@ -16,7 +16,6 @@ from cancerjev.domain.identity import (
 from cancerjev.domain.legacy_codecs import LegacyArtifact, _metric
 from cancerjev.domain.measurements import ContractError
 from cancerjev.research.fixtures import evidence, statistical_states
-from cancerjev.science.methods import ScienceError
 from tests.integration.test_deep_slice import _dispatched_slice
 from tests.science.test_methods import _build, _frame
 
@@ -57,11 +56,17 @@ def test_live_v2_retains_legacy_units_statuses_and_identity(expression):
         assert any(m.availability == "NOT_OBSERVED" and m.reason == "VALUES_NOT_ACQUIRED" for m in result.metrics)
 
 
-def test_legacy_missing_availability_failure_is_not_silently_repaired():
-    # Pre-existing builder defect: sum(empty) becomes zero while status is
-    # NOT_OBSERVED. Stage 3 must correct composition; Stage 1 must not publish it.
-    with pytest.raises(ScienceError, match="cases_with_expression_total"):
-        _build([_frame("TCGA-LUAD", expression=False)])
+def test_missing_availability_is_unavailable_and_false_zero_artifacts_still_fail():
+    # Stage 3 fixes the recorded Stage 1 composition failure, not the parser guard.
+    state = _build([_frame("TCGA-LUAD", expression=False)])
+    measurement = state["expression"]["coverage"]["cases_with_expression"]
+    assert measurement["availability"] == "NOT_OBSERVED"
+    assert measurement["value"] is None
+    assert read_state(canonical_json(state)).scientific_hash == state["state_hash"]
+    measurement["value"] = 0
+    state["state_hash"] = content_hash(statistical_state_identity_payload(state))
+    with pytest.raises(ContractError, match="unavailable metric has a value"):
+        read_state(canonical_json(state))
 
 
 def test_legacy_reader_cannot_retain_a_mutable_input_buffer():

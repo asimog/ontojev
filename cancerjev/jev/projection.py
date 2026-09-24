@@ -12,6 +12,7 @@ import hashlib
 from typing import Any
 
 from cancerjev.domain.events import canonical_json
+from cancerjev.domain.state_summary import ProjectSummary, StateSummary
 
 PROJECTION_VERSION = "jev-state-projection-v2"
 EVIDENCE_PROJECTION_VERSION = "jev-evidence-projection-v1"
@@ -67,7 +68,7 @@ def _metric_value(metric: dict[str, Any] | None) -> Any:
     return metric.get("value")
 
 
-def _limitations(state: dict[str, Any]) -> list[str]:
+def _limitations(completeness: str) -> list[str]:
     limitations = [
         "Mutation counts are provider-defined case counts with no matched denominator; a project with no "
         "observation is not a biological negative.",
@@ -78,12 +79,14 @@ def _limitations(state: dict[str, Any]) -> list[str]:
         "The examined gene set is selected from the provider top-mutated ranking and is not an unbiased "
         "genome-wide scan.",
     ]
-    if state["quality"]["completeness"] != "COMPLETE":
+    if completeness != "COMPLETE":
         limitations.append("Some provider aggregations were partial; totals may be incomplete.")
     return limitations
 
 
-def build_projection(state: dict[str, Any]) -> dict[str, Any]:
+def build_projection(state: dict[str, Any] | StateSummary) -> dict[str, Any]:
+    if isinstance(state, StateSummary):
+        return build_summary_projection(state)
     project_ids = state["scope"]["projects"]
     if len(project_ids) != 1:
         raise ProjectionError(
@@ -111,46 +114,73 @@ def build_projection(state: dict[str, Any]) -> dict[str, Any]:
     for warning in state["quality"]["api_warnings"]:
         if warning not in missingness:
             missingness.append(warning)
+    summary = StateSummary(
+        state["state_id"], state["state_hash"], state["entity"]["gene_id"], state["entity"]["gene_symbol"],
+        state["entity"]["biotype"], state["entity"]["is_cancer_gene_census"], project_id,
+        state["scope"].get("cohort"), state["scope"].get("domain"),
+        (ProjectSummary(project_id, population.get("examined_n"), _metric_value(affected),
+                        _metric_value(mutation.get("project_case_with_ssm")), _metric_value(expression_median),
+                        _metric_value(local.get("sample_sd")), _metric_value(local.get("n_finite")),
+                        _metric_value(local.get("n_missing")), _metric_value(provider.get("median")),
+                        _metric_value(provider.get("stddev"))),),
+        tuple(state["scope"]["modalities"]), tuple(state["scope"]["workflows"]),
+        state["scope"]["examined_case_frame"], state["tested_context"]["selection_bias"],
+        state["mutation"]["coverage"]["coverage_complete"], state["expression"]["availability"],
+        state["quality"]["completeness"], state["quality"]["scientific_sufficiency"],
+        state["cross_project"]["coverage_imbalance"], tuple(missingness), (),
+    )
+    return build_summary_projection(summary)
+
+
+def build_summary_projection(state: StateSummary) -> dict[str, Any]:
+    if len(state.projects) != 1:
+        raise ProjectionError("MULTI_COHORT_STATE", "single-cohort projection requires exactly one project")
+    project = state.projects[0]
+    project_id = state.project_id or project.project_id
+    if project_id != project.project_id:
+        raise ProjectionError("COHORT_PROJECT_MISMATCH", "scope project_id does not match its project list")
+    missingness = list(state.missingness)
+    for warning in state.warnings:
+        if warning not in missingness:
+            missingness.append(warning)
     projection = {
         "projection_version": PROJECTION_VERSION,
         "entity": {
-            "gene_id": state["entity"]["gene_id"],
-            "symbol": state["entity"]["gene_symbol"],
-            "biotype": state["entity"]["biotype"],
-            "cancer_census": state["entity"]["is_cancer_gene_census"],
+            "gene_id": state.gene_id,
+            "symbol": state.gene_symbol,
+            "biotype": state.biotype,
+            "cancer_census": state.cancer_census,
         },
         "scope": {
-            "cohort": state["scope"].get("cohort") or project_id,
-            "domain": state["scope"].get("domain"),
-            "projects": list(state["scope"]["projects"]),
-            "modalities": list(state["scope"]["modalities"]),
-            "expression_unit": expression.get("unit"),
-            "workflow": ",".join(state["scope"]["workflows"]) if state["scope"]["workflows"] else None,
-            "examined_case_frame": state["scope"]["examined_case_frame"],
-            "selection_bias": state["tested_context"]["selection_bias"],
+            "cohort": state.cohort or project_id,
+            "domain": state.domain,
+            "projects": [p.project_id for p in state.projects],
+            "modalities": list(state.modalities),
+            "expression_unit": "log2(UQFPKM+1)",
+            "workflow": ",".join(state.workflows) if state.workflows else None,
+            "examined_case_frame": state.examined_case_frame,
+            "selection_bias": state.selection_bias,
         },
         "cohort": {
             "project_id": project_id,
-            "examined_cases": population.get("examined_n"),
-            "affected_cases": _metric_value(affected),
-            "mutation_observed": bool(affected and affected.get("availability") == "OBSERVED"),
-            "mutation_coverage_complete": state["mutation"]["coverage"]["coverage_complete"],
-            "ssm_coverage_cases": _metric_value(mutation.get("project_case_with_ssm")),
-            "expression_observed": bool(
-                expression_median and expression_median.get("availability") == "OBSERVED"
-            ),
-            "expression_median": _metric_value(expression_median),
-            "expression_sample_sd": _metric_value(local.get("sample_sd")),
-            "expression_n_finite": _metric_value(local.get("n_finite")),
-            "expression_n_missing": _metric_value(local.get("n_missing")),
-            "expression_provider_median": _metric_value(provider.get("median")),
-            "expression_provider_stddev": _metric_value(provider.get("stddev")),
-            "coverage_imbalance": state["cross_project"]["coverage_imbalance"],
-            "completeness": state["quality"]["completeness"],
-            "scientific_sufficiency": state["quality"]["scientific_sufficiency"],
+            "examined_cases": project.examined_cases,
+            "affected_cases": project.affected_cases,
+            "mutation_observed": project.affected_cases is not None,
+            "mutation_coverage_complete": state.mutation_coverage_complete,
+            "ssm_coverage_cases": project.ssm_coverage_cases,
+            "expression_observed": project.expression_median is not None,
+            "expression_median": project.expression_median,
+            "expression_sample_sd": project.expression_sample_sd,
+            "expression_n_finite": project.expression_n_finite,
+            "expression_n_missing": project.expression_n_missing,
+            "expression_provider_median": project.provider_median,
+            "expression_provider_stddev": project.provider_stddev,
+            "coverage_imbalance": state.coverage_imbalance,
+            "completeness": state.completeness,
+            "scientific_sufficiency": state.scientific_sufficiency,
         },
         "missingness": missingness,
-        "limitations": _limitations(state),
+        "limitations": _limitations(state.completeness),
         "eligible_followups": [],
     }
     encoded = canonical_json(projection)

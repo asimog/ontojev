@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import math
-import statistics
 from dataclasses import dataclass
 from typing import Any
 
 from cancerjev.domain.events import canonical_json
 from cancerjev.domain.identity import content_hash, statistical_state_identity_payload
+from cancerjev.domain.state_summary import ComputedStatisticalState, ProjectSummary, StateSummary
 from cancerjev.gdc.parsers import (
     CaseRecord,
     DiscoveryHit,
@@ -27,6 +27,17 @@ from cancerjev.gdc.parsers import (
     ProjectRecord,
     ProviderSelection,
 )
+from cancerjev.science.errors import ScienceError as ScienceError
+from cancerjev.science.expression import (
+    Log2Summary as Log2Summary,
+)
+from cancerjev.science.expression import (
+    expression_log2_summary as expression_log2_summary,
+)
+from cancerjev.science.expression import (
+    expression_observation,
+)
+from cancerjev.science.mutation import mutation_observation
 
 STATE_SCHEMA_VERSION = 2
 EXPRESSION_UNIT = "log2(UQFPKM+1)"
@@ -65,13 +76,6 @@ CROSS_PROJECT_COMPARABILITY = {
     "status": "NOT_APPLICABLE",
     "reason": "A single cohort is examined; no cross-project comparison is made.",
 }
-
-
-class ScienceError(Exception):
-    def __init__(self, code: str, detail: str) -> None:
-        super().__init__(f"{code}: {detail}")
-        self.code = code
-        self.detail = detail
 
 
 @dataclass(frozen=True)
@@ -240,61 +244,28 @@ def metric(name: str, value: float | int | None, unit: str, *, availability: str
 
 
 @dataclass(frozen=True)
-class Log2Summary:
-    median: float | None
-    sample_sd: float | None
-    minimum: float | None
-    maximum: float | None
-    n_finite: int
-    n_missing: int
-    n_returned: int
-    availability: str
+class ProjectEvidence:
+    project_id: str
+    mutation_observed: bool
+    expression_observed: bool
+    examined_cases: int
+    cases_with_expression: int | None
+    missing_measurements: int | None
 
 
-def expression_log2_summary(row: dict[str, float | None], *, missing_case_columns: int = 0) -> Log2Summary:
-    """Summarize one gene row over the examined case set.
-
-    ``row`` holds only the case columns the provider returned. ``missing_case_columns``
-    counts examined cases whose column was not returned at all; those remain visible in
-    ``n_missing`` so a fully valid returned subset can never report zero missingness.
-    """
-    finite: list[float] = []
-    missing_cells = 0
-    for value in row.values():
-        if value is None:
-            missing_cells += 1
-            continue
-        if value < 0:
-            raise ScienceError("NEGATIVE_EXPRESSION", f"UQFPKM must be nonnegative, saw {value!r}")
-        finite.append(math.log2(value + 1.0))
-    missing = missing_cells + max(0, missing_case_columns)
-    if not finite:
-        return Log2Summary(None, None, None, None, 0, missing, len(row), "INSUFFICIENT")
-    median = statistics.median(finite)
-    sample_sd = statistics.stdev(finite) if len(finite) >= 2 else None
-    if len(finite) < 2:
-        availability = "INSUFFICIENT"
-    elif missing:
-        availability = "PARTIAL"
-    else:
-        availability = "OBSERVED"
-    return Log2Summary(median, sample_sd, min(finite), max(finite), len(finite), missing,
-                       len(row), availability)
-
-
-def scientific_sufficiency(rows: list[dict[str, Any]], acquisition_complete: bool) -> str:
+def scientific_sufficiency(rows: list[ProjectEvidence], acquisition_complete: bool) -> str:
     """See SCIENTIFIC_SUFFICIENCY_DEFINITION. Acquisition is a separate property."""
     if not rows:
         return "INSUFFICIENT"
-    if not any(row["mutation_observed"] or row["expression_observed"] for row in rows):
+    if not any(row.mutation_observed or row.expression_observed for row in rows):
         return "INSUFFICIENT"
     if not acquisition_complete:
         return "PARTIAL"
-    if any((row["missing_measurements"] or 0) > 0 for row in rows):
+    if any(row.missing_measurements is not None and row.missing_measurements > 0 for row in rows):
         return "PARTIAL"
-    if not all(row["mutation_observed"] for row in rows):
+    if not all(row.mutation_observed for row in rows):
         return "PARTIAL"
-    if not all(row["expression_observed"] for row in rows):
+    if not all(row.expression_observed for row in rows):
         return "PARTIAL"
     return "SUFFICIENT"
 
@@ -309,16 +280,16 @@ def project_dominance(counts: dict[str, int]) -> tuple[float | None, str]:
     return max(observed.values()) / total, "OBSERVED"
 
 
-def coverage_imbalance(rows: list[dict[str, Any]]) -> bool:
+def coverage_imbalance(rows: list[ProjectEvidence]) -> bool:
     """Deterministic flag: see COVERAGE_IMBALANCE_DEFINITION."""
-    mutation_observed = [row["mutation_observed"] for row in rows]
+    mutation_observed = [row.mutation_observed for row in rows]
     if any(mutation_observed) and not all(mutation_observed):
         return True
     fractions = [
-        row["cases_with_expression"] / row["examined_cases"]
-        for row in rows if row["examined_cases"] and row["cases_with_expression"] is not None
+        row.cases_with_expression / row.examined_cases
+        for row in rows if row.examined_cases and row.cases_with_expression is not None
     ]
-    if any(row["cases_with_expression"] == 0 for row in rows if row["cases_with_expression"] is not None):
+    if any(row.cases_with_expression == 0 for row in rows if row.cases_with_expression is not None):
         return True
     if fractions and (max(fractions) - min(fractions)) > 0.2:
         return True
@@ -359,7 +330,7 @@ def _source_projection(source: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_statistical_state(
+def compute_statistical_state(
     *,
     run_id: str,
     state_id: str,
@@ -372,13 +343,15 @@ def build_statistical_state(
     warnings: list[str],
     scope_meta: dict[str, Any],
     discovery_meta: dict[str, Any],
-) -> dict[str, Any]:
+) -> ComputedStatisticalState:
     ordered = sorted(frames, key=lambda frame: frame.project_id)
     populations: list[dict[str, Any]] = []
     mutation_results: list[dict[str, Any]] = []
     expression_results: list[dict[str, Any]] = []
-    imbalance_rows: list[dict[str, Any]] = []
-    sufficiency_rows: list[dict[str, Any]] = []
+    evidence_rows: list[ProjectEvidence] = []
+    medians: list[float] = []
+    projects_with_expression = 0
+    project_summaries: list[ProjectSummary] = []
     missingness: list[str] = []
     observed_affected: dict[str, int] = {}
 
@@ -409,20 +382,11 @@ def build_statistical_state(
             ),
         })
 
-        project_counts = counts.projects.get(frame.project_id)
-        affected: int | None = None
-        mutation_availability = "NOT_OBSERVED"
-        mutation_reason = "PROJECT_NOT_IN_AGGREGATION"
-        if project_counts is not None:
-            if gene.gene_id in project_counts:
-                affected = project_counts[gene.gene_id]
-                mutation_availability = "OBSERVED"
-                mutation_reason = None
-                observed_affected[frame.project_id] = affected
-            else:
-                mutation_reason = "GENE_BUCKET_ABSENT"
-        if not counts.complete and mutation_availability != "OBSERVED":
-            mutation_availability = "PARTIAL"
+        mutation = mutation_observation(frame.project_id, gene.gene_id, counts, coverage)
+        affected = mutation.affected_cases
+        mutation_availability, mutation_reason = mutation.availability, mutation.reason
+        if affected is not None:
+            observed_affected[frame.project_id] = affected
         discovery = frame.discovery_hits.get(gene.gene_id)
         mutation_results.append({
             "project_id": frame.project_id,
@@ -449,71 +413,47 @@ def build_statistical_state(
             ),
         })
 
-        cases_with_expression: int | None = None
-        if frame.expression_coverage is not None:
-            cases_with_expression = sum(
-                1 for case in frame.cases if frame.expression_coverage.cases.get(case.case_id) is True
-            )
-            for case in frame.cases:
-                if frame.expression_coverage.cases.get(case.case_id) is None:
-                    missingness.append(f"{frame.project_id}: case {case.case_id} absent from expression availability")
-
+        expression = expression_observation(
+            project_id=frame.project_id, gene_id=gene.gene_id,
+            case_ids=tuple(case.case_id for case in frame.cases), coverage=frame.expression_coverage,
+            values=frame.expression_values, provider=frame.provider_selection,
+            provider_unavailable_reason=frame.provider_summary_unavailable_reason,
+        )
+        missingness.extend(expression.missingness)
+        cases_with_expression = expression.cases_with_expression
+        returned_case_columns = expression.returned_case_columns
+        valid_measurements = expression.valid_measurements
+        missing_measurements = expression.missing_measurements
+        missing_case_columns = list(expression.missing_case_ids)
         local_record: dict[str, Any] | None = None
-        local_availability = "NOT_ACQUIRED"
-        returned_case_columns: int | None = None
-        valid_measurements: int | None = None
-        missing_measurements: int | None = None
-        if frame.expression_values is not None:
-            missing_case_columns = list(frame.expression_values.missing_case_ids)
-            row = frame.expression_values.values.get(gene.gene_id)
-            if row is None:
-                local_availability = "NOT_OBSERVED"
-                returned_case_columns = 0
-                valid_measurements = 0
-                missing_measurements = examined
-                missingness.append(f"{frame.project_id}: gene {gene.gene_id} absent from expression values")
-            else:
-                summary = expression_log2_summary(row, missing_case_columns=len(missing_case_columns))
-                local_availability = summary.availability
-                returned_case_columns = summary.n_returned
-                valid_measurements = summary.n_finite
-                missing_measurements = summary.n_missing
-                local_record = {
-                    "median": metric("expression_log2_median", summary.median, EXPRESSION_UNIT,
-                                     availability="OBSERVED" if summary.median is not None else "INSUFFICIENT",
-                                     reason_code=None if summary.median is not None else "NO_FINITE_VALUES"),
-                    "sample_sd": metric("expression_log2_sample_sd", summary.sample_sd, EXPRESSION_UNIT,
-                                        availability="OBSERVED" if summary.sample_sd is not None else "INSUFFICIENT",
-                                        reason_code=None if summary.sample_sd is not None else "INSUFFICIENT_N"),
-                    "minimum": metric("expression_log2_minimum", summary.minimum, EXPRESSION_UNIT,
-                                      availability="OBSERVED" if summary.minimum is not None else "INSUFFICIENT"),
-                    "maximum": metric("expression_log2_maximum", summary.maximum, EXPRESSION_UNIT,
-                                      availability="OBSERVED" if summary.maximum is not None else "INSUFFICIENT"),
-                    "n_finite": metric("expression_n_finite", summary.n_finite, "count"),
-                    "n_missing": metric("expression_n_missing", summary.n_missing, "count"),
-                    "n_returned": metric("expression_n_returned", summary.n_returned, "count"),
-                    "n_missing_case_columns": metric("expression_n_missing_case_columns",
-                                                     len(missing_case_columns), "count"),
-                    "missing_case_ids": missing_case_columns,
-                    "method_id": "EXPRESSION_LOG2_SUMMARY_V1",
-                    "unit": EXPRESSION_UNIT,
-                    "transformation": EXPRESSION_TRANSFORMATION,
-                }
-                if summary.n_missing:
-                    absent_columns = len(missing_case_columns)
-                    missingness.append(
-                        f"{frame.project_id}: {summary.n_missing} of {examined} examined cases have no "
-                        f"expression value ({absent_columns} case column(s) not returned by the provider)"
-                    )
+        summary = expression.local
+        if summary is not None:
+            if summary.median is not None:
+                medians.append(summary.median)
+                projects_with_expression += 1
+            local_record = {
+                "median": metric("expression_log2_median", summary.median, EXPRESSION_UNIT,
+                                 availability="OBSERVED" if summary.median is not None else "INSUFFICIENT",
+                                 reason_code=None if summary.median is not None else "NO_FINITE_VALUES"),
+                "sample_sd": metric("expression_log2_sample_sd", summary.sample_sd, EXPRESSION_UNIT,
+                                    availability="OBSERVED" if summary.sample_sd is not None else "INSUFFICIENT",
+                                    reason_code=None if summary.sample_sd is not None else "INSUFFICIENT_N"),
+                "minimum": metric("expression_log2_minimum", summary.minimum, EXPRESSION_UNIT,
+                                  availability="OBSERVED" if summary.minimum is not None else "INSUFFICIENT"),
+                "maximum": metric("expression_log2_maximum", summary.maximum, EXPRESSION_UNIT,
+                                  availability="OBSERVED" if summary.maximum is not None else "INSUFFICIENT"),
+                "n_finite": metric("expression_n_finite", summary.n_finite, "count"),
+                "n_missing": metric("expression_n_missing", summary.n_missing, "count"),
+                "n_returned": metric("expression_n_returned", summary.n_returned, "count"),
+                "n_missing_case_columns": metric("expression_n_missing_case_columns",
+                                                 len(missing_case_columns), "count"),
+                "missing_case_ids": missing_case_columns,
+                "method_id": "EXPRESSION_LOG2_SUMMARY_V1",
+                "unit": EXPRESSION_UNIT,
+                "transformation": EXPRESSION_TRANSFORMATION,
+            }
         provider_record: dict[str, Any] | None = None
-        provider_gene = None
-        if frame.provider_selection is not None:
-            provider_gene = frame.provider_selection.genes.get(gene.gene_id)
-            if provider_gene is None:
-                missingness.append(
-                    f"{frame.project_id}: gene {gene.gene_id} absent from provider gene selection "
-                    "(below provider median threshold or not returned)"
-                )
+        provider_gene = expression.provider
         if provider_gene is not None:
             provider_record = {
                 "median": metric("provider_log2_uqfpkm_median", provider_gene.median, EXPRESSION_UNIT,
@@ -523,9 +463,13 @@ def build_statistical_state(
                 "source": "GENE_SELECTION",
                 "estimator_note": "INFERRED_POPULATION_SD_UNVERIFIED",
             }
-        expression_availability = local_availability
-        if local_availability in {"NOT_ACQUIRED", "NOT_OBSERVED"} and provider_record is not None:
-            expression_availability = "PARTIAL"
+        expression_availability = expression.availability
+        project_summaries.append(ProjectSummary(
+            frame.project_id, examined, mutation.affected_cases, mutation.ssm_coverage_cases,
+            summary.median if summary else None, summary.sample_sd if summary else None,
+            summary.n_finite if summary else None, summary.n_missing if summary else None,
+            provider_gene.median if provider_gene else None, provider_gene.stddev if provider_gene else None,
+        ))
         expression_results.append({
             "project_id": frame.project_id,
             "population_id": population_id,
@@ -566,32 +510,17 @@ def build_statistical_state(
                 ),
             },
         })
-        imbalance_rows.append({
-            "project_id": frame.project_id,
-            "mutation_observed": mutation_availability == "OBSERVED",
-            "examined_cases": examined,
-            "cases_with_expression": cases_with_expression,
-        })
-        sufficiency_rows.append({
-            "project_id": frame.project_id,
-            "mutation_observed": mutation_availability == "OBSERVED",
-            "expression_observed": expression_availability == "OBSERVED",
-            "missing_measurements": missing_measurements,
-        })
+        evidence_rows.append(ProjectEvidence(
+            frame.project_id, mutation_availability == "OBSERVED", expression_availability == "OBSERVED",
+            examined, cases_with_expression, missing_measurements,
+        ))
 
     dominance, dominance_availability = project_dominance(observed_affected)
     acquisition_complete = counts.complete and coverage.complete
-    sufficiency = scientific_sufficiency(sufficiency_rows, acquisition_complete)
-    medians = [
-        result["local"]["median"]["value"]
-        for result in expression_results
-        if result["local"] is not None and result["local"]["median"]["value"] is not None
-    ]
-    projects_with_mutation = sum(1 for result in mutation_results
-                                 if result["affected_case_count"]["availability"] == "OBSERVED")
-    projects_with_expression = sum(1 for result in expression_results
-                                   if result["local"] is not None
-                                   and result["local"]["median"]["availability"] == "OBSERVED")
+    sufficiency = scientific_sufficiency(evidence_rows, acquisition_complete)
+    projects_with_mutation = len(observed_affected)
+    expression_counts = [row.cases_with_expression for row in evidence_rows
+                         if row.cases_with_expression is not None]
     if not counts.complete:
         warnings = list(warnings) + [f"mutation counts partial: {', '.join(counts.partial_reasons)}"]
     if not coverage.complete:
@@ -678,13 +607,11 @@ def build_statistical_state(
             "coverage": {
                 "cases_with_expression": metric(
                     "cases_with_expression_total",
-                    sum(row["cases_with_expression"] for row in imbalance_rows
-                        if row["cases_with_expression"] is not None),
+                    sum(expression_counts) if expression_counts else None,
                     "cases",
-                    availability="OBSERVED" if any(row["cases_with_expression"] is not None
-                                                   for row in imbalance_rows) else "NOT_OBSERVED",
+                    availability="OBSERVED" if expression_counts else "NOT_OBSERVED",
                 ),
-                "examined_cases": metric("examined_cases_total", sum(row["examined_cases"] for row in imbalance_rows), "cases"),
+                "examined_cases": metric("examined_cases_total", sum(row.examined_cases for row in evidence_rows), "cases"),
             },
         },
         "cross_project": {
@@ -707,7 +634,7 @@ def build_statistical_state(
                 "expression_median_max", max(medians) if medians else None, EXPRESSION_UNIT,
                 availability="OBSERVED" if medians else "NOT_OBSERVED",
             ),
-            "coverage_imbalance": coverage_imbalance(imbalance_rows),
+            "coverage_imbalance": coverage_imbalance(evidence_rows),
             "coverage_imbalance_definition": COVERAGE_IMBALANCE_DEFINITION,
             "dominance_definition": DOMINANCE_SHARE_DEFINITION,
             "direction": "NOT_EXAMINED",
@@ -749,4 +676,25 @@ def build_statistical_state(
         },
     }
     state["state_hash"] = content_hash(statistical_state_identity_payload(state))
-    return state
+    typed = StateSummary(
+        state_id, state["state_hash"], gene.gene_id, gene.symbol, gene.biotype, gene.is_cancer_gene_census,
+        scope_meta.get("project_id"), scope_meta.get("cohort"), scope_meta.get("domain"),
+        tuple(project_summaries), ("mutation_counts", "expression_summary"),
+        tuple(sorted({workflow for frame in ordered for workflow in frame.workflows})),
+        scope_meta.get("examined_case_frame", "ALL_CASES_PAGINATED"),
+        state["tested_context"]["selection_bias"], coverage.complete,
+        state["expression"]["availability"], "COMPLETE" if acquisition_complete else "PARTIAL",
+        sufficiency, coverage_imbalance(evidence_rows), tuple(missingness), tuple(warnings),
+    )
+    return ComputedStatisticalState(typed, canonical_json(state))
+
+
+def build_statistical_state(
+    *, run_id: str, state_id: str, created_at: str, gene: GeneRecord, frames: list[ProjectFrame],
+    counts: GeneCaseCounts, coverage: ProjectCoverage, sources: list[dict[str, Any]],
+    warnings: list[str], scope_meta: dict[str, Any], discovery_meta: dict[str, Any],
+) -> dict[str, Any]:
+    """Historical v2 serialization boundary; runtime keeps the typed computation result."""
+    return compute_statistical_state(run_id=run_id, state_id=state_id, created_at=created_at,
+        gene=gene, frames=frames, counts=counts, coverage=coverage, sources=sources,
+        warnings=warnings, scope_meta=scope_meta, discovery_meta=discovery_meta).boundary_representation()

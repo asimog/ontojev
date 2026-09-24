@@ -18,8 +18,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from cancerjev.domain.actions import CheckOutcome, ComputedEvidenceRevision, IntegrityCheck
 from cancerjev.domain.events import canonical_json
 from cancerjev.domain.identity import content_hash, statistical_state_identity_payload
+from cancerjev.domain.legacy_codecs import LegacyArtifact
 
 CHECK_VERIFIED = "VERIFIED"
 CHECK_CONTRADICTED = "CONTRADICTED"
@@ -145,19 +147,23 @@ class ActionEligibility:
 class ActionOutcome:
     action_id: str
     status: str
-    checks: tuple[dict[str, Any], ...]
+    checks: tuple[IntegrityCheck, ...]
     inputs: tuple[dict[str, Any], ...]
     contradictions: int
     unavailable_reason: str | None
     definition: ActionDefinition
 
+    def __post_init__(self) -> None:
+        if self.contradictions != sum(check.outcome == CHECK_CONTRADICTED for check in self.checks):
+            raise ActionError("INVALID_CHECK_SUMMARY", "contradiction count disagrees with checks")
+
     @property
     def verified(self) -> int:
-        return sum(1 for check in self.checks if check["outcome"] == CHECK_VERIFIED)
+        return sum(1 for check in self.checks if check.outcome == CHECK_VERIFIED)
 
     @property
     def not_observed(self) -> int:
-        return sum(1 for check in self.checks if check["outcome"] == CHECK_NOT_OBSERVED)
+        return sum(1 for check in self.checks if check.outcome == CHECK_NOT_OBSERVED)
 
 
 def _is_observed_metric(metric: Any) -> bool:
@@ -173,14 +179,11 @@ def _metric_value(metric: Any) -> float | int | None:
     return value
 
 
-def _check(check_id: str, claim: str, outcome: str, *, observed: dict[str, Any],
+def _check(check_id: str, claim: str, outcome: CheckOutcome, *, observed: dict[str, Any],
            expected: dict[str, Any] | None = None, notes: tuple[str, ...] = (),
-           limitations: tuple[str, ...] = (), n_effective: int | None = None) -> dict[str, Any]:
-    return {
-        "check_id": check_id, "claim": claim, "outcome": outcome, "observed": observed,
-        "expected": expected or {}, "n_effective": n_effective, "notes": list(notes),
-        "limitations": list(limitations),
-    }
+           limitations: tuple[str, ...] = (), n_effective: int | None = None) -> IntegrityCheck:
+    return IntegrityCheck(check_id, claim, outcome, canonical_json(observed), canonical_json(expected or {}),
+                          n_effective, notes, limitations)
 
 
 def _first_population(state: dict[str, Any]) -> dict[str, Any]:
@@ -279,9 +282,11 @@ def eligibility(record: dict[str, Any], definition: ActionDefinition) -> ActionE
                              reasons=tuple(reasons), prerequisites=prerequisites)
 
 
-def eligible_actions(record: dict[str, Any], input_kind: str,
+def eligible_actions(record: dict[str, Any] | LegacyArtifact | ComputedEvidenceRevision, input_kind: str,
                      registry: dict[str, ActionDefinition] | None = None) -> tuple[ActionEligibility, ...]:
     """Eligibility of every registered action that declares the given input kind."""
+    if isinstance(record, (LegacyArtifact, ComputedEvidenceRevision)):
+        record = record.boundary_representation()
     definitions = registry or ACTION_REGISTRY
     return tuple(
         eligibility(record, definitions[action_id])
@@ -290,7 +295,7 @@ def eligible_actions(record: dict[str, Any], input_kind: str,
     )
 
 
-def _check_frame_agreement(state: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _check_frame_agreement(state: dict[str, Any]) -> tuple[IntegrityCheck, list[dict[str, Any]]]:
     population = _first_population(state)
     eligible_n = population.get("eligible_n")
     examined_n = population.get("examined_n")
@@ -324,7 +329,7 @@ def _check_frame_agreement(state: dict[str, Any]) -> tuple[dict[str, Any], list[
     ), []
 
 
-def _check_expression_coverage(state: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _check_expression_coverage(state: dict[str, Any]) -> tuple[IntegrityCheck, list[dict[str, Any]]]:
     results = _project_results(state, "expression")
     observed: dict[str, Any] = {"projects": []}
     contradictions: list[str] = []
@@ -380,7 +385,7 @@ def _check_expression_coverage(state: dict[str, Any]) -> tuple[dict[str, Any], l
     ), []
 
 
-def _check_mutation_scope(state: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _check_mutation_scope(state: dict[str, Any]) -> tuple[IntegrityCheck, list[dict[str, Any]]]:
     results = _project_results(state, "mutation")
     scope = state.get("scope") if isinstance(state.get("scope"), dict) else {}
     scope_projects = scope.get("projects") if isinstance(scope.get("projects"), list) else None
@@ -437,7 +442,7 @@ def _read_bytes(read_artifact: Callable[[str], bytes | None], artifact_id: Any) 
 
 
 def _check_tested_universe(state: dict[str, Any],
-                           read_artifact: Callable[[str], bytes | None]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+                           read_artifact: Callable[[str], bytes | None]) -> tuple[IntegrityCheck, list[dict[str, Any]]]:
     tested_context = state.get("tested_context") if isinstance(state.get("tested_context"), dict) else {}
     gene_id = (state.get("entity") or {}).get("gene_id") if isinstance(state.get("entity"), dict) else None
     ref = tested_context.get("examined_genes_ref")
@@ -504,7 +509,7 @@ def _check_tested_universe(state: dict[str, Any],
 
 
 def _check_response_integrity(state: dict[str, Any],
-                              read_artifact: Callable[[str], bytes | None]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+                              read_artifact: Callable[[str], bytes | None]) -> tuple[IntegrityCheck, list[dict[str, Any]]]:
     provenance = state.get("provenance") if isinstance(state.get("provenance"), dict) else {}
     sources = provenance.get("sources") if isinstance(provenance.get("sources"), list) else []
     verified = 0
@@ -577,7 +582,7 @@ def _source_metrics(state: dict[str, Any], project_id: str) -> dict[str, Any]:
 
 
 def _check_source_evidence_restated(revision: dict[str, Any], state: dict[str, Any] | None,
-                                    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+                                    ) -> tuple[IntegrityCheck, list[dict[str, Any]]]:
     rows = revision.get("project_level_evidence") or []
     observed: dict[str, Any] = {"projects": []}
     contradictions: list[str] = []
@@ -630,7 +635,7 @@ def _source_triples(container: dict[str, Any]) -> set[tuple[Any, Any, Any, Any]]
 
 
 def _check_source_provenance_unchanged(revision: dict[str, Any], state: dict[str, Any] | None,
-                                       ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+                                       ) -> tuple[IntegrityCheck, list[dict[str, Any]]]:
     revision_provenance = revision.get("provenance") if isinstance(revision.get("provenance"), dict) else {}
     revision_triples = _source_triples(revision_provenance)
     state_provenance = state.get("provenance") if isinstance(state, dict) and isinstance(state.get("provenance"), dict) else {}
@@ -664,7 +669,7 @@ def _check_source_provenance_unchanged(revision: dict[str, Any], state: dict[str
 
 def _check_source_identity_reproducible(revision: dict[str, Any], state: dict[str, Any] | None,
                                         artifact_hash: str | None,
-                                        ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+                                        ) -> tuple[IntegrityCheck, list[dict[str, Any]]]:
     source = revision.get("source_statistical_state") if isinstance(revision.get("source_statistical_state"), dict) else {}
     recorded_artifact = source.get("state_artifact_sha256")
     recorded_identity = source.get("state_identity_hash")
@@ -709,7 +714,7 @@ def _check_source_identity_reproducible(revision: dict[str, Any], state: dict[st
 
 
 def _check_revision_chain_linked(revision: dict[str, Any], state: dict[str, Any] | None,
-                                 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+                                 ) -> tuple[IntegrityCheck, list[dict[str, Any]]]:
     action = revision.get("action") if isinstance(revision.get("action"), dict) else None
     definition = ACTION_REGISTRY.get(action.get("action_id")) if action else None
     gene_id = (revision.get("entity") or {}).get("gene_id") if isinstance(revision.get("entity"), dict) else None
@@ -755,7 +760,7 @@ def _check_revision_chain_linked(revision: dict[str, Any], state: dict[str, Any]
 
 
 def _revision_checks(revision: dict[str, Any], read_artifact: Callable[[str], bytes | None],
-                     ) -> tuple[tuple[dict[str, Any], ...], list[dict[str, Any]]]:
+                     ) -> tuple[tuple[IntegrityCheck, ...], list[dict[str, Any]]]:
     source = revision.get("source_statistical_state") \
         if isinstance(revision.get("source_statistical_state"), dict) else {}
     content = _read_bytes(read_artifact, source.get("state_artifact_id"))
@@ -776,9 +781,13 @@ def _revision_checks(revision: dict[str, Any], read_artifact: Callable[[str], by
     return checks, inputs
 
 
-def execute(action_id: str, record: dict[str, Any], *,
+def execute(action_id: str, record: dict[str, Any] | LegacyArtifact | ComputedEvidenceRevision, *,
             read_artifact: Callable[[str], bytes | None]) -> ActionOutcome:
     """Run one registered deterministic action over its declared immutable input kind."""
+    # These two legacy actions inspect the integrity of the serialization itself.
+    # Decode once at this inspection boundary, never reconstruct biological types.
+    if isinstance(record, (LegacyArtifact, ComputedEvidenceRevision)):
+        record = record.boundary_representation()
     definition = ACTION_REGISTRY.get(action_id)
     if definition is None:
         raise ActionError("UNKNOWN_ACTION", f"{action_id} is not a registered action")
@@ -799,6 +808,6 @@ def execute(action_id: str, record: dict[str, Any], *,
         checks, inputs = _revision_checks(record, read_artifact)
     return ActionOutcome(
         action_id=definition.action_id, status=OUTCOME_COMPLETED, checks=checks, inputs=tuple(inputs),
-        contradictions=sum(1 for check in checks if check["outcome"] == CHECK_CONTRADICTED),
+        contradictions=sum(1 for check in checks if check.outcome == CHECK_CONTRADICTED),
         unavailable_reason=None, definition=definition,
     )

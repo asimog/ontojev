@@ -3,6 +3,9 @@
 Baseline `42b05d40e6edafec0b8613e7dd154a60a46e4fee`; review 2026-09-24 UTC.
 Limits below are application ceilings, not provider guarantees. No limit or dependency changed.
 
+Stage 3 (2026-09-25) preserves these ceilings and shares the same transport/run accounting across
+the extracted acquisition functions. Offline replay is not a new live workload/cost measurement.
+
 ## IMPLEMENTED
 
 | Resource | Bound | Enforcement / caveat |

@@ -23,6 +23,7 @@ from cancerjev.science.methods import (
     ProjectFrame,
     ScienceError,
     build_statistical_state,
+    compute_statistical_state,
     coverage_imbalance,
     expression_log2_summary,
     metric,
@@ -77,10 +78,11 @@ def _frame(project_id: str, *, cases: int = 60, affected: bool = True, expressio
 
 def _build(frames: list[ProjectFrame], *, counts: dict[str, dict[str, int]] | None = None,
            coverage: dict[str, int] | None = None, sources: list[dict] | None = None,
-           state_id: str = "state") -> dict:
+           state_id: str = "state", typed: bool = False):
     counts = counts if counts is not None else {frame.project_id: {GENE.gene_id: 10} for frame in frames}
     coverage = coverage if coverage is not None else {frame.project_id: 60 for frame in frames}
-    return build_statistical_state(
+    builder = compute_statistical_state if typed else build_statistical_state
+    return builder(
         run_id="run", state_id=state_id, created_at="2026-09-22T00:00:00Z", gene=GENE, frames=frames,
         counts=GeneCaseCounts(projects=counts, hits_total=100, complete=True, partial_reasons=[], warnings=[]),
         coverage=ProjectCoverage(case_with_ssm=coverage, complete=True, partial_reasons=[], warnings=[]),
@@ -126,16 +128,20 @@ def test_project_dominance_requires_two_observed_projects():
 
 
 def test_coverage_imbalance_rules():
+    from dataclasses import replace
+
+    from cancerjev.science.methods import ProjectEvidence
+
     balanced = [
-        {"mutation_observed": True, "examined_cases": 100, "cases_with_expression": 80},
-        {"mutation_observed": True, "examined_cases": 120, "cases_with_expression": 95},
+        ProjectEvidence("A", True, True, 100, 80, 20),
+        ProjectEvidence("B", True, True, 120, 95, 25),
     ]
     assert coverage_imbalance(balanced) is False
-    missing_modality = [balanced[0], {**balanced[1], "mutation_observed": False}]
+    missing_modality = [balanced[0], replace(balanced[1], mutation_observed=False)]
     assert coverage_imbalance(missing_modality) is True
-    uneven = [balanced[0], {**balanced[1], "cases_with_expression": 30}]
+    uneven = [balanced[0], replace(balanced[1], cases_with_expression=30)]
     assert coverage_imbalance(uneven) is True
-    zero_expression = [balanced[0], {**balanced[1], "cases_with_expression": 0}]
+    zero_expression = [balanced[0], replace(balanced[1], cases_with_expression=0)]
     assert coverage_imbalance(zero_expression) is True
 
 

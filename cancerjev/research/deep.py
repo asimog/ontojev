@@ -17,17 +17,22 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
+from cancerjev.domain.actions import ComputedEvidenceRevision, IntegrityCheck
 from cancerjev.domain.events import canonical_json, utc_now
 from cancerjev.domain.identity import (
     content_hash,
     evidence_state_identity_payload,
 )
-from cancerjev.research.nextmove import DEEP_POLICY_VERSION, next_move
+from cancerjev.domain.legacy_codecs import LegacyArtifact
+from cancerjev.jev.service import JevService
+from cancerjev.research.nextmove import DEEP_POLICY_VERSION, DeepJudgment, decide_next_move
+from cancerjev.research.seams import PublishJson
 from cancerjev.science.actions import (
     ACTION_REGISTRY,
     ACTION_REGISTRY_VERSION,
     CHECK_CONTRADICTED,
     CHECK_NOT_OBSERVED,
+    ActionDefinition,
     ActionEligibility,
     ActionError,
     ActionOutcome,
@@ -35,7 +40,9 @@ from cancerjev.science.actions import (
     execute,
 )
 from cancerjev.science.methods import METHODS
+from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.readers import ScientificReadError, read_candidate_state, read_revision_chain
+from cancerjev.storage.repositories import Repository
 
 FOLLOWUP_LIMIT = 3
 EVIDENCE_ITERATION_LIMIT = 2
@@ -62,7 +69,7 @@ class CandidateEvidence:
     entity: dict[str, Any]
     promotion_slot: int
     state_id: str
-    state: dict[str, Any]
+    state: LegacyArtifact | None
     state_artifact_id: str
     state_artifact_sha256: str
 
@@ -94,7 +101,20 @@ class FollowUpResult:
     checks_contradicted: int
     checks_not_observed: int
     error_code: str | None
-    revision: dict[str, Any] | None
+    revision: ComputedEvidenceRevision | None
+
+    def __post_init__(self) -> None:
+        if self.revision is not None:
+            if not isinstance(self.revision, ComputedEvidenceRevision):
+                raise DeepError("INVALID_REVISION", "typed revision required")
+            summary = self.revision.check_summary
+            if (self.evidence_state_id, self.evidence_hash, self.iteration, self.action_id) != (
+                self.revision.evidence_state_id, self.revision.scientific_hash,
+                self.revision.iteration, self.revision.action_id,
+            ) or (self.checks_total, self.checks_verified, self.checks_contradicted,
+                  self.checks_not_observed) != (summary.total, summary.verified,
+                                               summary.contradicted, summary.not_observed):
+                raise DeepError("INVALID_REVISION", "revision binding or check summary mismatch")
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -277,7 +297,8 @@ def _baseline_evidence(state: dict[str, Any], candidate: CandidateEvidence, *, r
     }
 
 
-def _observation(check: dict[str, Any], definition: Any, *, run_id: str, candidate_id: str) -> dict[str, Any]:
+def _observation(result: IntegrityCheck, definition: ActionDefinition, *, run_id: str, candidate_id: str) -> dict[str, Any]:
+    check = result.boundary_representation()
     outcome = check["outcome"]
     observed = outcome != CHECK_NOT_OBSERVED
     return {
@@ -307,11 +328,11 @@ def _followup_evidence(outcome: ActionOutcome, candidate: CandidateEvidence, sta
     checks = [check for check in outcome.checks]
     missing_evidence = [
         {
-            "needed_evidence": check["check_id"],
+            "needed_evidence": check.check_id,
             "availability": "NOT_OBSERVED",
             "reason": "recorded evidence does not permit verification",
         }
-        for check in checks if check["outcome"] == CHECK_NOT_OBSERVED
+        for check in checks if check.outcome == CHECK_NOT_OBSERVED
     ]
     missing_evidence.append({
         "needed_evidence": "new_gdc_measurement",
@@ -370,15 +391,15 @@ def _followup_evidence(outcome: ActionOutcome, candidate: CandidateEvidence, sta
             "checks_contradicted": outcome.contradictions,
             "checks_not_observed": outcome.not_observed,
             "warnings": [
-                f"CONTRADICTED check {check['check_id']}" for check in checks
-                if check["outcome"] == CHECK_CONTRADICTED
+                f"CONTRADICTED check {check.check_id}" for check in checks
+                if check.outcome == CHECK_CONTRADICTED
             ],
         },
         "provenance": provenance,
     }
 
 
-def load_candidate_evidence(repository: Any, artifacts: Any, candidate: dict[str, Any]) -> CandidateEvidence:
+def load_candidate_evidence(repository: Repository, artifacts: ArtifactStore, candidate: dict[str, Any]) -> CandidateEvidence:
     """Accept the candidate's immutable StatisticalState evidence, or fail closed."""
     state_id = candidate["source_state_id"]
     try:
@@ -387,7 +408,9 @@ def load_candidate_evidence(repository: Any, artifacts: Any, candidate: dict[str
             read_revision_chain(repository, artifacts, candidate["candidate_id"])
     except ScientificReadError as exc:
         raise DeepError(exc.code, exc.detail) from exc
-    state = stored.artifact.boundary_representation()
+    state = stored.state
+    if not isinstance(state, LegacyArtifact) or state.schema_version != 2:
+        raise DeepError("UNSUPPORTED_RUNTIME_VERSION", "this execution path requires live v2 evidence")
     return CandidateEvidence(
         candidate_id=candidate["candidate_id"], entity=candidate["entity"],
         promotion_slot=candidate["promotion_slot"], state_id=state_id, state=state,
@@ -412,8 +435,8 @@ def _resolve_requested_action(eligibilities: tuple[ActionEligibility, ...],
     return requested_action_id, None, None
 
 
-def plan_deep_slice(*, run_id: str, candidate: dict[str, Any], repository: Any, artifacts: Any,
-                    emit: Callable[..., Any], publish_json: Callable[[str, str, Any, str], Any],
+def plan_deep_slice(*, run_id: str, candidate: dict[str, Any], repository: Repository, artifacts: ArtifactStore,
+                    emit: Callable[..., Any], publish_json: PublishJson,
                     requested_action_id: str | None = None) -> DeepPlan:
     """Accept E0, create the baseline revision, and compute eligible actions."""
     try:
@@ -429,13 +452,15 @@ def plan_deep_slice(*, run_id: str, candidate: dict[str, Any], repository: Any, 
         )
         return DeepPlan(candidate=CandidateEvidence(
             candidate_id=candidate["candidate_id"], entity=candidate["entity"],
-            promotion_slot=candidate["promotion_slot"], state_id=candidate["source_state_id"], state={},
+            promotion_slot=candidate["promotion_slot"], state_id=candidate["source_state_id"], state=None,
             state_artifact_id="", state_artifact_sha256=""), baseline_evidence_id=baseline_id,
             baseline_evidence_hash="", baseline_already_present=False, eligibilities=(),
             selected_action_id=None, abstain_reason="EVIDENCE_ACCEPTANCE_FAILED",
             abstain_detail=exc.detail, iteration_number=None, execution_id=None, evidence_state_id=None)
 
-    state = evidence.state
+    if evidence.state is None:
+        raise DeepError("EVIDENCE_ACCEPTANCE_FAILED", "accepted state missing")
+    state = evidence.state.boundary_representation()
     eligibilities = eligible_actions(state, "STATISTICAL_STATE")
     eligible_ids = [item.action_id for item in eligibilities if item.eligible]
 
@@ -557,10 +582,10 @@ def _abstain(run_id: str, emit: Callable[..., Any], evidence: CandidateEvidence,
                     evidence_state_id=None)
 
 
-def _execute_action(*, run_id: str, candidate: CandidateEvidence, record: dict[str, Any], input_kind: str,
+def _execute_action(*, run_id: str, candidate: CandidateEvidence, record: LegacyArtifact | ComputedEvidenceRevision, input_kind: str,
                     action_id: str, previous_evidence_id: str, iteration: int, execution_id: str,
-                    evidence_state_id: str, repository: Any, emit: Callable[..., Any],
-                    publish_json: Callable[[str, str, Any, str], Any],
+                    evidence_state_id: str, repository: Repository, emit: Callable[..., Any],
+                    publish_json: PublishJson,
                     read_artifact: Callable[[str], bytes | None]) -> FollowUpResult:
     """Run one registered deterministic action and persist an immutable revision.
 
@@ -571,11 +596,13 @@ def _execute_action(*, run_id: str, candidate: CandidateEvidence, record: dict[s
     """
     definition = ACTION_REGISTRY[action_id]
     if input_kind == "STATISTICAL_STATE":
-        input_evidence_hash = record["state_hash"]
+        input_evidence_hash = record.scientific_hash
         input_evidence_state_id = previous_evidence_id
     else:
-        input_evidence_hash = content_hash(evidence_state_identity_payload(record))
-        input_evidence_state_id = record["evidence_state_id"]
+        input_evidence_hash = record.scientific_hash
+        if not isinstance(record, ComputedEvidenceRevision):
+            raise DeepError("INVALID_ACTION_INPUT", "revision input required")
+        input_evidence_state_id = record.evidence_state_id
     emit(
         run_id, "FOLLOWUP_STARTED", f"deep:{execution_id}:started",
         f"Deterministic follow-up {action_id} started for candidate {candidate.candidate_id}.",
@@ -611,7 +638,9 @@ def _execute_action(*, run_id: str, candidate: CandidateEvidence, record: dict[s
             checks_not_observed=0, error_code=exc.code, revision=None,
         )
 
-    revision = _followup_evidence(outcome, candidate, candidate.state, run_id=run_id, iteration=iteration,
+    if candidate.state is None:
+        raise DeepError("EVIDENCE_ACCEPTANCE_FAILED", "accepted source missing")
+    revision = _followup_evidence(outcome, candidate, candidate.state.boundary_representation(), run_id=run_id, iteration=iteration,
                                   previous_evidence_id=previous_evidence_id)
     evidence_hash = content_hash(evidence_state_identity_payload(revision))
     outcome_label = "COMPLETED_WITH_CONTRADICTIONS" if outcome.contradictions else "COMPLETED"
@@ -680,17 +709,21 @@ def _execute_action(*, run_id: str, candidate: CandidateEvidence, record: dict[s
         status=outcome_label, action_id=action_id, evidence_state_id=evidence_state_id,
         evidence_hash=evidence_hash, iteration=iteration, checks_total=len(outcome.checks),
         checks_verified=outcome.verified, checks_contradicted=outcome.contradictions,
-        checks_not_observed=outcome.not_observed, error_code=None, revision=revision,
+        checks_not_observed=outcome.not_observed, error_code=None, revision=ComputedEvidenceRevision(
+            evidence_state_id, evidence_hash, candidate.candidate_id, previous_evidence_id,
+            iteration, action_id, outcome.checks, canonical_json(revision)),
     )
 
 
-def execute_followup(*, run_id: str, plan: DeepPlan, repository: Any, emit: Callable[..., Any],
-                     publish_json: Callable[[str, str, Any, str], Any],
+def execute_followup(*, run_id: str, plan: DeepPlan, repository: Repository, emit: Callable[..., Any],
+                     publish_json: PublishJson,
                      read_artifact: Callable[[str], bytes | None]) -> FollowUpResult:
     """Run the selected deterministic action over the candidate's accepted evidence."""
     if plan.selected_action_id is None or plan.iteration_number is None or plan.execution_id is None \
             or plan.evidence_state_id is None:
         raise DeepError("FOLLOWUP_NOT_PLANNED", "execute_followup requires a selected action plan")
+    if plan.candidate.state is None:
+        raise DeepError("EVIDENCE_ACCEPTANCE_FAILED", "accepted source missing")
     return _execute_action(
         run_id=run_id, candidate=plan.candidate, record=plan.candidate.state,
         input_kind="STATISTICAL_STATE", action_id=plan.selected_action_id,
@@ -717,8 +750,8 @@ class DispatchResult:
 
 
 def dispatch_recorded_move(*, run_id: str, candidate: CandidateEvidence, result: FollowUpResult,
-                           decision: dict[str, Any], repository: Any, emit: Callable[..., Any],
-                           publish_json: Callable[[str, str, Any, str], Any],
+                           decision: dict[str, Any], repository: Repository, emit: Callable[..., Any],
+                           publish_json: PublishJson,
                            read_artifact: Callable[[str], bytes | None], authorized: bool) -> DispatchResult:
     """Dispatch one recorded FOLLOW_UP, only when an operator authorized it.
 
@@ -797,7 +830,7 @@ def dispatch_recorded_move(*, run_id: str, candidate: CandidateEvidence, result:
 
 
 def judge_evidence_revision(*, run_id: str, candidate: CandidateEvidence, result: FollowUpResult,
-                            jev_service: Any, emit: Callable[..., Any]) -> dict[str, Any]:
+                            jev_service: JevService, emit: Callable[..., Any]) -> dict[str, Any]:
     """One Deep Jev fan-out over the new revision, then the Python next-move policy.
 
     The eligible set is computed from the revision's own declared input kind, so the
@@ -825,16 +858,14 @@ def judge_evidence_revision(*, run_id: str, candidate: CandidateEvidence, result
               "action_registry_version": ACTION_REGISTRY_VERSION,
               "question_set_version": "deep-v1"},
     )
-    evaluation = jev_service.evaluate_evidence(
+    evaluation_record = jev_service.evaluate_evidence_record(
         run_id=run_id, evidence=result.revision, eligible_actions=eligible_action_payloads,
         evidence_hash=result.evidence_hash, emit=emit,
     )
-    judgment = {
-        "answers": evaluation["answers"], "error": evaluation["error"],
-        "action_id": result.action_id,
-    }
-    decision = next_move(
-        checks=result.revision["quality_and_fragility"], judgment=judgment,
+    evaluation = evaluation_record.boundary_representation()
+    decision = decide_next_move(
+        checks=result.revision.check_summary,
+        judgment=DeepJudgment.from_evaluation(evaluation_record, result.action_id),
         eligible_action_ids=eligible_action_ids,
     )
     emit(

@@ -13,8 +13,11 @@ from typing import Any
 from uuid import uuid4
 
 from cancerjev.domain.events import canonical_json, utc_now
+from cancerjev.domain.state_summary import ComputedStatisticalState
+from cancerjev.jev.contracts import EvaluationRecord
 from cancerjev.jev.projection import ProjectionError
 from cancerjev.jev.questions import WIDE_QUESTION_SET_VERSION
+from cancerjev.jev.service import JevService
 from cancerjev.research.ranking import (
     BASELINE_POLICY_VERSION,
     JEV_POLICY_VERSION,
@@ -22,12 +25,14 @@ from cancerjev.research.ranking import (
     baseline_ranking,
     jev_ranking,
 )
+from cancerjev.research.seams import PublishJson
+from cancerjev.storage.artifacts import PublishedArtifact
 from cancerjev.storage.repositories import Repository
 
 
-def run_wide_evaluation(*, run_id: str, states: list[dict[str, Any]], coverage: str,
-                        repository: Repository, jev_service: Any, emit: Callable[..., Any],
-                        publish_json: Callable[[str, str, Any, str], Any],
+def run_wide_evaluation(*, run_id: str, states: list[ComputedStatisticalState], coverage: str,
+                        repository: Repository, jev_service: JevService, emit: Callable[..., Any],
+                        publish_json: PublishJson,
                         max_states: int | None = None) -> dict[str, Any]:
     emit(
         run_id, "JEV_WIDE_STARTED", "jev:wide:started",
@@ -39,7 +44,7 @@ def run_wide_evaluation(*, run_id: str, states: list[dict[str, Any]], coverage: 
     skipped_state_ids: list[str] = []
     if max_states is not None and len(states) > max_states:
         evaluated_states = states[:max_states]
-        skipped_state_ids = [state["state_id"] for state in states[max_states:]]
+        skipped_state_ids = [state.summary.state_id for state in states[max_states:]]
         emit(
             run_id, "JEV_WIDE_STATE_CAP_ENFORCED", "jev:wide:state-cap",
             f"Configured Jev state cap {max_states} enforced; {len(skipped_state_ids)} state(s) not evaluated.",
@@ -47,28 +52,28 @@ def run_wide_evaluation(*, run_id: str, states: list[dict[str, Any]], coverage: 
             data={"cap": max_states, "requested_states": len(states),
                   "evaluated_states": len(evaluated_states), "skipped_state_ids": skipped_state_ids},
         )
-    evaluations: list[dict[str, Any]] = []
+    evaluations: list[EvaluationRecord] = []
     deferred: list[str] = []
     for state in evaluated_states:
         try:
-            evaluation = jev_service.evaluate(run_id=run_id, state=state, emit=emit)
+            evaluation = jev_service.evaluate_record(run_id=run_id, state=state, emit=emit)
         except ProjectionError as exc:
-            deferred.append(state["state_id"])
+            deferred.append(state.summary.state_id)
             emit(
-                run_id, "JEV_EVALUATION_FAILED", f"jev-wide:{state['state_id']}:projection-failed",
-                f"Jev projection failed closed for {state['entity']['gene_symbol']}: {exc.code}.",
+                run_id, "JEV_EVALUATION_FAILED", f"jev-wide:{state.summary.state_id}:projection-failed",
+                f"Jev projection failed closed for {state.summary.gene_symbol}: {exc.code}.",
                 stage="JEV_WIDE", level="error",
-                data={"state_id": state["state_id"], "error_code": exc.code, "detail": str(exc),
+                data={"state_id": state.summary.state_id, "error_code": exc.code, "detail": str(exc),
                       "provider_attempted": False, "cache": False},
             )
             continue
-        if evaluation.get("error") is not None:
-            deferred.append(state["state_id"])
+        if evaluation.error_code is not None:
+            deferred.append(state.summary.state_id)
         evaluations.append(evaluation)
 
-    baseline = baseline_ranking(states)
+    baseline = baseline_ranking([state.summary for state in states])
     baseline_artifact = _publish_ranking(run_id, "baseline_ranking.json", baseline, publish_json, repository)
-    jev = jev_ranking(states, evaluations)
+    jev = jev_ranking([state.summary for state in states], evaluations)
     jev_artifact = _publish_ranking(run_id, "jev_ranking.json", jev, publish_json, repository)
     emit(
         run_id, "WIDE_RANKING_COMPLETED", "jev:wide:ranking",
@@ -87,7 +92,8 @@ def run_wide_evaluation(*, run_id: str, states: list[dict[str, Any]], coverage: 
         },
         artifact_refs=[baseline_artifact.ref(), jev_artifact.ref()],
     )
-    promoted = _promote(run_id, states, evaluations, jev, emit, repository)
+    promoted = _promote(run_id, [state.boundary_representation() for state in states],
+                        [evaluation.boundary_representation() for evaluation in evaluations], jev, emit, repository)
     emit(
         run_id, "JEV_WIDE_COMPLETED", "jev:wide:completed",
         f"Wide Jev evaluation completed: {len(evaluations)} evaluations, admission {jev['admission']['decision']}, "
@@ -104,7 +110,7 @@ data={
 
 
 def _publish_ranking(run_id: str, filename: str, ranking: dict[str, Any],
-                     publish_json: Callable[[str, str, Any, str], Any], repository: Repository) -> Any:
+                     publish_json: PublishJson, repository: Repository) -> PublishedArtifact:
     artifact = publish_json(run_id, f"runs/{run_id}/wide/{filename}", ranking, "wide-ranking")
     repository.register_artifact(artifact, run_id)
     return artifact

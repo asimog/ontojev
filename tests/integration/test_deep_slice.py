@@ -611,7 +611,8 @@ def test_dispatch_respects_the_caps(runtime, monkeypatch, attribute, limit, reas
 
 def test_a_failed_attempt_consumes_follow_up_budget(runtime, monkeypatch):
     """A failed action attempt spent budget, so it must count against the cap."""
-    from cancerjev.domain.events import utc_now
+    from cancerjev.domain.actions import ComputedEvidenceRevision, IntegrityCheck
+    from cancerjev.domain.events import canonical_json, utc_now
 
     run_id, _, repository = _completed_slice(runtime, monkeypatch, deep_selection="GENEONE")
     artifacts = runtime[2]
@@ -620,12 +621,22 @@ def test_a_failed_attempt_consumes_follow_up_budget(runtime, monkeypatch):
     evidence = deep.load_candidate_evidence(repository, artifacts, candidate)
     revision = json.loads(artifacts.read(
         repository.artifact(repository.evidence_revisions(candidate["candidate_id"])[1]["artifact_id"])["relative_path"]))
+    typed_revision = ComputedEvidenceRevision(
+        revision["evidence_state_id"], content_hash(evidence_state_identity_payload(revision)),
+        candidate["candidate_id"], revision["previous_evidence_state_id"], 1,
+        revision["action"]["action_id"],
+        tuple(IntegrityCheck(c["check_id"], c["claim"], c["outcome"],
+                             canonical_json(c["observed"]), canonical_json(c["expected"]),
+                             c["n_effective"], tuple(c["notes"]), tuple(c["limitations"]))
+              for c in revision["deterministic_observations"]),
+        canonical_json(revision),
+    )
     result = deep.FollowUpResult(
         status="COMPLETED", action_id=revision["action"]["action_id"],
         evidence_state_id=revision["evidence_state_id"],
         evidence_hash=content_hash(evidence_state_identity_payload(revision)),
         iteration=1, checks_total=5, checks_verified=5, checks_contradicted=0, checks_not_observed=0,
-        error_code=None, revision=revision,
+        error_code=None, revision=typed_revision,
     )
     repository.append_event(
         run_id, event_type="FOLLOWUP_FAILED", idempotency_key="audit:failed-attempt",

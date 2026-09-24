@@ -5,7 +5,14 @@ Stage 2 adds `test_scientific_reads.py`, `test_cache_validation.py` and
 latest revision refusal, unusable cache without provider fallback, and strict generated-text bounds.
 Some tests deliberately disable immutable UPDATE triggers in isolated temporary databases to
 simulate corruption beyond normal application writes. Production triggers remain unchanged.
-Strict mypy now checks ten explicit domain/reader/answer modules. See [Stage 2](STAGE_02_HANDOFF.md).
+Stage 2 checked ten explicit domain/reader/answer modules. See [Stage 2](STAGE_02_HANDOFF.md).
+
+Stage 3 adds lane-composition and typed-flow tests: independent lane availability, explicit zero,
+row/batch permutations, provider-summary separation, immutable boundary copies, typed/legacy
+projection and ranking bytes, typed cache reuse, revision binding and check-summary consistency.
+Its full gate is **547 passed, 2 deselected**; Ruff and strict mypy on **19 modules** pass.
+The pre-existing absent-expression composition failure now has a null/unavailable regression test,
+plus rejection of a coherently rehashed malformed false-zero artifact. See [Stage 3](STAGE_03_HANDOFF.md).
 
 Architecture baseline `42b05d40e6edafec0b8613e7dd154a60a46e4fee`.
 Default tests are offline, with outbound network blocked except loopback test servers. Existing
@@ -26,16 +33,18 @@ New offline tests:
   malformed schemas/values/populations, and offline v2 E0/E1/E2 replay with explicit event ordering.
   Existing fixture/replay helpers supply synthetic data; no public response is newly imported.
 
-Run focused tests before the full suite. Python CI now also runs `python -m mypy`, configured in
-pyproject.toml for seven explicit files: domain measurements/scientific/evidence/_json/codecs/
-legacy_codecs and research/specs. Strict checking applies to that scope; `follow_imports = "silent"`
+Run focused tests before the full suite. Python CI also runs `python -m mypy`. At Stage 1 it checked
+seven explicit files: domain measurements/scientific/evidence/_json/codecs/legacy_codecs and
+research/specs. The current pyproject.toml scope additionally covers stored readers, hypotheses,
+answers, action/state summaries, lane methods, acquisition and typed policy/seams. Strict checking
+applies to that scope; `follow_imports = "silent"`
 retains imported signatures without turning this into a whole-repository typing campaign. There are
 no blanket ignore flags or new type assertions. Expand the checked file list when consumers transition.
 Configuration follows the [official mypy guidance](https://mypy.readthedocs.io/en/stable/config_file.html).
 
 The [Stage 0–1 handoff](STAGE_01_HANDOFF.md) records exact environment, commands and outcomes.
-Storage checksum/binding, dossier/cache/hypothesis hardening and typed runtime lane tests remain
-Stage 2/3 work. A standalone codec passing tests is not proof that every current consumer uses it.
+Storage checksum/binding, dossier/cache/hypothesis hardening and typed runtime lane tests were added
+in Stages 2/3. A standalone codec passing tests is not proof of a v3 production cutover.
 
 ## Historical verification available at the architecture baseline
 

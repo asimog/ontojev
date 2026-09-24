@@ -10,6 +10,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+from cancerjev.domain._json import decode
 from cancerjev.jev.questions import QuestionDefinition
 
 PROBABILITY_SUM_TOLERANCE = 1e-6
@@ -42,6 +43,14 @@ class ScoreAnswer:
 class ValidatedAnswers:
     answers: tuple[NoulAnswer | ChoiceAnswer | ScoreAnswer, ...]
 
+    def probability(self, question_id: str) -> float | None:
+        return next((a.probability_yes for a in self.answers
+                     if isinstance(a, NoulAnswer) and a.question_id == question_id), None)
+
+    def choice(self, question_id: str) -> str | None:
+        return next((a.choice for a in self.answers
+                     if isinstance(a, ChoiceAnswer) and a.question_id == question_id), None)
+
     def boundary_representation(self) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
         for answer in self.answers:
@@ -71,6 +80,35 @@ def read_answers(definitions: tuple[QuestionDefinition, ...], raw: Any) -> Valid
                                        tuple(sorted(value["probabilities"].items())),
                                        tuple(sorted(value["legend"].items()))))
     return ValidatedAnswers(tuple(answers))
+
+
+@dataclass(frozen=True)
+class QuestionApplicability:
+    question_id: str
+    applicable: bool
+    reason: str
+    rule: str
+
+
+@dataclass(frozen=True)
+class EvaluationRecord:
+    """Typed policy evidence alongside the immutable event/artifact representation."""
+
+    evaluation_id: str
+    input_ref_id: str
+    answers: ValidatedAnswers | None
+    error_code: str | None
+    artifact_id: str
+    serialized: bytes
+    applicability: tuple[QuestionApplicability, ...] = ()
+    cache_source_evaluation_id: str | None = None
+
+    def is_applicable(self, question_id: str) -> bool:
+        return any(a.question_id == question_id and a.applicable for a in self.applicability)
+
+    def boundary_representation(self) -> dict[str, Any]:
+        payload = decode(self.serialized)
+        return {**payload, "artifact_id": self.artifact_id}
 
 
 class JevContractError(Exception):

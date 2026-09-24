@@ -91,14 +91,16 @@ consistency. Scientific and operational sources are separate; no generated-text 
 measurement. These checks do not prove the scientific truth of a supplied finite number.
 
 Stage 2 validates storage/cache boundaries and refuses dossier publication on corrupt authoritative
-revisions; failure no longer becomes an empty payload under an OBSERVED section. Production internal
-state/evidence consumers still use legacy dictionary conversions pending Stage 3. Historical findings
+revisions; failure no longer becomes an empty payload under an OBSERVED section. Stage 3 retains
+typed lane results/state summaries through Wide and typed check/revision/answer results through Deep
+policy. Legacy v2 projection/presentation and artifact integrity inspection still use JSON. Historical findings
 remain in [the Python review](PYTHON_CORE_REVIEW.md); malformed-artifact execution paths were
 demonstrated, not corruption of a particular live measurement.
 
-The legacy builder also still raises INVALID_METRIC when entirely absent expression availability
-produces an empty sum alongside NOT_OBSERVED. This is a reproduced fail-closed composition defect,
-not an observed false-zero publication; Stage 3 must represent that branch explicitly as unavailable.
+Stage 3 fixes the entirely absent expression availability branch: null plus NOT_OBSERVED replaces
+the invalid empty sum plus NOT_OBSERVED that previously raised INVALID_METRIC. This was a fail-closed
+composition defect, not demonstrated false-zero publication. Malformed historical pairs still fail
+strict reading; existing accepted numerical behavior, method versions and identity goldens remain.
 
 The typed transition must enforce these requirements at construction and deserialization without
 reparsing trusted records throughout deterministic science. Keep JSON at real boundaries.

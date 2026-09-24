@@ -2,28 +2,29 @@
 
 Architecture baseline `42b05d40e6edafec0b8613e7dd154a60a46e4fee`, reviewed 2026-09-24.
 Stage 1 contracts added from `fb52305b3d42a39b05f6c269bbfa3d6213fd51d2` on 2026-09-25.
-The current production runtime still writes v1 fixtures/v2 live dictionaries. The records below
+The current production runtime still writes v1 fixture/v2 live JSON artifacts. The records below
 are now implemented where explicitly labelled; later consumers/features remain PLANNED.
 The [source-field trace](GDC_STRATEGY.md) limits admitted scientific content.
 
 ## Current production contract assessment
 
 Stage 2 adds immutable HypothesisDraft and Noul/Choice/Score answer records, plus verified stored
-state/revision/hypothesis/evaluation wrappers. Legacy JSON remains at explicitly named consumer
-boundaries pending Stage 3. The historical dictionary classifications below still describe the
-untransitioned internal runtime, not the new validated persistence entrypoints.
+state/revision/hypothesis/evaluation wrappers. Stage 3 computes frozen MutationObservation and
+ExpressionObservation/Log2Summary records before v2 serialization; StateSummary travels through Wide,
+and typed answers/checks/revisions travel through policy and investigation. These compatibility
+records preserve v2 semantics; they do not relabel v2 as v3. See [Stage 3](STAGE_03_HANDOFF.md).
 
 | Concept | Classification | Protected invariant in transition |
 |---|---|---|
 | ResearchSpec, CohortSpec, AcquisitionSpec | STRONGLY TYPED | Validated bounded scope |
 | GDC provider records | ADEQUATELY TYPED | Identifier membership and provider types |
 | ProjectFrame | ADEQUATELY TYPED, specialized | Common frame separate from lane data |
-| StatisticalState, mutation/expression/population/quality | DICTIONARY-CONVENTION DOMAIN OBJECT | Value/status/unit and population identity |
-| Candidate, EvidenceState, observation/check | DICTIONARY-CONVENTION DOMAIN OBJECT | Accepted source and immutable revisions |
+| Current StatisticalState composition | PARTIALLY TYPED | Typed lane/quality computations and immutable summary; full v2 serialization retained |
+| Candidate, EvidenceState, observation/check | PARTIALLY TYPED | Validated candidate source, immutable typed checks/revision and bound summary; legacy presentation metadata retained |
 | ActionDefinition | STRONGLY TYPED | Method/question/unit/limitations/input kind |
-| ActionEligibility/ActionOutcome | PARTIALLY TYPED | Typed prereqs and successful results only |
+| ActionEligibility/ActionOutcome | PARTIALLY TYPED | Typed checks and checked contradiction counts; artifact-inspection diagnostics remain dictionaries |
 | QuestionDefinition/provider envelope | ADEQUATELY / PARTIALLY TYPED | Exact roster and answer variant |
-| Validated Jev evaluation | DICTIONARY-CONVENTION DOMAIN OBJECT | Preserve validation through policy/cache |
+| Validated Jev evaluation | ADEQUATELY TYPED for Wide/Deep policy | EvaluationRecord retains immutable answers/applicability through policy/cache |
 | Hypothesis | PARTIALLY TYPED then widened | Generated text cannot become measurements |
 | Dossier, API JSON, generic event envelope | SHOULD REMAIN A BOUNDARY DICTIONARY | Validated inputs, truthful section availability |
 
@@ -104,17 +105,23 @@ cnv_change_5_category=Loss becomes LOSS_UNSPECIFIED, not heterozygous deletion. 
 are UNSUPPORTED_CATEGORY, never neutral. Conflicting case calls remain conflicts. Numeric copy
 number remains provider context until caller/sample comparability is accepted.
 No CNV provider parser, complete-query acquisition or category-count descriptor is admitted by
-constructing this record. These remain Stage 6. Expression tails remain Stage 5. Typed provider
-summary context and lane computation/composition remain Stage 3; historical provider summaries
+constructing this record. These remain Stage 6. Expression tails remain Stage 5. Stage 3 implements
+typed existing lane computation/composition with separate ProviderGene context; historical provider summaries
 are retained separately and verbatim by the legacy reader, never averaged or converted to local values.
 E0 references the accepted state; E1/E2 require parent/action/checks. Resolving those hashes to
 stored artifacts and authorizing action IDs are consumer responsibilities, not constructor side effects.
 
-### Checks implemented; action consumers/candidates/hypotheses/Jev transition PLANNED
+### Current checks and handoffs; future v3 integration distinguished
 
 EvidenceCheck carries check ID, method, VERIFIED/CONTRADICTED/NOT_OBSERVED outcome, claim, input refs,
 reason and n_effective. CheckSummary is constructed from checks; nonnegative counts sum to total.
 Missing checks_contradicted cannot mean zero.
+
+Stage 3's current v2 integrity actions produce IntegrityCheck and ComputedEvidenceRevision.
+Their checked summaries feed Deep policy without dictionary reconstruction. CandidateEvidence
+retains a validated LegacyArtifact; the two existing integrity actions inspect serialized artifacts
+deliberately. Current projection/hypothesis/dossier presentation retains v2 boundary conversion.
+The following fuller v3 action/candidate integration remains PLANNED, not a second active runtime.
 
 ActionInput is a StatisticalState or EvidenceState variant. ActionOutcome is Completed(typed results,
 sources) or Ineligible/Unavailable/Failed(reason). Failure creates no successful revision.

@@ -10,7 +10,9 @@ facts; [the roadmap](DISCOVERY_ROADMAP.md) separates implementation gates from d
 Stage 2 connects validated legacy readers to Deep acceptance and scientific API reads. Dossier
 assembly accepts only verified authoritative revisions/hypotheses/evaluations; corruption refuses
 publication. Cache hydration validates its original artifacts and contracts before policy can use
-answers. Internal scientific composition remains the Stage 3 transition, not a new v3 runtime yet.
+answers. Stage 3 separates common cohort/mutation/expression acquisition and typed lane computation;
+immutable v2-compatible state summaries feed Wide, while typed checks/revisions and validated answers
+feed Deep policy. This is not a new v3 runtime; see [Stage 3](STAGE_03_HANDOFF.md).
 
 ## IMPLEMENTED: bounded deterministic-first research
 
@@ -18,8 +20,8 @@ The fixture slice remains offline. Production has one frozen LUAD_RESEARCH_V1, n
 
 ```text
 ResearchSpec + operational Settings
- -> bounded anonymous GDC -> strict provider parsers -> deterministic methods
- -> StatisticalState v2 -> projection v2 -> Wide wide-v3
+ -> bounded anonymous GDC -> strict provider parsers -> typed deterministic lane results
+ -> typed summary + StatisticalState v2 artifact -> projection v2 -> Wide wide-v3
  -> Python wide-policy-v2 -> zero to three admitted candidates
  -> explicit operator selection (also supports a successfully wide-evaluated state)
  -> accept E0 -> integrity action -> E1 -> Deep deep-v1
@@ -95,11 +97,15 @@ into zero, authorize acquisition or confer causality.
 
 ## Responsibility stabilization
 
-- science/methods.py: separate lane computations from aggregate serialization.
-- research/live.py: extract concrete cohort/lane acquisition as those lanes are implemented.
-- research/deep.py: move hydration to validated readers and evidence construction to typed constructors.
+- IMPLEMENTED Stage 3: science/mutation.py and expression.py own existing lane computations;
+  science/methods.py composes typed results and the compatible v2 serialization.
+- IMPLEMENTED Stage 3: research/acquisition.py owns concrete common-frame and lane acquisition;
+  research/live.py retains research selection and sequencing.
+- IMPLEMENTED Stages 2–3: research/deep.py uses verified hydration and immutable typed check revisions;
+  existing v2 artifact assembly/inspection remains a serialization boundary, not a v3 cutover.
 - science/actions.py: retain fixed registry; separate concrete implementations only when necessary.
-- jev/service.py: share duplicated evaluation lifecycle after typed inputs/answers exist; preserve versions.
+- IMPLEMENTED Stage 3: jev/service.py retains typed validated answers through its existing shared
+  evaluation lifecycle and policy consumers; versions remain unchanged.
 
 Large provider parsers and the single Repository are coherent; length alone warrants no split.
 No ORM, DI framework, planner/director, workflow graph, microservices, distributed queue, arbitrary GDC

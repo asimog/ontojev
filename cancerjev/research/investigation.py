@@ -18,8 +18,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from cancerjev.jev.service import JevService
 from cancerjev.research.deep import (
     FOLLOWUP_LIMIT,
+    FollowUpResult,
     dispatch_recorded_move,
     execute_followup,
     judge_evidence_revision,
@@ -27,7 +29,10 @@ from cancerjev.research.deep import (
 )
 from cancerjev.research.dossier import run_dossier_stage
 from cancerjev.research.hypotheses import run_hypothesis_stage
+from cancerjev.research.seams import HypothesisGenerator, PublishJson, StageRunner
 from cancerjev.science.actions import eligible_actions
+from cancerjev.storage.artifacts import ArtifactStore
+from cancerjev.storage.repositories import Repository
 
 
 @dataclass(frozen=True)
@@ -60,7 +65,7 @@ class CandidateInvestigation:
         }
 
 
-def _step_summary(result: Any, judgement: dict[str, Any] | None) -> dict[str, Any]:
+def _step_summary(result: FollowUpResult, judgement: dict[str, Any] | None) -> dict[str, Any]:
     judgement = judgement or {}
     return {
         "action_id": result.action_id, "evidence_state_id": result.evidence_state_id,
@@ -76,13 +81,13 @@ def _step_summary(result: Any, judgement: dict[str, Any] | None) -> dict[str, An
 
 
 def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selection: str,
-                                repository: Any, artifacts: Any, emit: Callable[..., Any],
-                                publish_json: Callable[[str, str, Any, str], Any],
+                                repository: Repository, artifacts: ArtifactStore, emit: Callable[..., Any],
+                                publish_json: PublishJson,
                                 read_artifact: Callable[[str], bytes | None],
-                                stage: Callable[[str, Callable[[], Any]], Any],
-                                jev_service: Any = None, requested_action_id: str | None = None,
+                                stage: StageRunner,
+                                jev_service: JevService | None = None, requested_action_id: str | None = None,
                                 authorize_iteration: bool = False, hypotheses_requested: bool = False,
-                                llm_generator: Callable[..., Any] | None = None) -> CandidateInvestigation:
+                                llm_generator: HypothesisGenerator | None = None) -> CandidateInvestigation:
     """Run the bounded arc for one explicitly selected candidate."""
     plan = stage("DEEP_ANALYSIS", lambda: plan_deep_slice(
         run_id=run_id, candidate=candidate, repository=repository, artifacts=artifacts,
@@ -151,7 +156,7 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
             and current.revision is not None:
         revision_eligibilities = eligible_actions(current.revision, "EVIDENCE_STATE")
         hypotheses = stage("HYPOTHESIS_GENERATION", lambda: run_hypothesis_stage(
-            run_id=run_id, candidate=candidate, revision=current.revision,
+            run_id=run_id, candidate=candidate, revision=current.revision.boundary_representation(),
             evidence_hash=current.evidence_hash,
             eligible_action_ids=[item.action_id for item in revision_eligibilities if item.eligible],
             repository=repository, jev_service=jev_service, emit=emit, publish_json=publish_json,
@@ -166,7 +171,7 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
     if current.revision is not None:
         dossier = stage("DOSSIER", lambda: run_dossier_stage(
             run_id=run_id, candidate=candidate, repository=repository, artifacts=artifacts,
-            state=plan.candidate.state, decisions=decisions, publish_json=publish_json, emit=emit,
+            state=None, decisions=decisions, publish_json=publish_json, emit=emit,
         ))
         if dossier.get("status") == "UNAVAILABLE":
             status, stop_reason = "ABSTAINED", "DOSSIER_UNAVAILABLE"

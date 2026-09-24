@@ -12,7 +12,11 @@ silently dropped.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
+
+from cancerjev.domain.evidence import CheckSummary
+from cancerjev.jev.contracts import EvaluationRecord
 
 DEEP_POLICY_VERSION = "deep-policy-v2"
 
@@ -24,6 +28,29 @@ THRESHOLDS = {
 }
 
 MOVES = ("COMPLETE", "FOLLOW_UP", "GENERATE_HYPOTHESES", "ABSTAIN")
+
+
+@dataclass(frozen=True)
+class DeepJudgment:
+    reliable: float | None
+    sufficient: float | None
+    warranted: float | None
+    stopping: float | None
+    dominant_limitation: str | None
+    error_code: str | None
+    producing_action: str | None
+
+    @classmethod
+    def from_evaluation(cls, evaluation: EvaluationRecord, action_id: str) -> DeepJudgment:
+        answers = evaluation.answers
+        return cls(
+            answers.probability("revision_reliable") if answers else None,
+            answers.probability("evidence_sufficient_for_next_step") if answers else None,
+            answers.probability("next_step_warranted") if answers else None,
+            answers.probability("stopping_more_honest") if answers else None,
+            answers.choice("dominant_limitation") if answers else None,
+            evaluation.error_code, action_id,
+        )
 
 
 def _probability(judgment: dict[str, Any], question_id: str) -> float | None:
@@ -44,21 +71,35 @@ def _choice(judgment: dict[str, Any], question_id: str) -> str | None:
 
 def next_move(*, checks: dict[str, Any], judgment: dict[str, Any],
               eligible_action_ids: list[str]) -> dict[str, Any]:
-    """Map one revision's recorded checks plus its deep judgment to one typed move."""
+    """Historical dictionary boundary; production uses the typed judgment entrypoint."""
     contradicted = int(checks.get("checks_contradicted") or 0)
-    reliable = _probability(judgment, "revision_reliable")
-    sufficient = _probability(judgment, "evidence_sufficient_for_next_step")
-    warranted = _probability(judgment, "next_step_warranted")
-    stopping = _probability(judgment, "stopping_more_honest")
-    judgment_error = judgment.get("error")
-    producing_action = (judgment.get("action_id") or None)
+    return decide_next_move(
+        checks=CheckSummary(contradicted, 0, contradicted, 0),
+        judgment=DeepJudgment(_probability(judgment, "revision_reliable"),
+                              _probability(judgment, "evidence_sufficient_for_next_step"),
+                              _probability(judgment, "next_step_warranted"),
+                              _probability(judgment, "stopping_more_honest"),
+                              _choice(judgment, "dominant_limitation"),
+                              "LEGACY_JUDGMENT_ERROR" if judgment.get("error") is not None else None,
+                              judgment.get("action_id") or None),
+        eligible_action_ids=eligible_action_ids,
+    )
+
+
+def decide_next_move(*, checks: CheckSummary, judgment: DeepJudgment,
+                     eligible_action_ids: list[str]) -> dict[str, Any]:
+    """Exact policy over checked summaries and validated answers; no JSON reconstruction."""
+    contradicted = checks.contradicted
+    reliable, sufficient = judgment.reliable, judgment.sufficient
+    warranted, stopping = judgment.warranted, judgment.stopping
+    judgment_error, producing_action = judgment.error_code, judgment.producing_action
     distinct_actions = [action_id for action_id in eligible_action_ids if action_id != producing_action]
     dimensions = {
         "revision_reliable": reliable,
         "evidence_sufficient_for_next_step": sufficient,
         "next_step_warranted": warranted,
         "stopping_more_honest": stopping,
-        "dominant_limitation": _choice(judgment, "dominant_limitation"),
+        "dominant_limitation": judgment.dominant_limitation,
         "checks_contradicted": contradicted,
         "eligible_action_ids": sorted(eligible_action_ids),
         "distinct_eligible_action_ids": sorted(distinct_actions),

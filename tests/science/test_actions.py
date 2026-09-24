@@ -58,7 +58,7 @@ def _reader(*, selection: bytes | None, response: bytes | None):
 
 
 def _checks(outcome) -> dict:
-    return {check["check_id"]: check["outcome"] for check in outcome.checks}
+    return {check.check_id: check.outcome for check in outcome.checks}
 
 
 def test_registered_action_has_an_explicit_contract():
@@ -178,7 +178,10 @@ def test_execution_is_deterministic_and_leaves_the_snapshot_untouched():
     first = execute(ACTION_ID, state, read_artifact=reader)
     second = execute(ACTION_ID, state, read_artifact=reader)
     assert list(first.checks) == list(second.checks)
-    assert json.dumps(first.checks, sort_keys=True) == json.dumps(second.checks, sort_keys=True)
+    assert first.checks == second.checks
+    assert json.dumps([c.boundary_representation() for c in first.checks], sort_keys=True) == json.dumps(
+        [c.boundary_representation() for c in second.checks], sort_keys=True,
+    )
     assert state == before, "a deterministic action must never rewrite the evidence it reads"
 
 
@@ -361,5 +364,8 @@ def test_revision_action_is_deterministic_and_leaves_the_revision_untouched():
     before = copy.deepcopy(revision)
     first = execute(REVISION_ACTION_ID, revision, read_artifact=_source_reader(source))
     second = execute(REVISION_ACTION_ID, revision, read_artifact=_source_reader(source))
-    assert json.dumps(first.checks, sort_keys=True) == json.dumps(second.checks, sort_keys=True)
+    assert first.checks == second.checks
+    assert json.dumps([c.boundary_representation() for c in first.checks], sort_keys=True) == json.dumps(
+        [c.boundary_representation() for c in second.checks], sort_keys=True,
+    )
     assert revision == before

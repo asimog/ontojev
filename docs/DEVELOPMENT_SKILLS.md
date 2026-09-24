@@ -83,6 +83,10 @@ GDC-derived EvidenceState; developer background knowledge must not become fabric
   scientific API or paid-model calls; no pipeline scripts run; no commit or push.
 - No fresh scientific test-suite run is claimed for this documentation-only change.
 
-Next separately authorized task: implement roadmap Stage 1 scientific contracts and versioned
+Historical next task at skill configuration: implement roadmap Stage 1 scientific contracts and versioned
 readers, preserving existing behavior and historical artifact identities. Do not begin discovery
 lanes or relax scientific admission gates as part of that task.
+
+Update 2026-09-25: Stages 0–3 have since passed their offline engineering gates. See
+[current implementation status](IMPLEMENTATION_STATUS.md) and [Stage 3 handoff](STAGE_03_HANDOFF.md).
+Discovery remains a separately authorized, source-gated task; skill guidance does not authorize it.

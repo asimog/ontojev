@@ -429,8 +429,8 @@ def test_run_wide_evaluation_takes_explicit_collaborators(runtime):
     adapter = StubAdapter()
     service = JevService(settings, repository, artifacts, adapter_factory=lambda: adapter)
     run_id = repository.create_run("wide-decoupled", mode="LIVE", fixture_id=None, fixture_version=None)
-    states = [_build([_frame("TCGA-LUAD")])]
-    _register_state(artifacts, repository, run_id, states[0])
+    states = [_build([_frame("TCGA-LUAD")], typed=True)]
+    _register_state(artifacts, repository, run_id, states[0].boundary_representation())
     emitted: list[str] = []
     published: list[str] = []
 
@@ -448,8 +448,8 @@ def test_run_wide_evaluation_takes_explicit_collaborators(runtime):
         repository=repository, jev_service=service, emit=emit, publish_json=publish_json,
     )
     assert adapter.calls == 1
-    assert [promotion["state_id"] for promotion in result["promoted"]] == [states[0]["state_id"]]
-    assert result["jev"]["admitted_state_ids"] == [states[0]["state_id"]]
+    assert [promotion["state_id"] for promotion in result["promoted"]] == [states[0].summary.state_id]
+    assert result["jev"]["admitted_state_ids"] == [states[0].summary.state_id]
     assert published == [
         f"runs/{run_id}/wide/baseline_ranking.json",
         f"runs/{run_id}/wide/jev_ranking.json",
@@ -465,10 +465,10 @@ def test_run_wide_evaluation_enforces_configured_state_cap(runtime):
     adapter = StubAdapter()
     service = JevService(settings, repository, artifacts, adapter_factory=lambda: adapter)
     run_id = repository.create_run("wide-state-cap", mode="LIVE", fixture_id=None, fixture_version=None)
-    states = [_build([_frame("TCGA-LUAD")], state_id="state-a"),
-              _build([_frame("TCGA-LUAD")], state_id="state-b")]
+    states = [_build([_frame("TCGA-LUAD")], state_id="state-a", typed=True),
+              _build([_frame("TCGA-LUAD")], state_id="state-b", typed=True)]
     for state in states:
-        _register_state(artifacts, repository, run_id, state)
+        _register_state(artifacts, repository, run_id, state.boundary_representation())
     emitted: list[str] = []
 
     def emit(event_run_id, event_type, key, message, **kwargs):
@@ -500,9 +500,9 @@ def test_run_wide_evaluation_abstains_and_defers_provider_failures(runtime):
     settings, repository, artifacts = runtime
     service = JevService(settings, repository, artifacts, adapter_factory=lambda: StubAdapter(fail=True))
     run_id = repository.create_run("wide-provider-failure", mode="LIVE", fixture_id=None, fixture_version=None)
-    state = _build([_frame("TCGA-LUAD")])
+    state = _build([_frame("TCGA-LUAD")], typed=True)
     states = [state]
-    _register_state(artifacts, repository, run_id, state)
+    _register_state(artifacts, repository, run_id, state.boundary_representation())
 
     def emit(event_run_id, event_type, key, message, **kwargs):
         return repository.append_event(event_run_id, event_type=event_type, idempotency_key=key,
@@ -522,7 +522,7 @@ def test_run_wide_evaluation_abstains_and_defers_provider_failures(runtime):
         event for event in repository.events(run_id, 0, 100)["items"]
         if event["type"] == "WIDE_RANKING_COMPLETED"
     )
-    assert ranking_event["data"]["deferred_state_ids"] == [state["state_id"]]
+    assert ranking_event["data"]["deferred_state_ids"] == [state.summary.state_id]
     assert ranking_event["data"]["admission_decision"] == "ABSTAIN"
 
 
@@ -542,10 +542,10 @@ def test_one_malformed_provider_response_does_not_abort_the_run(runtime):
     adapter = _MalformedFirstStateAdapter()
     service = JevService(settings, repository, artifacts, adapter_factory=lambda: adapter)
     run_id = repository.create_run("wide-malformed", mode="LIVE", fixture_id=None, fixture_version=None)
-    states = [_build([_frame("TCGA-LUAD")], state_id="state-a"),
-              _build([_frame("TCGA-LUAD")], state_id="state-b")]
+    states = [_build([_frame("TCGA-LUAD")], state_id="state-a", typed=True),
+              _build([_frame("TCGA-LUAD")], state_id="state-b", typed=True)]
     for state in states:
-        _register_state(artifacts, repository, run_id, state)
+        _register_state(artifacts, repository, run_id, state.boundary_representation())
 
     def emit(event_run_id, event_type, key, message, **kwargs):
         return repository.append_event(event_run_id, event_type=event_type, idempotency_key=key,

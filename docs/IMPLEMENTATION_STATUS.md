@@ -1,6 +1,31 @@
 # Implementation status
 
-## Current truth — Stage 2 implementation, 2026-09-25
+## Current truth — Stage 3 implementation, 2026-09-25
+
+Stage 0–1 was published as `63d991a6ded2988bc6da0090f80ee69775cf770d`; Stage 2 as
+`7f13f611c89fe2db190ecd2f798f68aa4f2b0871`. Stage 3 completes the requested continuation;
+see [Stage 3 handoff](STAGE_03_HANDOFF.md) for files, boundaries and verification.
+
+- IMPLEMENTED: separate common cohort, mutation-count and expression acquisition functions;
+  typed mutation/expression computations before compatible v2 state serialization.
+- IMPLEMENTED: immutable state summaries through Wide projection/ranking; typed Jev answers and
+  applicability through admission/cache; validated candidate source and immutable check/revision
+  records through Deep; typed CheckSummary and DeepJudgment inputs to unchanged next-move policy.
+- IMPLEMENTED: narrow result-preserving orchestration seams. Strict mypy scope is 19 modules.
+- FIXED: entirely unacquired expression availability composes as unavailable/null, not an invalid
+  zero/unavailable pair. Historical malformed artifacts still fail; valid goldens are unchanged.
+- VERIFIED: **547 passed, 2 deselected**; Ruff, scoped strict mypy and whitespace checks pass.
+  Identity/projection/question/event goldens and full offline Deep/hypothesis/dossier replay pass.
+  Existing pytest-asyncio and Windows cleanup warnings remain non-fatal.
+- UNCHANGED: SQLite schema 4, v1 fixture/v2 live writers, scientific identities, method versions,
+  Jev questions/projections/policies, provider caps and default LUAD_RESEARCH_V1 workflow.
+- Explicit boundaries: v2 artifact integrity inspection, provenance/event envelopes, historical
+  projection adapters and hypothesis/dossier presentation still use JSON. This is not whole-core
+  elimination of dictionaries or a fully v3 runtime; standalone v3 contracts remain available.
+- PLANNED, not started: Stage 4 discovery and all later stages. No new live scientific or paid calls,
+  frontend changes, runtime dependencies or global plugin changes in this continuation.
+
+## Historical Stage 2 handoff, 2026-09-25
 
 Stage 0–1 was committed and pushed to `main` as
 `63d991a6ded2988bc6da0090f80ee69775cf770d`. Stage 2 extends scientific boundary acceptance,

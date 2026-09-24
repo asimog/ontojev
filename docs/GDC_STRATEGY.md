@@ -5,6 +5,11 @@ ADMIT NOW means suitable for the proposed implementation phase **after its accep
 not already runtime-allowlisted. HTTP 200 is not scientific admission.
 [Capture register](GDC_DISCOVERY_CAPTURES.md) preserves requests, hashes and measurements.
 
+IMPLEMENTED Stage 3 (2026-09-25): `research/acquisition.py` separates existing cohort, mutation-count
+and expression calls from selection policy. Builders, fields, parsers, request order, pagination,
+batch semantics and caps are unchanged. No new endpoint, live probe or capture was admitted in that
+stage; the campaign below remains historical evidence. See [Stage 3](STAGE_03_HANDOFF.md).
+
 ## Investigation and reproducibility
 
 69 anonymous sequential attempts, 6,093,958 consumed response-body bytes, all terminal HTTP 200.

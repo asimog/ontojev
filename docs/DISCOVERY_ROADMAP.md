@@ -6,26 +6,30 @@ No discovery code, tests, dependencies or frontend were changed; no commit/push.
 The user subsequently authorized staged implementation and publication after each stage.
 Stage 0–1 is published at `63d991a6ded2988bc6da0090f80ee69775cf770d`.
 See [implementation status](IMPLEMENTATION_STATUS.md), [Stage 0–1 handoff](STAGE_01_HANDOFF.md)
-and [Stage 2 handoff](STAGE_02_HANDOFF.md).
+and [Stage 2 handoff](STAGE_02_HANDOFF.md). Stage 2 is published at
+`7f13f611c89fe2db190ecd2f798f68aa4f2b0871`; [Stage 3 handoff](STAGE_03_HANDOFF.md)
+records the subsequent typed composition gate.
 
 ## Implementation journal — 2026-09-25
 
 Stage 0 baseline and Stage 1 standalone contracts/readers are implemented; the old live/fixture
 writers and runtime remain active. New v3 serializers are exercised offline, not wired into
 acquisition, Jev or policy. Stage 2 adds verified storage hydration, cache acceptance, strict
-hypothesis parsing and dossier refusal. Stage 3 is next after its acceptance gate. The original table below remains
-the dependency order, not a claim that all typed consumers or discovery are implemented.
+hypothesis parsing and dossier refusal. Stage 3 is IMPLEMENTED: concrete acquisition functions,
+typed lane computations, compatible state summaries, integrity revisions and Jev/policy handoffs.
+Its full gate is 547 passed / 2 deselected, Ruff and strict mypy on 19 modules. The original table
+below remains the dependency order, not a claim that discovery or all v3 consumers are implemented.
 
-The authorized continuation is: Stage 2 integrity of consumption, then Stage 3 typed composition,
-then independently gated mutation discovery, optional 100-gene expression arm, survivor CNV and
+The requested Stage 2 then Stage 3 continuation stops after those two stages. Future work requires
+its own implementation authorization and gates: mutation discovery, optional 100-gene expression arm, survivor CNV and
 held-data descriptive actions. Preserve wide-policy-v2 mutation-required admission. No new semantic
 question set, reranking or autoresearch belongs to this implementation pass. Default cutover and
 removal of obsolete execution branches occur **only after all Stages 1–7 pass**. Historical readers,
 identities and offline comparators remain. Stage 8 stops without the labelled prospective corpus;
 Stage 9 remains deferred inference.
 
-Stage 3 also owns the reproduced legacy all-expression-availability-absent builder failure:
-`sum(empty)=0` conflicts with NOT_OBSERVED and raises INVALID_METRIC. Do not weaken the metric guard.
+Stage 3 fixes the reproduced all-expression-availability-absent composition failure with null /
+NOT_OBSERVED. The metric guard remains strict; this does not change valid historical artifacts.
 
 ## Decision
 
