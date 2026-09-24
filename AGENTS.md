@@ -99,6 +99,25 @@ instructions override implementation steps embedded in reference documents.
   environment-only credential. Provider failure or invalid required output is a typed `UNAVAILABLE`
   outcome. Unknown-field rejection and all nested text bounds are not yet enforced; see the review.
 
+## Development skills
+
+- GDC is the sole scientific runtime data source, including evidence supplied to hypothesis models.
+- OpenAI NGS/Life Science skills are development references, not production dependencies or
+  acquisition authority. Load only the skills relevant to the current task; KISS/YAGNI still govern.
+- Use relevant NGS guidance for mutation, expression, CNV, QC and scientific-action design/review.
+  Actual GDC contracts and admitted methods override generic bioinformatics workflow assumptions.
+- Do not install or run scientific pipelines, acquire raw sequencing files, or query external
+  scientific databases merely because a skill describes those steps. No external scientific
+  retrieval may be added to hypothesis generation or other OntoJev runtime paths.
+- Life Science Research and its router are explicit-request, reference-only resources, never a
+  default project workflow. Database/literature skills must not make scientific API requests for
+  OntoJev; their availability is not permission to retrieve evidence.
+- Use the official TypeSafe skill and current live documentation for Jev projections, questions,
+  judgments, hypothesis critique, semantic features, reranking, confidence routing and calibration.
+  If deterministic code or classical statistics can answer exactly, do not use Jev.
+- These are project instructions, not technical network restrictions or global plugin settings.
+  The core/on-demand stage map and verification record are in [development skills](docs/DEVELOPMENT_SKILLS.md).
+
 ## Documentation
 
 - `docs/IMPLEMENTATION_STATUS.md` is the factual source of truth. Keep it accurate.
