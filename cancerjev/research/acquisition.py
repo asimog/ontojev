@@ -102,6 +102,11 @@ class MutationOccurrenceScan:
     bytes_read: int
     distinct_cases_per_gene: dict[str, int]
     occurrence_docs_per_gene: dict[str, int]
+    consequences_per_gene: dict[str, dict[str, int]]
+    protein_positions_per_gene: dict[str, dict[int, int]]
+    canonical_transcript_counts_per_gene: dict[str, dict[str, int]]
+    records_without_canonical_rows: int
+    genes_without_canonical_rows: int
     sources: tuple[OperationalSource, ...]
     warnings: tuple[str, ...]
 
@@ -234,6 +239,11 @@ def acquire_project_mutation_occurrence_scan(transport: AcquisitionTransport, pr
                            f"occurrence scan page size {page_size} outside 1..10000")
     cases_per_gene: dict[str, set[str]] = {}
     docs_per_gene: dict[str, int] = {}
+    consequences_per_gene: dict[str, dict[str, int]] = {}
+    positions_per_gene: dict[str, dict[str, int]] = {}
+    transcripts_per_gene: dict[str, dict[str, int]] = {}
+    records_without_canonical_rows = 0
+    genes_without_canonical_rows: set[str] = set()
     sources: list[OperationalSource] = []
     warnings: list[str] = []
     seen_occurrence_ids: set[str] = set()
@@ -278,9 +288,36 @@ def acquire_project_mutation_occurrence_scan(transport: AcquisitionTransport, pr
                 )
             seen_occurrence_ids.add(record.occurrence_id)
             previous_last_id = record.occurrence_id
+            record_consequences: dict[str, set[str]] = {}
+            record_positions: dict[str, set[int]] = {}
+            record_transcripts: dict[str, set[str]] = {}
+            for row in record.canonical_rows:
+                if row.consequence:
+                    record_consequences.setdefault(row.gene_id, set()).add(row.consequence)
+                if row.protein_start is not None:
+                    record_positions.setdefault(row.gene_id, set()).add(row.protein_start)
+                if row.transcript_id:
+                    record_transcripts.setdefault(row.gene_id, set()).add(row.transcript_id)
+            if not record.canonical_rows:
+                records_without_canonical_rows += 1
             for gene_id in record.gene_ids:
                 cases_per_gene.setdefault(gene_id, set()).add(record.case_id)
                 docs_per_gene[gene_id] = docs_per_gene.get(gene_id, 0) + 1
+                for term in record_consequences.get(gene_id, ()):
+                    consequences_per_gene.setdefault(gene_id, {})
+                    consequences_per_gene[gene_id][term] = \
+                        consequences_per_gene[gene_id].get(term, 0) + 1
+                for position in record_positions.get(gene_id, ()):
+                    positions_per_gene.setdefault(gene_id, {})
+                    positions_per_gene[gene_id][position] = \
+                        positions_per_gene[gene_id].get(position, 0) + 1
+                for transcript_id in record_transcripts.get(gene_id, ()):
+                    transcripts_per_gene.setdefault(gene_id, {})
+                    transcripts_per_gene[gene_id][transcript_id] = \
+                        transcripts_per_gene[gene_id].get(transcript_id, 0) + 1
+                if (gene_id not in record_consequences and gene_id not in record_positions
+                        and gene_id not in record_transcripts):
+                    genes_without_canonical_rows.add(gene_id)
         offset += page.count
         if total == 0 or offset >= total:
             break
@@ -290,11 +327,24 @@ def acquire_project_mutation_occurrence_scan(transport: AcquisitionTransport, pr
                 f"occurrence scan stalled at offset {offset} of {total}",
             )
     assert total is not None
+    if records_without_canonical_rows:
+        warnings.append(
+            f"{project_id}: {records_without_canonical_rows} occurrence records carry no canonical "
+            "transcript annotation")
+    if genes_without_canonical_rows:
+        warnings.append(
+            f"{project_id}: {len(genes_without_canonical_rows)} annotated genes carry no canonical "
+            "consequence rows; their composition is NOT_OBSERVED")
     return MutationOccurrenceScan(
         project_id=project_id, page_size=page_size, page_count=page_count, total_occurrences=total,
         bytes_read=bytes_read,
         distinct_cases_per_gene={gene_id: len(cases) for gene_id, cases in cases_per_gene.items()},
         occurrence_docs_per_gene=docs_per_gene,
+        consequences_per_gene=consequences_per_gene,
+        protein_positions_per_gene=positions_per_gene,
+        canonical_transcript_counts_per_gene=transcripts_per_gene,
+        records_without_canonical_rows=records_without_canonical_rows,
+        genes_without_canonical_rows=len(genes_without_canonical_rows),
         sources=tuple(sources), warnings=tuple(warnings),
     )
 

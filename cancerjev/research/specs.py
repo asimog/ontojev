@@ -230,7 +230,7 @@ LUAD_DISCOVERY_V1 = DiscoverySpec(
     order="GENE_ID_ASC",
     offset=0,
     universe_limit=MAX_UNIVERSE_DEFECT_CEILING,
-    occurrence_scan_page_size=5000,
+    occurrence_scan_page_size=2500,
 )
 
 LUAD_RESEARCH_V1 = ResearchSpec(

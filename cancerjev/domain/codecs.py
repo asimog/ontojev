@@ -31,6 +31,7 @@ from cancerjev.domain.discovery import (
     ExpressionDiscoveryResult,
     ExpressionDiscoverySpec,
     ExpressionTailDescriptor,
+    MutationDescriptiveEvidence,
     MutationDiscoveryEntry,
     MutationDiscoveryResult,
 )
@@ -150,10 +151,48 @@ def _comparator(value: object) -> DiscoveryComparator | None:
 
 
 def _entry(value: object) -> MutationDiscoveryEntry:
-    d = obj(value, "entity outcome disposition reason rank")
-    return MutationDiscoveryEntry(_entity(d["entity"]), _mutation(d["outcome"]),
-                                  _disposition(d["disposition"]), string(d["reason"]),
-                                  None if d["rank"] is None else integer(d["rank"]))
+    d = obj(value)
+    required = {"entity", "outcome", "disposition", "reason", "rank"}
+    allowed = required | {"descriptive"}
+    require(set(d) <= allowed, "entry carries unexpected fields")
+    require(set(d) >= required, "entry is missing required fields")
+    descriptive = d.get("descriptive")
+    return MutationDiscoveryEntry(
+        _entity(d["entity"]), _mutation(d["outcome"]), _disposition(d["disposition"]),
+        string(d["reason"]), None if d["rank"] is None else integer(d["rank"]),
+        None if descriptive is None else _descriptive(descriptive))
+
+
+def _string_int_pairs(value: object) -> tuple[tuple[str, int], ...]:
+    pairs: list[tuple[str, int]] = []
+    for item in seq(value):
+        parts = seq(item)
+        require(len(parts) == 2, "expected a two-item pair")
+        pairs.append((string(parts[0]), integer(parts[1])))
+    return tuple(pairs)
+
+
+def _int_int_pairs(value: object) -> tuple[tuple[int, int], ...]:
+    pairs: list[tuple[int, int]] = []
+    for item in seq(value):
+        parts = seq(item)
+        require(len(parts) == 2, "expected a two-item pair")
+        pairs.append((integer(parts[0]), integer(parts[1])))
+    return tuple(pairs)
+
+
+def _descriptive(value: object) -> MutationDescriptiveEvidence:
+    d = obj(value, "consequence_composition canonical_transcript_n protein_position_top "
+                   "hotspot_descriptor review_trigger method limitations")
+    return MutationDescriptiveEvidence(
+        _string_int_pairs(d["consequence_composition"]),
+        integer(d["canonical_transcript_n"]),
+        _int_int_pairs(d["protein_position_top"]),
+        optional_string(d["hotspot_descriptor"]),
+        optional_string(d["review_trigger"]),
+        _method_identity(d["method"]),
+        string_tuple(d["limitations"]),
+    )
 
 
 _SOURCE_REQUIRED_FIELDS = ("endpoint", "request_hash", "response_hash", "parser_version", "release",
@@ -666,6 +705,9 @@ def discovery_identity(result: MutationDiscoveryResult) -> str:
     assert isinstance(payload, dict)
     # Operational attempt/cache/artifact links never contribute to identity.
     payload.pop("sources")
+    for entry in payload.get("entries", []):
+        if isinstance(entry, dict) and entry.get("descriptive") is None:
+            entry.pop("descriptive", None)
     return digest({"schema_version": DISCOVERY_SCHEMA_VERSION, "kind": "MUTATION_DISCOVERY_RESULT",
                    **payload})
 

@@ -11,10 +11,12 @@ legacy NOT_OBSERVED bucket semantics cannot reappear.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from uuid import uuid4
 
 import pytest
 
+from cancerjev.domain.discovery import DiscoveryDisposition
 from cancerjev.domain.measurements import (
     Acquisition,
     ObservedCount,
@@ -66,6 +68,9 @@ def _scan(distinct: dict[str, int], docs: dict[str, int] | None = None) -> Mutat
     return MutationOccurrenceScan(
         project_id=PROJECT, page_size=40, page_count=1, total_occurrences=sum(docs_map.values()),
         bytes_read=0, distinct_cases_per_gene=dict(distinct), occurrence_docs_per_gene=docs_map,
+        consequences_per_gene={}, protein_positions_per_gene={},
+        canonical_transcript_counts_per_gene={}, records_without_canonical_rows=0,
+        genes_without_canonical_rows=0,
         sources=(_source("/ssm_occurrences"),), warnings=())
 
 
@@ -122,12 +127,13 @@ def test_complete_scan_zero_and_absent_gene_are_observed_zeroes():
     zero = by_id[_gene_id(4)]
     assert isinstance(zero.outcome.affected_cases, ObservedCount)
     assert zero.outcome.affected_cases.value == 0
-    assert zero.disposition.value == "RETAINED" and zero.rank == 1
+    assert zero.disposition.value == "DROP" and zero.rank is None
+    assert zero.reason == "ZERO_OBSERVED_AFFECTED_CASES"
     absent = by_id[_gene_id(5)]
     assert isinstance(absent.outcome.affected_cases, ObservedCount)
     assert absent.outcome.affected_cases.value == 0
-    assert absent.disposition.value == "RETAINED" and absent.rank == 2
-    assert survivors == (_gene_id(4), _gene_id(5))
+    assert absent.disposition.value == "DROP" and absent.rank is None
+    assert survivors == ()
 
 
 def test_partial_coverage_blocks_eligibility_for_complete_scan():
@@ -166,7 +172,30 @@ def test_every_requested_gene_receives_exactly_one_disposition():
     for entry in entries:
         totals[entry.disposition.value] = totals.get(entry.disposition.value, 0) + 1
     assert sum(totals.values()) == len(ids)
-    assert totals == {"RETAINED": 6}
+    assert totals == {"RETAINED": 3, "DROP": 3}
+
+
+def test_drop_and_jev_review_carry_enforced_preconditions():
+    ids = _ids(1, 2)
+    scan = _scan({_gene_id(1): 20, _gene_id(2): 0})
+    entries, _ = _entries_for(ids, scan)
+    by_id = {entry.entity.gene_id: entry for entry in entries}
+    positive = by_id[_gene_id(1)]
+    zero = by_id[_gene_id(2)]
+
+    assert positive.disposition is DiscoveryDisposition.RETAINED
+    assert zero.disposition is DiscoveryDisposition.DROP
+
+    with pytest.raises(Exception) as failure:
+        replace(positive, disposition=DiscoveryDisposition.DROP, rank=None)
+    assert "zero observed affected cases" in str(failure.value)
+
+    with pytest.raises(Exception) as failure:
+        replace(positive, disposition=DiscoveryDisposition.JEV_REVIEW, rank=1)
+    assert "JEV_REVIEW" in str(failure.value)
+
+    assert positive.descriptive is not None
+    assert positive.descriptive.review_trigger is None
 
 
 class _UniverseTransport:

@@ -143,7 +143,8 @@ def test_cnv_discovery_replay_binds_stage4_and_preserves_conflicts(runtime):
 
     assert result.survivor_ids == mutation_result.survivor_ids
     assert result.mutation_discovery_hash
-    assert [request.endpoint.name for request in transport.requests].count("cnv_occurrences") == 6
+    assert [request.endpoint.name for request in transport.requests].count(
+        "cnv_occurrences") == len(mutation_result.survivor_ids)
     first = result.entries[0]
     assert isinstance(first.outcome, CnvOccurrenceResult)
     assert [item.raw_category for item in first.categories] == ["Amplification", "Gain", "Loss"]

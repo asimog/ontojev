@@ -28,12 +28,21 @@ from cancerjev.domain.codecs import (
     EXPRESSION_DISCOVERY_SCHEMA_VERSION,
     STATE_SCHEMA_VERSION,
 )
-from cancerjev.domain.discovery import REDUCER_METHOD_ID, REDUCER_VERSION
+from cancerjev.domain.discovery import (
+    MUTATION_CANONICAL_COMPOSITION_METHOD_ID,
+    MUTATION_CANONICAL_COMPOSITION_VERSION,
+    REDUCER_METHOD_ID,
+    REDUCER_VERSION,
+)
 from cancerjev.domain.dossier import DOSSIER_SCHEMA_VERSION
 from cancerjev.domain.events import SUPPORTED_SCHEMA_VERSION
 from cancerjev.gdc.endpoints import GDC_DATA_MODEL_REFERENCE
 from cancerjev.research.file_admission import FILE_ADMISSION_VERSION
 from cancerjev.research.specs import LUAD_DISCOVERY_V1
+from cancerjev.science.methods import (
+    MUTATION_INFERENCE_DECISION_ID,
+    MUTATION_INFERENCE_DECISION_VERSION,
+)
 from cancerjev.jev.projection import (
     EVIDENCE_PROJECTION_VERSION,
     HYPOTHESIS_PROJECTION_VERSION,
@@ -73,6 +82,10 @@ def collect_facts() -> dict[str, object]:
         "gdc_data_model_reference": GDC_DATA_MODEL_REFERENCE,
         "systematic_universe_method": LUAD_DISCOVERY_V1.universe_method,
         "open_file_admission_version": FILE_ADMISSION_VERSION,
+        "mutation_composition_method": (
+            f"{MUTATION_CANONICAL_COMPOSITION_METHOD_ID} v{MUTATION_CANONICAL_COMPOSITION_VERSION}"),
+        "mutation_inference_decision": (
+            f"{MUTATION_INFERENCE_DECISION_ID} v{MUTATION_INFERENCE_DECISION_VERSION}"),
         "hypothesis_projection_version": HYPOTHESIS_PROJECTION_VERSION,
         "hypothesis_question_set": HYPOTHESIS_QUESTION_SET_VERSION,
         "mutation_discovery_result_schema_version": DISCOVERY_SCHEMA_VERSION,

@@ -15,7 +15,7 @@ from uuid import uuid4
 
 import pytest
 
-from cancerjev.gdc.endpoints import ssm_occurrence_page_request
+from cancerjev.gdc.endpoints import SSM_OCCURRENCE_FIELDS, ssm_occurrence_page_request
 from cancerjev.gdc.transport import GDCResponse
 from cancerjev.research.acquisition import (
     LiveRunError,
@@ -156,10 +156,7 @@ def test_scan_request_builder_is_fixed():
     assert params["sort"] == "ssm_occurrence_id:asc"
     assert json.loads(params["filters"]) == {
         "op": "in", "content": {"field": "case.project.project_id", "value": [PROJECT]}}
-    assert params["fields"].split(",") == [
-        "ssm_occurrence_id", "case.case_id", "case.project.project_id",
-        "ssm.consequence.transcript.gene.gene_id",
-    ]
+    assert params["fields"].split(",") == list(SSM_OCCURRENCE_FIELDS)
     assert request.logical_query_id == f"ssm-occurrence-scan:{PROJECT}"
     assert request.page == 3
     with pytest.raises(Exception, match="SSM occurrence size"):

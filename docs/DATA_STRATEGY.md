@@ -267,6 +267,8 @@ Do not build a large provenance ontology without a scientific consumer.
 
 Implemented now: `ScientificSource` carries optional `workflow_family`, `caller_family`, `strategy` and `annotation_context` provenance fields; expression workflow coverage is measured with one aggregate open-file facet request per cohort (per-workflow file counts recorded, `_missing` coverage recorded as a limitation and the single-family source annotation withheld, never a silent full-coverage claim); and the mutation occurrence-scan document pins its requested field set and field-set hash. Cross-workflow comparison remains forbidden by default (`Compatibility.UNVERIFIED`).
 
+The mutation scan's canonical consequence fields were measured on the live provider (500-record A/B: 297,136 → 612,999 bytes, ×2.06). To keep every page under the 5 MiB per-response cap, the declared scan page size is 2,500 records and the scan page cap is 128; the 256 MiB scan byte budget still fails closed on exhaustion. Transcript protein-position fields are not exposed by `/ssm_occurrences`, so protein-position recurrence and hotspot descriptors stay unavailable from the API plane and are recorded as such.
+
 ## 13. Testing and reconciliation
 
 Selection-critical scientific measurements require independent validation where feasible.

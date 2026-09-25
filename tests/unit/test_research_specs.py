@@ -123,7 +123,7 @@ def test_luad_spec_round_trips_through_schema_eight():
     assert emitted["discovery"] == {
         "universe_method": "GENE_ID_ASC_INDEXED_COMPLETE_V1", "biotype": "protein_coding",
         "order": "GENE_ID_ASC", "offset": 0, "universe_limit": 100_000,
-        "occurrence_scan_page_size": 5000,
+        "occurrence_scan_page_size": 2500,
     }
     payload = json.loads(json.dumps(emitted))
     restored = research_spec_from_dict(payload)

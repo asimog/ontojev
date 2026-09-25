@@ -117,10 +117,21 @@ class GeneCaseCounts:
 
 
 @dataclass(frozen=True)
+class CanonicalConsequenceRow:
+    """One canonical-transcript consequence row; missing terms stay NOT_OBSERVED."""
+
+    gene_id: str
+    transcript_id: str | None
+    consequence: str | None
+    protein_start: int | None
+
+
+@dataclass(frozen=True)
 class SsmOccurrenceRecord:
     occurrence_id: str
     case_id: str
     gene_ids: tuple[str, ...]
+    canonical_rows: tuple[CanonicalConsequenceRow, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -683,14 +694,51 @@ def parse_ssm_occurrence_page(
                               f"ssm_occurrences: unrequested project {project_id}")
         consequences = _optional(hit, "ssm.consequence", (list,), "ssm_occurrences") or []
         gene_ids: set[str] = set()
+        canonical_rows: list[CanonicalConsequenceRow] = []
         for consequence in consequences:
             if not isinstance(consequence, dict):
                 raise ParserError("MALFORMED_JSON", "ssm_occurrences: consequence is not an object")
             gene_id = _optional(consequence, "transcript.gene.gene_id", (str,), "ssm_occurrences")
-            if gene_id:
-                gene_ids.add(gene_id)
+            if not gene_id:
+                continue
+            gene_ids.add(gene_id)
+            is_canonical = _optional(consequence, "transcript.is_canonical", (bool,),
+                                     "ssm_occurrences")
+            if is_canonical is not True:
+                continue
+            transcript_id = _optional(consequence, "transcript.transcript_id", (str,),
+                                      "ssm_occurrences")
+            raw_consequence = _optional(consequence, "transcript.consequence_type", (str, list),
+                                        "ssm_occurrences")
+            if raw_consequence is None:
+                terms: tuple[str | None, ...] = (None,)
+            elif isinstance(raw_consequence, str):
+                terms = (raw_consequence or None,)
+            else:
+                parsed: list[str | None] = []
+                for item in raw_consequence:
+                    if not isinstance(item, str):
+                        raise ParserError("INVALID_FIELD",
+                                          "ssm_occurrences: consequence term must be text")
+                    if item:
+                        parsed.append(item)
+                terms = tuple(parsed) or (None,)
+            transcript_node = consequence.get("transcript")
+            raw_protein_start = (transcript_node.get("protein_start")
+                                 if isinstance(transcript_node, dict) else None)
+            if isinstance(raw_protein_start, bool):
+                raise ParserError("INVALID_FIELD",
+                                  "ssm_occurrences: protein_start must be an integer")
+            protein_start = _optional(consequence, "transcript.protein_start", (int,),
+                                      "ssm_occurrences")
+            for term in terms:
+                canonical_rows.append(CanonicalConsequenceRow(
+                    gene_id=gene_id, transcript_id=transcript_id, consequence=term,
+                    protein_start=protein_start,
+                ))
         records.append(SsmOccurrenceRecord(
             occurrence_id=occurrence_id, case_id=case_id, gene_ids=tuple(sorted(gene_ids)),
+            canonical_rows=tuple(canonical_rows),
         ))
     pagination = _require(document, "data.pagination", (dict,), "ssm_occurrences")
     values: dict[str, int] = {}

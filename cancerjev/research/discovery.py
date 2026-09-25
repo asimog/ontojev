@@ -36,6 +36,7 @@ from cancerjev.domain.discovery import (
     DiscoveryComparator,
     DiscoveryDisposition,
     DiscoverySpec,
+    MutationDescriptiveEvidence,
     MutationDiscoveryEntry,
     MutationDiscoveryResult,
 )
@@ -85,6 +86,7 @@ from cancerjev.research.acquisition import (
 from cancerjev.research.shards import ledger_summary, publish_shard_ledger
 from cancerjev.research.specs import ResearchSpec
 from cancerjev.science.methods import scanned_mutation_result
+from cancerjev.science.mutation import mutation_descriptive_evidence
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
 
@@ -234,17 +236,27 @@ def build_discovery_entries(project_id: str, genes: dict[str, GeneRecord],
     """One typed outcome and exactly one disposition per requested universe gene.
 
     Every universe gene gets an observed distinct-case count from the complete
-    scan (an absent gene is an observed zero); genes are ordered by affected-case
-    count descending with gene_id ascending as the deterministic tie break, and
-    the first ``max_survivors`` are retained. Entries are emitted in universe
-    order.
+    scan (an absent gene is an observed zero) plus descriptive canonical-only
+    composition. Positive genes are ordered by affected-case count descending
+    with gene_id ascending as the deterministic tie break; the first
+    ``max_survivors`` are retained (JEV_REVIEW when a declared trigger fires);
+    zero-count genes are DROP and positive non-survivors are
+    BELOW_SURVIVOR_CUTOFF. Entries are emitted in universe order.
     """
     candidates: list[_Candidate] = []
+    descriptive_of: dict[str, MutationDescriptiveEvidence] = {}
     for gene_id in ordered_ids:
         gene = genes[gene_id]
         outcome, eligible = _mutation_outcome(
             project_id, gene, population_frame, scan, release, coverage, coverage_source,
             coverage_complete, scan_source)
+        distinct, occurrence_docs = scan.counts_for(gene_id)
+        descriptive_of[gene_id] = mutation_descriptive_evidence(
+            distinct_cases=distinct, occurrence_docs=occurrence_docs,
+            consequences=scan.consequences_per_gene.get(gene_id, {}),
+            positions=scan.protein_positions_per_gene.get(gene_id, {}),
+            transcript_counts=scan.canonical_transcript_counts_per_gene.get(gene_id, {}),
+        )
         if eligible:
             affected = outcome.affected_cases
             candidates.append(_Candidate(gene_id, outcome,
@@ -254,28 +266,36 @@ def build_discovery_entries(project_id: str, genes: dict[str, GeneRecord],
             candidates.append(_Candidate(gene_id, outcome, None,
                                          DiscoveryDisposition.MUTATION_AGGREGATION_PARTIAL,
                                          "MUTATION_COVERAGE_PARTIAL"))
-    eligible_sorted = sorted((candidate for candidate in candidates
-                              if candidate.count_value is not None),
+    positive_sorted = sorted((candidate for candidate in candidates
+                              if candidate.count_value is not None and candidate.count_value > 0),
                              key=_Candidate.reduction_key)
     dispositions: dict[str, tuple[DiscoveryDisposition, int | None, str]] = {}
     survivor_ids: list[str] = []
-    for index, candidate in enumerate(eligible_sorted):
+    for index, candidate in enumerate(positive_sorted):
         retained = index < max_survivors
-        disposition = (DiscoveryDisposition.RETAINED if retained
-                       else DiscoveryDisposition.BELOW_SURVIVOR_CUTOFF)
         if retained:
+            disposition = (DiscoveryDisposition.JEV_REVIEW
+                           if descriptive_of[candidate.gene_id].review_trigger is not None
+                           else DiscoveryDisposition.RETAINED)
             survivor_ids.append(candidate.gene_id)
+        else:
+            disposition = DiscoveryDisposition.BELOW_SURVIVOR_CUTOFF
         dispositions[candidate.gene_id] = (disposition, index + 1, candidate.reason)
     for candidate in candidates:
-        if candidate.gene_id not in dispositions:
-            assert candidate.disposition is not None
-            dispositions[candidate.gene_id] = (candidate.disposition, None, candidate.reason)
+        if candidate.gene_id in dispositions:
+            continue
+        if candidate.count_value == 0:
+            dispositions[candidate.gene_id] = (
+                DiscoveryDisposition.DROP, None, "ZERO_OBSERVED_AFFECTED_CASES")
+            continue
+        assert candidate.disposition is not None
+        dispositions[candidate.gene_id] = (candidate.disposition, None, candidate.reason)
     outcome_of = {candidate.gene_id: candidate.outcome for candidate in candidates}
     entries = tuple(
         MutationDiscoveryEntry(
             entity=EntityRef(gene_id, genes[gene_id].symbol, release), outcome=outcome_of[gene_id],
             disposition=dispositions[gene_id][0], reason=dispositions[gene_id][2],
-            rank=dispositions[gene_id][1],
+            rank=dispositions[gene_id][1], descriptive=descriptive_of[gene_id],
         )
         for gene_id in ordered_ids
     )
@@ -318,6 +338,8 @@ def publish_occurrence_scan(artifacts: ArtifactStore, repository: Repository, ru
         "bytes_read": scan.bytes_read,
         "requested_fields": list(SSM_OCCURRENCE_FIELDS),
         "field_set_hash": field_set_hash,
+        "records_without_canonical_rows": scan.records_without_canonical_rows,
+        "genes_without_canonical_rows": scan.genes_without_canonical_rows,
         "distinct_cases_per_gene": dict(sorted(scan.distinct_cases_per_gene.items())),
         "occurrence_docs_per_gene": dict(sorted(scan.occurrence_docs_per_gene.items())),
         "page_sources": [asdict(page_source.source) for page_source in scan.sources],

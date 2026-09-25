@@ -1,0 +1,48 @@
+{
+  "authentication_headers_sent": [],
+  "body_bytes_read": 252102,
+  "body_sha256": "85c10064a749f38fa7cfd058998c7e880f65e9dc37e9cdcbf67cb5e825a56b99",
+  "completeness": "COMPLETE",
+  "endpoint": "/ssm_occurrences",
+  "error": null,
+  "from_cache": false,
+  "http_status": 200,
+  "latency_ms": 2957,
+  "method": "GET",
+  "normalized_body": null,
+  "normalized_params": {
+    "fields": "ssm_occurrence_id,case.case_id,case.project.project_id,ssm.consequence.transcript.gene.gene_id,ssm.consequence.transcript.consequence_type,ssm.consequence.transcript.is_canonical,ssm.consequence.transcript.transcript_id",
+    "filters": "{\"content\":{\"field\":\"case.project.project_id\",\"value\":[\"TCGA-LUAD\"]},\"op\":\"in\"}",
+    "from": "0",
+    "size": "200",
+    "sort": "ssm_occurrence_id:asc"
+  },
+  "parser_version": "contract-probe-v1",
+  "per_response_cap": null,
+  "probe_name": "luad_ssm_occurrence_page",
+  "request_headers_sent": {
+    "Accept": "application/json",
+    "Accept-Encoding": "identity",
+    "User-Agent": "CancerJEV/0.2 (public open-access research; anonymous)"
+  },
+  "response_headers": {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "Content-Disposition",
+    "content-length": "252102",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 21:18:03 GMT",
+    "server": "Apache",
+    "strict-transport-security": "max-age=63072001; includeSubdomains; preload",
+    "vary": "Accept-Encoding",
+    "x-frame-options": "SAMEORIGIN",
+    "x-gdc-commit": "8f7c2a51ab0084b216ad1b62a3fae8b945439c53",
+    "x-gdc-data_release": "Data Release 46.0 - August 10, 2026",
+    "x-gdc-data_release_version": "{'major': 46, 'minor': 0, 'release_date': '2026-08-10'}",
+    "x-gdc-status": "OK",
+    "x-gdc-tag": "8.5.0",
+    "x-gdc-version": "1"
+  },
+  "response_truncated_by_probe_cap": false,
+  "retrieved_at": "2026-09-25T21:18:02.592333Z",
+  "url": "/ssm_occurrences?fields=ssm_occurrence_id%2Ccase.case_id%2Ccase.project.project_id%2Cssm.consequence.transcript.gene.gene_id%2Cssm.consequence.transcript.consequence_type%2Cssm.consequence.transcript.is_canonical%2Cssm.consequence.transcript.transcript_id&filters=%7B%22content%22%3A%7B%22field%22%3A%22case.project.project_id%22%2C%22value%22%3A%5B%22TCGA-LUAD%22%5D%7D%2C%22op%22%3A%22in%22%7D&from=0&size=200&sort=ssm_occurrence_id%3Aasc"
+}

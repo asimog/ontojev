@@ -131,8 +131,8 @@ def test_demo_run_event_stream_and_caps_are_canonical(runtime):
     assert started["research_spec"]["schema_version"] == RESEARCH_SPEC_SCHEMA_VERSION
     assert started["research_spec"]["spec_id"] == "LUAD_RESEARCH_V1"
     assert started["caps"] == {
-        "max_requests": 150,
-        "max_bytes": 64 * 1024 * 1024,
+        "max_requests": 300,
+        "max_bytes": 384 * 1024 * 1024,
         "per_response_bytes": 5 * 1024 * 1024,
         "max_case_ids": 250,
         "max_gene_ids": 100,

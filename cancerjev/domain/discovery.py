@@ -10,14 +10,16 @@ discovery framework.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import StrEnum
+from typing import Any
 
 from cancerjev.domain.measurements import (
     MAX_UNIVERSE_REQUEST_LIMIT,
     EntityRef,
     MethodIdentityRef,
     MetricAvailability,
+    ObservedCount,
     OperationalSource,
     PopulationFrame,
     TestedUniverse,
@@ -49,8 +51,10 @@ DISCOVERY_RUN_MAX_PAGES_PER_QUERY = MAX_UNIVERSE_DEFECT_PAGES
 EXPRESSION_RUN_MAX_REQUESTS = 1500
 EXPRESSION_RUN_MAX_BYTES = 384 * 1024 * 1024
 MAX_OCCURRENCE_SCAN_PAGE_SIZE = 10000
-OCCURRENCE_SCAN_MAX_PAGES = 64
+OCCURRENCE_SCAN_MAX_PAGES = 128
 OCCURRENCE_SCAN_MAX_BYTES = 256 * 1024 * 1024
+LIVE_RUN_MAX_REQUESTS = 300
+LIVE_RUN_MAX_BYTES = 384 * 1024 * 1024
 MAX_DISCOVERY_SURVIVORS = 10
 MAX_EXPRESSION_BATCH_SIZE = 100
 MIN_EXPRESSION_TAIL_N = 20
@@ -60,6 +64,32 @@ CNV_PAGE_SIZE = 250
 UNIVERSE_SOURCE = "GDC_GENES_INDEXED_PREFIX"
 REDUCER_METHOD_ID = "MUTATION_AFFECTED_CASE_COUNT_DESC_V1"
 REDUCER_VERSION = "3"
+MUTATION_CANONICAL_COMPOSITION_METHOD_ID = "MUTATION_CANONICAL_COMPOSITION_V1"
+MUTATION_CANONICAL_COMPOSITION_VERSION = "1"
+MUTATION_HOTSPOT_TOP_POSITIONS = 5
+MUTATION_JEV_REVIEW_POLICY_VERSION = "mutation-dispositions-v1"
+JEV_REVIEW_MAX_OCCURRENCE_PER_CASE_RATIO = 4
+JEV_REVIEW_HOTSPOT_MIN_RECORDS = 20
+JEV_REVIEW_HOTSPOT_TOP_POSITION_SHARE = 0.25
+JEV_REVIEW_OCCURRENCE_RATIO_TRIGGER = "OCCURRENCE_PER_CASE_RATIO_GT_4"
+JEV_REVIEW_HOTSPOT_TRIGGER = "HOTSPOT_CONCENTRATION"
+MUTATION_COMPOSITION_LIMITATIONS = (
+    "Composition counts canonical-transcript occurrence terms only; records without canonical "
+    "annotation are NOT_OBSERVED, never negative.",
+    "Descriptive composition, positions and hotspot descriptors carry no p-values, q-values or "
+    "driver-significance claim.",
+    "Protein-position recurrence and hotspot descriptors require an admitted file source; "
+    "/ssm_occurrences exposes no transcript protein-position field, so they stay unavailable here.",
+)
+
+
+def mutation_composition_method() -> MethodIdentityRef:
+    """The one declared canonical-consequence composition identity."""
+    return MethodIdentityRef(
+        MUTATION_CANONICAL_COMPOSITION_METHOD_ID, MUTATION_CANONICAL_COMPOSITION_VERSION,
+        digest({"canonical_only": True, "deduplicate": "OCCURRENCE_X_CONSEQUENCE",
+                "top_positions": MUTATION_HOTSPOT_TOP_POSITIONS}),
+    )
 
 UNIVERSE_LIMITATION = (
     "The systematic universe is the first deterministic prefix of the indexed protein-coding "
@@ -190,10 +220,83 @@ class CnvDiscoverySpec:
                 "unsupported CNV category field")
 
 
+@dataclass(frozen=True)
+class MutationDescriptiveEvidence:
+    """Descriptive mutation composition under one named canonical-only method.
+
+    Counts are occurrence-level: one occurrence contributes at most once per
+    canonical consequence term and at most once per protein position, so
+    transcript duplication cannot inflate either distribution. No p-value,
+    q-value or driver-significance claim is representable here.
+    """
+
+    consequence_composition: tuple[tuple[str, int], ...]
+    canonical_transcript_n: int
+    protein_position_top: tuple[tuple[int, int], ...]
+    hotspot_descriptor: str | None
+    review_trigger: str | None
+    method: MethodIdentityRef
+    limitations: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        require(type(self.consequence_composition) is tuple
+                and all(isinstance(item, tuple) and len(item) == 2
+                        and isinstance(item[0], str) and bool(item[0])
+                        and isinstance(item[1], int) and not isinstance(item[1], bool)
+                        and item[1] > 0
+                        for item in self.consequence_composition),
+                "invalid consequence composition")
+        terms = [item[0] for item in self.consequence_composition]
+        require(terms == sorted(terms) and len(set(terms)) == len(terms),
+                "consequence composition must be sorted and unique")
+        count(self.canonical_transcript_n, "canonical transcript count")
+        require(type(self.protein_position_top) is tuple
+                and all(isinstance(item, tuple) and len(item) == 2
+                        and isinstance(item[0], int) and not isinstance(item[0], bool)
+                        and item[0] >= 0
+                        and isinstance(item[1], int) and not isinstance(item[1], bool)
+                        and item[1] > 0
+                        for item in self.protein_position_top),
+                "invalid protein-position top")
+        require(len(self.protein_position_top) <= MUTATION_HOTSPOT_TOP_POSITIONS,
+                "protein-position top exceeds the declared size")
+        positions = [item[0] for item in self.protein_position_top]
+        require(len(set(positions)) == len(positions), "protein positions must be unique")
+        require(list(self.protein_position_top)
+                == sorted(self.protein_position_top, key=lambda item: (-item[1], item[0])),
+                "protein positions must be count-descending then position-ascending")
+        if self.hotspot_descriptor is not None:
+            text(self.hotspot_descriptor, "hotspot descriptor")
+        if self.review_trigger is not None:
+            require(self.review_trigger in {JEV_REVIEW_OCCURRENCE_RATIO_TRIGGER,
+                                            JEV_REVIEW_HOTSPOT_TRIGGER},
+                    "unknown review trigger")
+        if self.review_trigger == JEV_REVIEW_HOTSPOT_TRIGGER:
+            require(self.hotspot_descriptor is not None,
+                    "the hotspot review trigger requires a hotspot descriptor")
+        require(self.method == mutation_composition_method(),
+                "descriptive composition method identity mismatch")
+        require(self.limitations == MUTATION_COMPOSITION_LIMITATIONS,
+                "descriptive composition limitations changed")
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "consequence_composition": [list(item) for item in self.consequence_composition],
+            "canonical_transcript_n": self.canonical_transcript_n,
+            "protein_position_top": [list(item) for item in self.protein_position_top],
+            "hotspot_descriptor": self.hotspot_descriptor,
+            "review_trigger": self.review_trigger,
+            "method": asdict(self.method),
+            "limitations": list(self.limitations),
+        }
+
+
 class DiscoveryDisposition(StrEnum):
     """Exactly one final disposition per requested universe gene."""
 
     RETAINED = "RETAINED"
+    JEV_REVIEW = "JEV_REVIEW"
+    DROP = "DROP"
     BELOW_SURVIVOR_CUTOFF = "BELOW_SURVIVOR_CUTOFF"
     MUTATION_BUCKET_NOT_OBSERVED = "MUTATION_BUCKET_NOT_OBSERVED"
     MUTATION_AGGREGATION_PARTIAL = "MUTATION_AGGREGATION_PARTIAL"
@@ -209,6 +312,7 @@ class MutationDiscoveryEntry:
     disposition: DiscoveryDisposition
     reason: str
     rank: int | None
+    descriptive: MutationDescriptiveEvidence | None = None
 
     def __post_init__(self) -> None:
         require(isinstance(self.entity, EntityRef), "invalid entry entity")
@@ -218,12 +322,24 @@ class MutationDiscoveryEntry:
                 "entry entity must match its outcome entity")
         require(isinstance(self.disposition, DiscoveryDisposition), "invalid disposition")
         text(self.reason, "entry reason")
+        if self.descriptive is not None:
+            require(isinstance(self.descriptive, MutationDescriptiveEvidence),
+                    "invalid descriptive evidence")
         ranked = self.disposition in (DiscoveryDisposition.RETAINED,
+                                      DiscoveryDisposition.JEV_REVIEW,
                                       DiscoveryDisposition.BELOW_SURVIVOR_CUTOFF)
         if self.rank is not None:
             count(self.rank, "entry rank")
             require(self.rank >= 1, "entry rank must be at least 1")
         require(ranked == (self.rank is not None), "rank presence must match ranked disposition")
+        if self.disposition is DiscoveryDisposition.DROP:
+            affected = self.outcome.affected_cases
+            require(isinstance(affected, ObservedCount) and affected.value == 0,
+                    "DROP is reserved for zero observed affected cases")
+        if self.disposition is DiscoveryDisposition.JEV_REVIEW:
+            require(self.descriptive is not None
+                    and self.descriptive.review_trigger is not None,
+                    "JEV_REVIEW requires a declared descriptive trigger")
 
 
 @dataclass(frozen=True)

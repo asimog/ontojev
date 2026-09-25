@@ -34,6 +34,9 @@ SSM_OCCURRENCE_FIELDS = (
     "case.case_id",
     "case.project.project_id",
     "ssm.consequence.transcript.gene.gene_id",
+    "ssm.consequence.transcript.consequence_type",
+    "ssm.consequence.transcript.is_canonical",
+    "ssm.consequence.transcript.transcript_id",
 )
 
 

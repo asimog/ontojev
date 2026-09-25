@@ -231,9 +231,9 @@ def test_discovery_replay_persists_and_reloads_the_typed_result(runtime):
 
     # Deterministic reduction: distinct affected cases desc, gene_id tie break, observed zeros.
     by_id = {entry.entity.gene_id: entry for entry in result.entries}
-    assert result.survivor_ids == (G2, G1, G3, G6, G5, G4)
+    assert result.survivor_ids == (G2, G1, G3, G6, G5)
     ranks = {gene_id: entry.rank for gene_id, entry in by_id.items()}
-    assert ranks == {G2: 1, G1: 2, G3: 3, G6: 4, G5: 5, G4: 6}
+    assert ranks == {G2: 1, G1: 2, G3: 3, G6: 4, G5: 5, G4: None}
     values = {gene_id: entry.outcome.affected_cases.value for gene_id, entry in by_id.items()}
     assert values == {G1: 50, G2: 51, G3: 30, G4: 0, G5: 2, G6: 7}
     assert all(isinstance(entry.outcome.affected_cases, ObservedCount)
@@ -241,7 +241,10 @@ def test_discovery_replay_persists_and_reloads_the_typed_result(runtime):
     totals: dict[str, int] = {}
     for entry in result.entries:
         totals[entry.disposition.value] = totals.get(entry.disposition.value, 0) + 1
-    assert totals == {"RETAINED": 6}
+    assert totals == {"RETAINED": 5, "DROP": 1}
+    assert by_id[G4].reason == "ZERO_OBSERVED_AFFECTED_CASES"
+    assert all(entry.descriptive is not None for entry in result.entries)
+    assert by_id[G1].descriptive.consequence_composition == ()
 
     # The affected measurement cites the immutable scan bundle, not an aggregation bucket.
     first_source = by_id[G1].outcome.affected_cases.sources[0]

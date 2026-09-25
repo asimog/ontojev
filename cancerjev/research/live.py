@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from cancerjev.config import Settings
 from cancerjev.domain.codecs import state_identity, write_state
+from cancerjev.domain.discovery import LIVE_RUN_MAX_BYTES, LIVE_RUN_MAX_REQUESTS
 from cancerjev.domain.envelopes import StateRecord
 from cancerjev.domain.events import canonical_json, utc_now
 from cancerjev.domain.measurements import (
@@ -207,8 +208,8 @@ class LiveOrchestrator:
         spec_payload = self.research_spec.as_dict()
         cohort = self.research_spec.cohort
         caps = BudgetCaps(
-            max_requests=self.settings.gdc_max_requests,
-            max_bytes=self.settings.gdc_max_bytes,
+            max_requests=LIVE_RUN_MAX_REQUESTS,
+            max_bytes=LIVE_RUN_MAX_BYTES,
             per_response_bytes=self.settings.gdc_per_response_bytes,
             timeout_seconds=self.settings.gdc_timeout_seconds,
         )
