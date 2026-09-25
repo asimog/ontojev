@@ -776,6 +776,93 @@ class CnvShardEvidence:
         strings(self.warnings, "CNV shard warnings", unique=False)
 
 
+def cnv_scan_summary_method() -> MethodIdentityRef:
+    """The one declared merged-evidence CNV recurrence identity."""
+    return MethodIdentityRef(
+        CNV_SHARD_EVIDENCE_METHOD_ID, CNV_SHARD_EVIDENCE_VERSION,
+        digest({"deduplication": "UNIQUE_CASE_WITHIN_EXACT_PROVIDER_CATEGORY",
+                "conflicts": "RETAIN_CASES_WITH_MULTIPLE_PROVIDER_CATEGORIES",
+                "amplification_cases": CNV_RETAIN_MIN_AMPLIFICATION_CASES,
+                "homozygous_deletion_cases": CNV_RETAIN_MIN_HOMOZYGOUS_DELETION_CASES}),
+    )
+
+
+@dataclass(frozen=True)
+class CnvProjectCall:
+    """One merged-evidence gene call under the declared recurrence policy."""
+
+    evidence: CnvGeneEvidence
+    disposition: CnvDisposition
+    reason: str
+    review_trigger: str | None
+
+    def __post_init__(self) -> None:
+        require(isinstance(self.evidence, CnvGeneEvidence), "invalid CNV call evidence")
+        require(isinstance(self.disposition, CnvDisposition), "invalid CNV call disposition")
+        text(self.reason, "CNV call reason")
+        if self.disposition is CnvDisposition.RETAIN:
+            require(self.reason == CNV_RETAIN_REASON and self.review_trigger is None,
+                    "RETAIN requires the declared recurrence reason")
+        elif self.disposition is CnvDisposition.DROP:
+            require(self.reason == CNV_DROP_REASON and self.review_trigger is None,
+                    "DROP requires the declared below-threshold reason")
+        else:
+            require(self.reason == CNV_JEV_REVIEW_CONFLICT_TRIGGER
+                    and self.review_trigger == CNV_JEV_REVIEW_CONFLICT_TRIGGER,
+                    "JEV_REVIEW requires the declared caller-conflict trigger")
+            require(bool(self.evidence.conflicting_case_ids),
+                    "JEV_REVIEW requires observed caller conflicts")
+
+
+@dataclass(frozen=True)
+class CnvProjectScanResult:
+    """Merged all-shard CNV evidence and calls for one project at one release."""
+
+    spec_id: str
+    cohort_id: str
+    project_id: str
+    release: str
+    selection_rule: str
+    case_shard_size: int
+    shard_count: int
+    summary_method: MethodIdentityRef
+    calls: tuple[CnvProjectCall, ...]
+    sources: tuple[OperationalSource, ...]
+    warnings: tuple[str, ...]
+    limitations: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for value in (self.spec_id, self.cohort_id, self.project_id, self.release):
+            text(value, "CNV project-scan identity")
+        require(self.selection_rule == CNV_SCAN_SELECTION_RULE, "unsupported CNV scan selection rule")
+        count(self.case_shard_size, "CNV case shard size")
+        require(self.case_shard_size >= 1, "CNV case shard size must be positive")
+        count(self.shard_count, "CNV shard count")
+        require(self.shard_count >= 1, "CNV scan requires at least one shard")
+        require(self.summary_method == cnv_scan_summary_method(), "CNV scan summary method mismatch")
+        require(type(self.calls) is tuple
+                and all(isinstance(call, CnvProjectCall) for call in self.calls),
+                "invalid CNV project calls")
+        gene_ids = [call.evidence.gene_id for call in self.calls]
+        require(gene_ids == sorted(gene_ids) and len(set(gene_ids)) == len(gene_ids),
+                "CNV project calls must be sorted and unique")
+        require(type(self.sources) is tuple
+                and all(isinstance(source, OperationalSource) for source in self.sources),
+                "invalid CNV project sources")
+        strings(self.warnings, "CNV project warnings", unique=False)
+        require(self.limitations == CNV_SCAN_LIMITATIONS, "CNV scan limitations changed")
+
+    @property
+    def retained_ids(self) -> tuple[str, ...]:
+        return tuple(call.evidence.gene_id for call in self.calls
+                     if call.disposition is CnvDisposition.RETAIN)
+
+    @property
+    def jev_review_ids(self) -> tuple[str, ...]:
+        return tuple(call.evidence.gene_id for call in self.calls
+                     if call.disposition is CnvDisposition.JEV_REVIEW)
+
+
 @dataclass(frozen=True)
 class CnvDiscoveryEntry:
     entity: EntityRef

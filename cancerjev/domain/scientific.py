@@ -181,17 +181,21 @@ class CnvOccurrence:
 
     @property
     def category(self) -> CnvCategory:
-        # Explicit observed spellings only. Unknown labels never mean neutral.
-        return {
-            "Loss": CnvCategory.LOSS_UNSPECIFIED,
-            "loss": CnvCategory.LOSS_UNSPECIFIED,
-            "Gain": CnvCategory.GAIN,
-            "gain": CnvCategory.GAIN,
-            "Amplification": CnvCategory.AMPLIFICATION,
-            "amplification": CnvCategory.AMPLIFICATION,
-            "Homozygous Deletion": CnvCategory.HOMOZYGOUS_DELETION,
-            "homozygous deletion": CnvCategory.HOMOZYGOUS_DELETION,
-        }.get(self.raw_category, CnvCategory.UNSUPPORTED_CATEGORY)
+        return cnv_category(self.raw_category)
+
+
+def cnv_category(raw_category: str) -> CnvCategory:
+    """Explicit observed spellings only. Unknown labels never mean neutral."""
+    return {
+        "Loss": CnvCategory.LOSS_UNSPECIFIED,
+        "loss": CnvCategory.LOSS_UNSPECIFIED,
+        "Gain": CnvCategory.GAIN,
+        "gain": CnvCategory.GAIN,
+        "Amplification": CnvCategory.AMPLIFICATION,
+        "amplification": CnvCategory.AMPLIFICATION,
+        "Homozygous Deletion": CnvCategory.HOMOZYGOUS_DELETION,
+        "homozygous deletion": CnvCategory.HOMOZYGOUS_DELETION,
+    }.get(raw_category, CnvCategory.UNSUPPORTED_CATEGORY)
 
 
 @dataclass(frozen=True)

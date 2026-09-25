@@ -7,9 +7,20 @@ from dataclasses import asdict
 from typing import Any
 from uuid import uuid4
 
-from cancerjev.domain.codecs import discovery_identity, write_cnv_discovery
+from cancerjev.domain.codecs import (
+    cnv_shard_identity,
+    discovery_identity,
+    read_cnv_shard_evidence,
+    write_cnv_discovery,
+    write_cnv_project_scan,
+    write_cnv_shard_evidence,
+)
 from cancerjev.domain.discovery import (
+    CNV_CASE_SHARD_SIZE,
     CNV_LIMITATIONS,
+    CNV_SCAN_LIMITATIONS,
+    CNV_SCAN_MAX_PAGES,
+    CNV_SCAN_SELECTION_RULE,
     CNV_SUMMARY_METHOD_ID,
     CNV_SUMMARY_VERSION,
     CnvCategorySummary,
@@ -17,8 +28,11 @@ from cancerjev.domain.discovery import (
     CnvDiscoveryResult,
     CnvDiscoverySpec,
     CnvGeneEvidence,
+    CnvProjectCall,
+    CnvProjectScanResult,
     CnvShardEvidence,
     MutationDiscoveryResult,
+    cnv_scan_summary_method,
 )
 from cancerjev.domain.measurements import (
     Acquisition,
@@ -27,6 +41,7 @@ from cancerjev.domain.measurements import (
     MethodIdentityRef,
     OperationalSource,
     Quality,
+    ScientificSource,
     Sufficiency,
     UnavailableStatus,
     digest,
@@ -37,18 +52,37 @@ from cancerjev.domain.scientific import (
     CnvOccurrenceResult,
     Lane,
     UnavailableLane,
+    cnv_category,
 )
-from cancerjev.gdc.endpoints import cnv_occurrences_request, status_request
-from cancerjev.gdc.parsers import CnvOccurrenceRecord, parse_cnv_occurrences_page, parse_status
+from cancerjev.domain.shards import ShardKind, ShardLedger, ShardRecord, ShardStatus
+from cancerjev.gdc.endpoints import (
+    cnv_occurrence_shard_page_request,
+    cnv_occurrences_request,
+    cohort_project_request,
+    status_request,
+)
+from cancerjev.gdc.parsers import (
+    PARSER_VERSION,
+    CnvOccurrenceRecord,
+    parse_cnv_occurrence_scan_page,
+    parse_cnv_occurrences_page,
+    parse_projects,
+    parse_status,
+)
 from cancerjev.research.acquisition import (
     AcquisitionTransport,
     LiveRunError,
+    acquire_cohort,
     response_meta,
     response_operational_source,
 )
+from cancerjev.research.shards import publish_shard_ledger
 from cancerjev.research.specs import ResearchSpec
+from cancerjev.science.descriptors import cnv_lane_disposition
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
+
+CNV_SHARD_ARTIFACT_PATH = "cnv-shards/shard-{index:04d}.json"
 
 REQUEST_PLAN_MAX = 101
 PAGE_CAP_REASON = "CNV_OCCURRENCE_PAGE_CAP_EXCEEDED"
@@ -272,6 +306,214 @@ def run_cnv_discovery(
          f"Narrow CNV discovery completed for {len(entries)} survivor(s).",
          data={"entries": len(entries), "unavailable": unavailable_n,
                "mutation_discovery_hash": mutation_hash,
+               "artifact_id": artifact.artifact_id, "artifact_sha256": artifact.sha256},
+         artifact_refs=[artifact.ref()],
+         registrations=[repository.artifact_registration(artifact, run_id)])
+    return result
+
+
+def run_cnv_shard_scan(
+    run_id: str,
+    transport: AcquisitionTransport,
+    repository: Repository,
+    artifacts: ArtifactStore,
+    emit: Callable[..., Any],
+    research_spec: ResearchSpec,
+    *,
+    shard_index: int,
+    case_shard_size: int = CNV_CASE_SHARD_SIZE,
+) -> CnvShardEvidence:
+    """Scan one complete operational case shard of the project's CNV occurrences.
+
+    The shard is a partition of the declared cohort frame; thresholds are never
+    evaluated here. Pages are validated strictly, a page-cap breach or a total
+    change fails closed, and the shard evidence is published only under a
+    terminal page ledger.
+    """
+    cohort_spec = research_spec.cohort
+    emit("CNV_DISCOVERY_STARTED", f"cnv-shard:{shard_index}:started:{uuid4()}",
+         "Independent CNV case-shard scan started.",
+         data={"spec_id": research_spec.spec_id, "shard_index": shard_index,
+               "case_shard_size": case_shard_size})
+    status_response = transport.request(status_request())
+    status = parse_status(status_response.body, response_meta(status_response, None))
+    release = status.data_release or "UNVERIFIED_RELEASE"
+    project_response = transport.request(cohort_project_request(cohort_spec.project_id))
+    projects = parse_projects(project_response.body, response_meta(project_response, release))
+    if len(projects) != 1 or projects[0].project_id != cohort_spec.project_id:
+        raise LiveRunError("CNV_PROJECT_NOT_FOUND",
+                           f"project {cohort_spec.project_id} did not resolve uniquely")
+    cohort = acquire_cohort(transport, projects[0], research_spec.acquisition, release)
+    case_ids = sorted(case.case_id for case in cohort.cases)
+    if not case_ids:
+        raise LiveRunError("CNV_SHARD_NO_CASES", "the declared cohort frame is empty")
+    windows = [case_ids[index:index + case_shard_size]
+               for index in range(0, len(case_ids), case_shard_size)]
+    if shard_index < 0 or shard_index >= len(windows):
+        raise LiveRunError("CNV_SHARD_INDEX_OUT_OF_RANGE",
+                           f"shard {shard_index} of {len(windows)}")
+    shard_cases = windows[shard_index]
+    sources: list[OperationalSource] = [
+        response_operational_source(status_response, release=release),
+        response_operational_source(project_response, release=release),
+        *cohort.sources,
+    ]
+    warnings = list(status.warnings) + list(cohort.warnings)
+    categories: dict[str, dict[str, tuple[CnvCategory, set[str]]]] = {}
+    callers: dict[str, set[str]] = {}
+    missing: dict[str, set[str]] = {}
+    rows_by_gene: dict[str, set[str]] = {}
+    records: list[ShardRecord] = []
+    total: int | None = None
+    offset = 0
+    page_count = 0
+    while True:
+        response = transport.request(cnv_occurrence_shard_page_request(
+            cohort_spec.project_id, shard_cases, offset=offset,
+            size=research_spec.cnv_discovery.page_size))
+        page = parse_cnv_occurrence_scan_page(
+            response.body, response_meta(response, release),
+            expected_project=cohort_spec.project_id, expected_cases=set(shard_cases),
+            expected_offset=offset, expected_size=research_spec.cnv_discovery.page_size)
+        sources.append(response_operational_source(response, release=release))
+        warnings.extend(page.warnings)
+        page_count += 1
+        if page_count > CNV_SCAN_MAX_PAGES:
+            raise LiveRunError("CNV_SCAN_PAGE_CAP_EXCEEDED",
+                               f"shard {shard_index} exceeded {CNV_SCAN_MAX_PAGES} pages")
+        if total is None:
+            total = page.total
+        elif page.total != total:
+            raise LiveRunError("CNV_TOTAL_CHANGED",
+                               f"shard {shard_index}: {total} became {page.total}")
+        for record in page.occurrences:
+            per_gene = categories.setdefault(record.gene_id, {})
+            existing = per_gene.get(record.raw_category)
+            if existing is None:
+                per_gene[record.raw_category] = (cnv_category(record.raw_category),
+                                                 {record.case_id})
+            else:
+                existing[1].add(record.case_id)
+            rows_by_gene.setdefault(record.gene_id, set()).add(record.occurrence_id)
+            if record.caller is not None:
+                callers.setdefault(record.gene_id, set()).add(record.caller)
+            if record.sample_id is None:
+                missing.setdefault(record.gene_id, set()).add(record.occurrence_id)
+        records.append(ShardRecord(
+            index=page_count - 1, status=ShardStatus.COMPLETED, item_count=page.count,
+            request_hash=response.request_hash, response_hash=response.body_sha256,
+            artifact_id=response.artifact.artifact_id, detail=None))
+        offset += page.count
+        if offset >= page.total:
+            break
+        if page.count == 0:
+            raise LiveRunError("CNV_PAGE_INCOMPLETE",
+                               f"shard {shard_index}: empty page before total {page.total}")
+    conflicts: dict[str, set[str]] = {}
+    for gene_id, per_gene in categories.items():
+        labels_by_case: dict[str, set[str]] = {}
+        for raw_category, (_, cases) in per_gene.items():
+            for case_id in cases:
+                labels_by_case.setdefault(case_id, set()).add(raw_category)
+        conflicting = {case_id for case_id, labels in labels_by_case.items() if len(labels) > 1}
+        if conflicting:
+            conflicts[gene_id] = conflicting
+    genes = tuple(
+        CnvGeneEvidence(
+            gene_id,
+            tuple(CnvCategorySummary(raw_category, category, tuple(sorted(cases)))
+                  for raw_category, (category, cases) in sorted(per_gene.items())),
+            tuple(sorted(callers.get(gene_id, set()))),
+            tuple(sorted(conflicts.get(gene_id, set()))),
+            tuple(sorted(missing.get(gene_id, set()))),
+            len(rows_by_gene[gene_id]),
+        )
+        for gene_id, per_gene in sorted(categories.items())
+    )
+    evidence = CnvShardEvidence(
+        shard_index, tuple(shard_cases), cohort_spec.project_id, release, genes, int(total or 0),
+        tuple(sources), tuple(warnings))
+    ledger = ShardLedger(kind=ShardKind.CNV_SHARD_PAGES, required=len(records),
+                         records=tuple(records))
+    publish_shard_ledger(
+        artifacts, repository, run_id, ledger,
+        relative_path=f"runs/{run_id}/cnv-discovery/shard-{shard_index:04d}-pages.json")
+    if not ledger.terminal:
+        raise LiveRunError("SHARD_LEDGER_NOT_TERMINAL",
+                           f"shard {shard_index} page ledger is not terminal")
+    artifact = artifacts.publish(
+        CNV_SHARD_ARTIFACT_PATH.format(index=shard_index),
+        write_cnv_shard_evidence(evidence), "application/json", "cnv-shard-evidence")
+    repository.register_artifact(artifact, run_id)
+    emit("CNV_SHARD_SCAN_COMPLETED", f"cnv-shard:{shard_index}:completed:{uuid4()}",
+         f"CNV case shard {shard_index} scanned over {len(shard_cases)} case(s).",
+         data={"shard_index": shard_index, "cases": len(shard_cases), "genes": len(genes),
+               "records": int(total or 0), "release": release,
+               "shard_hash": cnv_shard_identity(evidence),
+               "artifact_id": artifact.artifact_id, "artifact_sha256": artifact.sha256},
+         artifact_refs=[artifact.ref()],
+         registrations=[repository.artifact_registration(artifact, run_id)])
+    return evidence
+
+
+def run_cnv_shard_merge(
+    run_id: str,
+    repository: Repository,
+    artifacts: ArtifactStore,
+    emit: Callable[..., Any],
+    research_spec: ResearchSpec,
+    *,
+    expected_shards: int,
+    case_shard_size: int = CNV_CASE_SHARD_SIZE,
+) -> CnvProjectScanResult:
+    """Merge all required shard evidence into one project scan result, or fail closed."""
+    shards: list[CnvShardEvidence] = []
+    sources: list[OperationalSource] = []
+    seen_release: str | None = None
+    for index in range(expected_shards):
+        path = CNV_SHARD_ARTIFACT_PATH.format(index=index)
+        row = repository.artifact_at_path(path)
+        if row is None:
+            raise LiveRunError("CNV_SHARDS_NOT_TERMINAL", f"shard {index} evidence is missing")
+        sha = str(row.get("sha256") or "")
+        relative = str(row.get("relative_path") or "")
+        if len(sha) != 64 or not relative:
+            raise LiveRunError("CNV_SHARD_ARTIFACT_INVALID", f"shard {index} artifact row is invalid")
+        body = artifacts.read(relative, sha)
+        shard = read_cnv_shard_evidence(body)
+        if seen_release is None:
+            seen_release = shard.release
+        elif shard.release != seen_release:
+            raise LiveRunError("CNV_SHARD_RELEASE_MISMATCH",
+                               f"shard {index} release differs from {seen_release}")
+        shards.append(shard)
+        sources.append(OperationalSource(
+            source=ScientificSource(
+                endpoint="/cnv_occurrences/shard-evidence",
+                request_hash=cnv_shard_identity(shard), response_hash=sha,
+                parser_version=PARSER_VERSION, release=shard.release,
+                acquisition=Acquisition.COMPLETE, caller_family="MULTI_CALLER_CNV"),
+            attempt_id=f"cnv-shard-{index}",
+            artifact_id=str(row.get("artifact_id") or path),
+            retrieved_at=str(row.get("created_at") or "UNKNOWN"),
+            bytes_read=0, latency_ms=None, http_status=None, cache_hit=True,
+        ))
+    merged = merge_cnv_shard_evidence(tuple(shards), expected_shards=expected_shards)
+    calls = tuple(
+        CnvProjectCall(evidence, *cnv_lane_disposition(evidence)) for evidence in merged)
+    result = CnvProjectScanResult(
+        research_spec.spec_id, research_spec.cohort.cohort_id, research_spec.cohort.project_id,
+        seen_release or "UNVERIFIED_RELEASE", CNV_SCAN_SELECTION_RULE, case_shard_size,
+        expected_shards, cnv_scan_summary_method(), calls, tuple(sources), (), CNV_SCAN_LIMITATIONS)
+    artifact = artifacts.publish(
+        f"runs/{run_id}/cnv-discovery/project-scan-result.json",
+        write_cnv_project_scan(result), "application/json", "cnv-project-scan-result")
+    repository.register_artifact(artifact, run_id)
+    emit("CNV_PROJECT_SCAN_COMPLETED", f"cnv-project-scan:completed:{uuid4()}",
+         f"Merged CNV scan completed for {len(calls)} observed gene(s).",
+         data={"genes": len(calls), "retained": len(result.retained_ids),
+               "jev_review": len(result.jev_review_ids), "shards": expected_shards,
+               "release": result.release,
                "artifact_id": artifact.artifact_id, "artifact_sha256": artifact.sha256},
          artifact_refs=[artifact.ref()],
          registrations=[repository.artifact_registration(artifact, run_id)])

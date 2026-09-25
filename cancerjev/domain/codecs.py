@@ -23,6 +23,11 @@ from cancerjev.domain.discovery import (
     CnvDiscoveryEntry,
     CnvDiscoveryResult,
     CnvDiscoverySpec,
+    CnvDisposition,
+    CnvGeneEvidence,
+    CnvProjectCall,
+    CnvProjectScanResult,
+    CnvShardEvidence,
     DiscoveryComparator,
     DiscoveryDisposition,
     DiscoverySpec,
@@ -106,6 +111,8 @@ EVIDENCE_SCHEMA_VERSION = 4
 DISCOVERY_SCHEMA_VERSION = 1
 EXPRESSION_DISCOVERY_SCHEMA_VERSION = 1
 CNV_DISCOVERY_SCHEMA_VERSION = 1
+CNV_SHARD_EVIDENCE_SCHEMA_VERSION = 1
+CNV_PROJECT_SCAN_SCHEMA_VERSION = 1
 
 
 # --------------------------------------------------------------- shared readers
@@ -919,3 +926,99 @@ def read_cnv_discovery(data: bytes, *, expected_hash: str | None = None) -> CnvD
         raise
     except (ValueError, TypeError, KeyError, OverflowError) as exc:
         raise ContractError("invalid CNV discovery result") from exc
+
+
+def _cnv_gene_evidence(value: object) -> CnvGeneEvidence:
+    d = obj(value, "gene_id categories callers conflicting_case_ids "
+                   "missing_sample_occurrence_ids records")
+    return CnvGeneEvidence(
+        string(d["gene_id"]),
+        tuple(_cnv_category_summary(item) for item in seq(d["categories"])),
+        string_tuple(d["callers"]), string_tuple(d["conflicting_case_ids"]),
+        string_tuple(d["missing_sample_occurrence_ids"]), integer(d["records"]),
+    )
+
+
+def cnv_shard_identity(evidence: CnvShardEvidence) -> str:
+    payload = _jsonable(asdict(evidence))
+    assert isinstance(payload, dict)
+    payload.pop("sources")
+    return digest({"schema_version": CNV_SHARD_EVIDENCE_SCHEMA_VERSION,
+                   "kind": "CNV_SHARD_EVIDENCE", **payload})
+
+
+def write_cnv_shard_evidence(evidence: CnvShardEvidence) -> bytes:
+    payload = _jsonable(asdict(evidence))
+    assert isinstance(payload, dict)
+    return canonical_bytes({"schema_version": CNV_SHARD_EVIDENCE_SCHEMA_VERSION,
+                            "kind": "CNV_SHARD_EVIDENCE", **payload,
+                            "shard_hash": cnv_shard_identity(evidence)})
+
+
+def read_cnv_shard_evidence(data: bytes, *, expected_hash: str | None = None) -> CnvShardEvidence:
+    try:
+        d = decode(data)
+        _unsupported(d, CNV_SHARD_EVIDENCE_SCHEMA_VERSION, "CNV_SHARD_EVIDENCE")
+        obj(d, "schema_version kind shard_index case_ids project_id release genes records "
+               "sources warnings shard_hash")
+        evidence = CnvShardEvidence(
+            integer(d["shard_index"]), string_tuple(d["case_ids"]), string(d["project_id"]),
+            string(d["release"]), tuple(_cnv_gene_evidence(item) for item in seq(d["genes"])),
+            integer(d["records"]),
+            tuple(_operational_source(item) for item in seq(d["sources"])),
+            string_tuple(d["warnings"]),
+        )
+        _binding(cnv_shard_identity(evidence), d["shard_hash"], expected_hash)
+        return evidence
+    except ContractError:
+        raise
+    except (ValueError, TypeError, KeyError, OverflowError) as exc:
+        raise ContractError("invalid CNV shard evidence") from exc
+
+
+def _cnv_project_call(value: object) -> CnvProjectCall:
+    d = obj(value, "evidence disposition reason review_trigger")
+    return CnvProjectCall(
+        _cnv_gene_evidence(d["evidence"]), CnvDisposition(string(d["disposition"])),
+        string(d["reason"]), optional_string(d["review_trigger"]),
+    )
+
+
+def cnv_project_scan_identity(result: CnvProjectScanResult) -> str:
+    payload = _jsonable(asdict(result))
+    assert isinstance(payload, dict)
+    payload.pop("sources")
+    return digest({"schema_version": CNV_PROJECT_SCAN_SCHEMA_VERSION,
+                   "kind": "CNV_PROJECT_SCAN_RESULT", **payload})
+
+
+def write_cnv_project_scan(result: CnvProjectScanResult) -> bytes:
+    payload = _jsonable(asdict(result))
+    assert isinstance(payload, dict)
+    return canonical_bytes({"schema_version": CNV_PROJECT_SCAN_SCHEMA_VERSION,
+                            "kind": "CNV_PROJECT_SCAN_RESULT", **payload,
+                            "scan_hash": cnv_project_scan_identity(result)})
+
+
+def read_cnv_project_scan(data: bytes, *,
+                          expected_hash: str | None = None) -> CnvProjectScanResult:
+    try:
+        d = decode(data)
+        _unsupported(d, CNV_PROJECT_SCAN_SCHEMA_VERSION, "CNV_PROJECT_SCAN_RESULT")
+        obj(d, "schema_version kind spec_id cohort_id project_id release selection_rule "
+               "case_shard_size shard_count summary_method calls sources warnings limitations "
+               "scan_hash")
+        result = CnvProjectScanResult(
+            string(d["spec_id"]), string(d["cohort_id"]), string(d["project_id"]),
+            string(d["release"]), string(d["selection_rule"]), integer(d["case_shard_size"]),
+            integer(d["shard_count"]), _method_identity(d["summary_method"]),
+            tuple(_cnv_project_call(item) for item in seq(d["calls"])),
+            tuple(_operational_source(item) for item in seq(d["sources"])),
+            string_tuple(d["warnings"]), string_tuple(d["limitations"]),
+        )
+        _binding(cnv_project_scan_identity(result), d["scan_hash"], expected_hash)
+        return result
+    except ContractError:
+        raise
+    except (ValueError, TypeError, KeyError, OverflowError) as exc:
+        raise ContractError("invalid CNV project scan result") from exc
