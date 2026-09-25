@@ -199,6 +199,55 @@ def cnv_category(raw_category: str) -> CnvCategory:
 
 
 @dataclass(frozen=True)
+class CnvProjectFinding:
+    """Merged-evidence CNV finding for one gene: positive categories, callers, conflicts.
+
+    Self-contained for the canonical state: raw provider categories with their
+    distinct case IDs, caller context, conflicts and the declared disposition.
+    Absence of a finding is never a neutral state.
+    """
+
+    disposition: str
+    reason: str
+    review_trigger: str | None
+    raw_categories: tuple[tuple[str, tuple[str, ...]], ...]
+    callers: tuple[str, ...]
+    conflicting_case_ids: tuple[str, ...]
+    records: int
+
+    def __post_init__(self) -> None:
+        text(self.disposition, "CNV finding disposition")
+        text(self.reason, "CNV finding reason")
+        if self.review_trigger is not None:
+            text(self.review_trigger, "CNV finding review trigger")
+        require(type(self.raw_categories) is tuple
+                and all(isinstance(item, tuple) and len(item) == 2
+                        and isinstance(item[0], str) and bool(item[0])
+                        and isinstance(item[1], tuple)
+                        for item in self.raw_categories),
+                "invalid CNV finding categories")
+        raw = [item[0] for item in self.raw_categories]
+        require(raw == sorted(raw) and len(set(raw)) == len(raw),
+                "CNV finding categories must be sorted and unique")
+        for _, cases in self.raw_categories:
+            strings(cases, "CNV finding category cases")
+            require(bool(cases) and cases == tuple(sorted(cases)) and len(set(cases)) == len(cases),
+                    "CNV finding category cases must be non-empty, sorted and unique")
+        strings(self.callers, "CNV finding callers")
+        require(self.callers == tuple(sorted(self.callers)) and len(set(self.callers)) == len(self.callers),
+                "CNV finding callers must be sorted and unique")
+        strings(self.conflicting_case_ids, "CNV finding conflicts")
+        require(self.conflicting_case_ids == tuple(sorted(self.conflicting_case_ids))
+                and len(set(self.conflicting_case_ids)) == len(self.conflicting_case_ids),
+                "CNV finding conflicts must be sorted and unique")
+        observed = {case_id for _, cases in self.raw_categories for case_id in cases}
+        require(set(self.conflicting_case_ids) <= observed,
+                "CNV finding conflicts must be observed cases")
+        count(self.records, "CNV finding records")
+        require(self.records >= 1, "a CNV finding requires at least one record")
+
+
+@dataclass(frozen=True)
 class CnvOccurrenceResult:
     entity: EntityRef
     frame: PopulationFrame
@@ -388,7 +437,7 @@ class ProjectState:
     expression: ExpressionSummaryResult | UnavailableLane
     provider_expression: ProviderExpressionSummary | None
     discovery: ProviderDiscoveryMetadata | None
-    cnv: CnvOccurrenceResult | UnavailableLane = UnavailableLane(
+    cnv: CnvOccurrenceResult | CnvProjectFinding | UnavailableLane = UnavailableLane(
         Lane.CNV, False, UnavailableStatus.NOT_ACQUIRED, "CNV_NOT_ACQUIRED")
 
     def __post_init__(self) -> None:
@@ -409,9 +458,19 @@ class ProjectState:
                     "unavailable provider summary cannot carry a median")
         if self.discovery is not None:
             require(isinstance(self.discovery, ProviderDiscoveryMetadata), "invalid provider discovery metadata")
-        require(isinstance(self.cnv, (CnvOccurrenceResult, UnavailableLane)), "wrong CNV result type")
+        require(isinstance(self.cnv, (CnvOccurrenceResult, CnvProjectFinding, UnavailableLane)),
+                "wrong CNV result type")
         if isinstance(self.cnv, UnavailableLane):
             require(self.cnv.lane == Lane.CNV, "unavailable lane in wrong CNV slot")
+        elif isinstance(self.cnv, CnvProjectFinding):
+            require(self.cnv.disposition in {"RETAIN", "JEV_REVIEW", "DROP"},
+                    "undeclared CNV finding disposition")
+            require((self.cnv.review_trigger is not None)
+                    == (self.cnv.disposition == "JEV_REVIEW"),
+                    "CNV review trigger must match its disposition")
+            observed = {case_id for _, cases in self.cnv.raw_categories for case_id in cases}
+            require(observed <= set(frame.examined_ids),
+                    "CNV finding case outside the population frame")
         else:
             require(self.cnv.frame == frame, "CNV/population frame mismatch")
             require(self.cnv.entity == self.mutation.entity, "CNV/mutation entity mismatch")
@@ -533,6 +592,10 @@ class StatisticalState:
                 elif isinstance(lane_result, ExpressionSummaryResult):
                     require(lane_result.entity == self.entity, "expression entity/state mismatch")
                     require(set(lane_result.sources) <= set(self.sources), "unbound expression sources")
+                elif isinstance(lane_result, CnvProjectFinding):
+                    observed = {case_id for _, cases in lane_result.raw_categories
+                                for case_id in cases}
+                    require(bool(observed), "CNV finding must observe at least one case")
                 else:
                     require(lane_result.entity == self.entity, "CNV entity/state mismatch")
                     require(set(lane_result.sources) <= set(self.sources), "unbound CNV sources")

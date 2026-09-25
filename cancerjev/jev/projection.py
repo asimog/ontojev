@@ -23,6 +23,7 @@ from cancerjev.domain.measurements import (
 )
 from cancerjev.domain.scientific import (
     CnvOccurrenceResult,
+    CnvProjectFinding,
     ExpressionSummaryResult,
     StatisticalState,
 )
@@ -146,6 +147,13 @@ def build_projection(record: StateRecord) -> dict[str, Any]:
         cnv_conflicting_cases = sum(len(labels) > 1 for labels in labels_by_case.values())
         cnv_callers = sorted({occurrence.caller for occurrence in cnv.occurrences
                               if occurrence.caller is not None})
+    elif isinstance(cnv, CnvProjectFinding):
+        category_cases = {raw: set(cases) for raw, cases in cnv.raw_categories}
+        cnv_categories = {key: len(value) for key, value in sorted(category_cases.items())}
+        cnv_positive_cases = len({case_id for cases in category_cases.values()
+                                  for case_id in cases})
+        cnv_conflicting_cases = len(cnv.conflicting_case_ids)
+        cnv_callers = list(cnv.callers)
     else:
         cnv_categories = None
         cnv_positive_cases = None
@@ -189,7 +197,7 @@ def build_projection(record: StateRecord) -> dict[str, Any]:
             "expression_n_missing": expression_n_missing,
             "expression_provider_median": provider.median if provider is not None else None,
             "expression_provider_stddev": provider.stddev if provider is not None else None,
-            "cnv_observed": isinstance(cnv, CnvOccurrenceResult),
+            "cnv_observed": isinstance(cnv, (CnvOccurrenceResult, CnvProjectFinding)),
             "cnv_positive_cases": cnv_positive_cases,
             "cnv_conflicting_cases": cnv_conflicting_cases,
             "cnv_categories": cnv_categories,

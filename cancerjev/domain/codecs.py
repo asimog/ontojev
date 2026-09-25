@@ -90,6 +90,7 @@ from cancerjev.domain.scientific import (
     CnvCategory,
     CnvOccurrence,
     CnvOccurrenceResult,
+    CnvProjectFinding,
     CrossProjectSummary,
     ExpressionSummaryResult,
     ExpressionValue,
@@ -329,10 +330,23 @@ def _occurrence(value: object) -> CnvOccurrence:
                          None if d["copy_number"] is None else number(d["copy_number"]))
 
 
-def _cnv(value: object) -> CnvOccurrenceResult | UnavailableLane:
+def _cnv(value: object) -> CnvOccurrenceResult | CnvProjectFinding | UnavailableLane:
     d = obj(value)
     if "status" in d:
         return _unavailable_lane(d)
+    if "disposition" in d:
+        obj(d, "disposition reason review_trigger raw_categories callers "
+               "conflicting_case_ids records")
+        categories: list[tuple[str, tuple[str, ...]]] = []
+        for item in seq(d["raw_categories"]):
+            parts = seq(item)
+            require(len(parts) == 2, "expected a two-item CNV category pair")
+            categories.append((string(parts[0]), string_tuple(parts[1])))
+        return CnvProjectFinding(
+            string(d["disposition"]), string(d["reason"]), optional_string(d["review_trigger"]),
+            tuple(categories), string_tuple(d["callers"]),
+            string_tuple(d["conflicting_case_ids"]), integer(d["records"]),
+        )
     obj(d, "entity frame occurrences sources quality")
     return CnvOccurrenceResult(_entity(d["entity"]), _frame(d["frame"]),
                                tuple(_occurrence(item) for item in seq(d["occurrences"])),
@@ -879,8 +893,11 @@ def _cnv_category_summary(value: object) -> CnvCategorySummary:
 def _cnv_discovery_entry(value: object) -> CnvDiscoveryEntry:
     d = obj(value, "entity outcome categories conflicting_case_ids callers "
                    "missing_sample_occurrence_ids")
+    outcome = _cnv(d["outcome"])
+    if not isinstance(outcome, (CnvOccurrenceResult, UnavailableLane)):
+        raise ContractError("legacy CNV discovery entry carries an occurrence outcome")
     return CnvDiscoveryEntry(
-        _entity(d["entity"]), _cnv(d["outcome"]),
+        _entity(d["entity"]), outcome,
         tuple(_cnv_category_summary(item) for item in seq(d["categories"])),
         string_tuple(d["conflicting_case_ids"]), string_tuple(d["callers"]),
         string_tuple(d["missing_sample_occurrence_ids"]),
