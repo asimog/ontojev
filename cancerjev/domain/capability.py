@@ -11,13 +11,13 @@ and names that limitation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from cancerjev.domain.measurements import ScientificSource, digest, require, strings, text
 
 
-class Modality(str, Enum):
+class Modality(StrEnum):
     MUTATION_WXS = "MUTATION_WXS"
     MUTATION_WGS = "MUTATION_WGS"
     EXPRESSION_RNASEQ = "EXPRESSION_RNASEQ"
@@ -32,23 +32,23 @@ class Modality(str, Enum):
     SURVIVAL = "SURVIVAL"
 
 
-class CapabilityAvailability(str, Enum):
+class CapabilityAvailability(StrEnum):
     AVAILABLE = "AVAILABLE"
     UNAVAILABLE = "UNAVAILABLE"
 
 
-class AccessLevel(str, Enum):
+class AccessLevel(StrEnum):
     OPEN = "OPEN"
 
 
-class CaseSampleResolution(str, Enum):
+class CaseSampleResolution(StrEnum):
     CASE_LEVEL_ONLY = "CASE_LEVEL_ONLY"
     CASE_ALIQUOT_LEVEL = "CASE_ALIQUOT_LEVEL"
     DONOR_LEVEL = "DONOR_LEVEL"
     UNRESOLVED = "UNRESOLVED"
 
 
-class ScientificReadiness(str, Enum):
+class ScientificReadiness(StrEnum):
     EXPERIMENTAL = "EXPERIMENTAL"
     VALIDATED_FOR_REPLAY = "VALIDATED_FOR_REPLAY"
     VALIDATED_FOR_AUTONOMOUS_USE = "VALIDATED_FOR_AUTONOMOUS_USE"

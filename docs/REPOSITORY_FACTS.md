@@ -23,6 +23,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "action_registry_version": "3",
   "api_version": "3.0.0",
   "cnv_discovery_result_schema_version": 1,
+  "cnv_disposition_policy": "cnv-dispositions-v1",
   "deep_next_move_policy": "deep-policy-v2",
   "deep_question_set": "deep-v1",
   "dossier_schema_version": 3,

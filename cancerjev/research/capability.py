@@ -9,7 +9,7 @@ from declared tables, so no capability claim is inferred from a cohort name.
 
 from __future__ import annotations
 
-from typing import Mapping
+from collections.abc import Mapping
 
 from cancerjev.domain.capability import (
     AccessLevel,
@@ -27,8 +27,8 @@ from cancerjev.gdc.endpoints import (
     status_request,
 )
 from cancerjev.gdc.parsers import (
-    FileFacets,
     PARSER_VERSION,
+    FileFacets,
     parse_file_facets,
     parse_projects,
     parse_status,

@@ -8,6 +8,7 @@ from cancerjev.domain.discovery import (
     EXPRESSION_JEV_REVIEW_ASYMMETRY_RATIO,
     EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER,
     EXPRESSION_RETAIN_REASON,
+    ExpressionDiscoveryEntry,
     ExpressionDiscoverySpec,
     ExpressionDisposition,
     ExpressionRunPlan,
@@ -113,6 +114,20 @@ def test_unobserved_outcome_and_insufficient_tail_drop_with_reasons():
         {f"case-{index:03d}": float(index + 1) for index in range(5)})
     assert tail.availability is MetricAvailability.INSUFFICIENT
     assert disposition is ExpressionDisposition.DROP and reason == "INSUFFICIENT_VALID_VALUES"
+
+
+def test_jev_review_entry_accepts_an_observed_asymmetric_tail():
+    outcome = _summary(
+        {f"case-{index:03d}": (0.0 if index < 8 else 63.0 if index == 99 else 3.0
+                              if index < 34 else 7.0)
+         for index in range(100)})
+    tail = expression_tail_descriptor(outcome, ExpressionDiscoverySpec())
+    disposition, reason, trigger = expression_lane_disposition(outcome, tail)
+    entry = ExpressionDiscoveryEntry(EntityRef(GENE_ID, "TP53", RELEASE), outcome, tail,
+                                     disposition, reason, trigger)
+
+    assert entry.disposition is ExpressionDisposition.JEV_REVIEW
+    assert entry.review_trigger == EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER
 
 
 def test_run_plan_refuses_a_plan_beyond_the_declared_budget():

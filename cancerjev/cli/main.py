@@ -15,7 +15,6 @@ from cancerjev.domain.discovery import (
     EXPRESSION_RUN_MAX_BYTES,
     EXPRESSION_RUN_MAX_REQUESTS,
     OCCURRENCE_SCAN_MAX_BYTES,
-    OCCURRENCE_SCAN_MAX_PAGES,
 )
 from cancerjev.domain.measurements import ContractError
 from cancerjev.gdc.capture import CaptureSink, run_contract_probe

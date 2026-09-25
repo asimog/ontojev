@@ -15,9 +15,9 @@ from cancerjev.domain.discovery import (
     EXPRESSION_REQUEST_AVERAGE_BYTES,
     EXPRESSION_RUN_MAX_BYTES,
     EXPRESSION_RUN_MAX_REQUESTS,
-    ExpressionDisposition,
     ExpressionDiscoveryEntry,
     ExpressionDiscoveryResult,
+    ExpressionDisposition,
     ExpressionRunPlan,
 )
 from cancerjev.domain.measurements import (

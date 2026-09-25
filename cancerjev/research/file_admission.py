@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from cancerjev.domain.measurements import count, digest, require, text
@@ -24,11 +24,11 @@ MAX_SINGLE_PRODUCT_FILE_BYTES = 2 * 1024 * 1024 * 1024
 NAMED_FILE_CONSUMERS: Mapping[str, str] = {}
 
 
-class FileAccess(str, Enum):
+class FileAccess(StrEnum):
     OPEN = "OPEN"
 
 
-class AdmissionStatus(str, Enum):
+class AdmissionStatus(StrEnum):
     ADMITTED = "ADMITTED"
     DEFERRED = "DEFERRED"
     REJECTED = "REJECTED"

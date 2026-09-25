@@ -22,7 +22,7 @@ GDC evidence
 - LUAD is a campaign profile, not the architecture.
 - Researcher runs cannot influence autonomous state at runtime.
 - No generic agent framework, DAG engine, microservices or LLM-generated GDC queries.
-- Skip tests unless the user asks for them.
+- Verify every implementation unit before committing: run `python -m ruff check .`, strict `mypy` from the project environment, and the full default offline `pytest` suite; use focused fixture/replay checks before any live provider call.
 
 ## Operational limits
 

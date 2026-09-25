@@ -8,15 +8,6 @@ p-value, no effect size, no biological direction.
 
 from __future__ import annotations
 
-MUTATION_INFERENCE_DECISION_ID = "DEFER_WITH_JUSTIFICATION"
-MUTATION_INFERENCE_DECISION_VERSION = "1"
-MUTATION_INFERENCE_DECISION = (
-    "Background-model driver testing (MutSigCV-class) requires patient covariate inputs "
-    "(mutation-rate, replication-timing and expression covariates) that the API-only plane does "
-    "not supply and the open-file admission gate does not currently admit; descriptive "
-    "composition and recurrence are reported without p/q values."
-)
-
 import hashlib
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
@@ -503,6 +494,16 @@ def _population(frame: ProjectFrame, population_frame: PopulationFrame, gene_id:
         ),
         excluded_counts=(),
     )
+
+
+MUTATION_INFERENCE_DECISION_ID = "DEFER_WITH_JUSTIFICATION"
+MUTATION_INFERENCE_DECISION_VERSION = "1"
+MUTATION_INFERENCE_DECISION = (
+    "Background-model driver testing (MutSigCV-class) requires patient covariate inputs "
+    "(mutation-rate, replication-timing and expression covariates) that the API-only plane does "
+    "not supply and the open-file admission gate does not currently admit; descriptive "
+    "composition and recurrence are reported without p/q values."
+)
 
 
 def _mutation_quality(observation: MutationObservation) -> Quality:

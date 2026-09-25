@@ -68,9 +68,10 @@ LUAD_CAMPAIGN_V1 = CampaignProfile(
     ),
     readiness=ScientificReadiness.EXPERIMENTAL,
     readiness_reason=(
-        "the mutation, expression and CNV lanes are reconciled, but discovery still runs over a "
-        "biased indexed gene prefix and no independent modality union, replication design or "
-        "release comparison exists yet"
+        "the mutation and expression lanes are reconciled over the complete release-bound "
+        "universe with declared dispositions and independent nomination, but no modality union, "
+        "replication design or release comparison exists yet, and the CNV lane is still "
+        "survivor-scoped"
     ),
 )
 

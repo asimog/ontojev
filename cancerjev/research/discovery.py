@@ -25,7 +25,6 @@ from cancerjev.domain.discovery import (
     COMPLETE_UNIVERSE_LIMITATION,
     COMPLETE_UNIVERSE_METHOD,
     MAX_DISCOVERY_SURVIVORS,
-    MAX_UNIVERSE_DEFECT_CEILING,
     MAX_UNIVERSE_DEFECT_PAGES,
     REDUCER_METHOD_ID,
     REDUCER_VERSION,
@@ -53,8 +52,8 @@ from cancerjev.domain.measurements import (
     TestedUniverse,
     digest,
 )
-from cancerjev.domain.shards import ShardKind, ShardLedger, ShardRecord, ShardStatus
 from cancerjev.domain.scientific import MutationCountResult
+from cancerjev.domain.shards import ShardKind, ShardLedger, ShardRecord, ShardStatus
 from cancerjev.gdc.endpoints import (
     SSM_OCCURRENCE_FIELDS,
     cohort_project_request,

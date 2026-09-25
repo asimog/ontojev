@@ -10,19 +10,19 @@ excluded from every scientific identity.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from cancerjev.domain.measurements import count, digest, require, sha256, text
 
 
-class ShardKind(str, Enum):
+class ShardKind(StrEnum):
     UNIVERSE_PAGES = "UNIVERSE_PAGES"
     OCCURRENCE_SCAN_PAGES = "OCCURRENCE_SCAN_PAGES"
     EXPRESSION_GENE_BATCHES = "EXPRESSION_GENE_BATCHES"
 
 
-class ShardStatus(str, Enum):
+class ShardStatus(StrEnum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
 

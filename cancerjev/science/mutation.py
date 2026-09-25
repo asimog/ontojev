@@ -26,7 +26,7 @@ from cancerjev.science.errors import ScienceError
 
 def mutation_descriptive_evidence(
     *, distinct_cases: int, occurrence_docs: int,
-    consequences: Mapping[str, int], positions: Mapping[str, int],
+    consequences: Mapping[str, int], positions: Mapping[int, int],
     transcript_counts: Mapping[str, int],
 ) -> MutationDescriptiveEvidence:
     """Deterministic canonical-only composition; occurrence-level dedup protects transcripts."""

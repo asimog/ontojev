@@ -600,7 +600,6 @@ class ExpressionDiscoveryEntry:
             require(isinstance(self.outcome, ExpressionSummaryResult)
                     and self.tail.availability is MetricAvailability.OBSERVED,
                     "JEV_REVIEW requires an observed expression tail")
-            require(self.outcome.lane.value == "EXPRESSION", "wrong unavailable lane")
 
 
 @dataclass(frozen=True)
@@ -757,7 +756,7 @@ class CnvShardEvidence:
     def __post_init__(self) -> None:
         count(self.shard_index, "CNV shard index")
         strings(self.case_ids, "CNV shard cases")
-        require(self.case_ids and self.case_ids == tuple(sorted(self.case_ids))
+        require(bool(self.case_ids) and self.case_ids == tuple(sorted(self.case_ids))
                 and len(set(self.case_ids)) == len(self.case_ids),
                 "CNV shard cases must be sorted and unique")
         for value in (self.project_id, self.release):

@@ -240,7 +240,7 @@ def acquire_project_mutation_occurrence_scan(transport: AcquisitionTransport, pr
     cases_per_gene: dict[str, set[str]] = {}
     docs_per_gene: dict[str, int] = {}
     consequences_per_gene: dict[str, dict[str, int]] = {}
-    positions_per_gene: dict[str, dict[str, int]] = {}
+    positions_per_gene: dict[str, dict[int, int]] = {}
     transcripts_per_gene: dict[str, dict[str, int]] = {}
     records_without_canonical_rows = 0
     genes_without_canonical_rows: set[str] = set()

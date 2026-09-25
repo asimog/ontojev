@@ -29,6 +29,7 @@ from cancerjev.domain.codecs import (
     STATE_SCHEMA_VERSION,
 )
 from cancerjev.domain.discovery import (
+    CNV_DISPOSITION_POLICY_VERSION,
     EXPRESSION_ALIQUOT_IDENTITY_STATUS,
     EXPRESSION_DISPOSITION_POLICY_VERSION,
     MUTATION_CANONICAL_COMPOSITION_METHOD_ID,
@@ -39,12 +40,6 @@ from cancerjev.domain.discovery import (
 from cancerjev.domain.dossier import DOSSIER_SCHEMA_VERSION
 from cancerjev.domain.events import SUPPORTED_SCHEMA_VERSION
 from cancerjev.gdc.endpoints import GDC_DATA_MODEL_REFERENCE
-from cancerjev.research.file_admission import FILE_ADMISSION_VERSION
-from cancerjev.research.specs import LUAD_DISCOVERY_V1
-from cancerjev.science.methods import (
-    MUTATION_INFERENCE_DECISION_ID,
-    MUTATION_INFERENCE_DECISION_VERSION,
-)
 from cancerjev.jev.projection import (
     EVIDENCE_PROJECTION_VERSION,
     HYPOTHESIS_PROJECTION_VERSION,
@@ -55,11 +50,16 @@ from cancerjev.jev.questions import (
     HYPOTHESIS_QUESTION_SET_VERSION,
     WIDE_QUESTION_SET_VERSION,
 )
+from cancerjev.research.file_admission import FILE_ADMISSION_VERSION
 from cancerjev.research.finalize import FINAL_RESULT_SCHEMA_VERSION, NO_JEV_BASELINE_VERSION
 from cancerjev.research.nextmove import DEEP_POLICY_VERSION
 from cancerjev.research.ranking import BASELINE_POLICY_VERSION, JEV_POLICY_VERSION
-from cancerjev.research.specs import RESEARCH_SPEC_SCHEMA_VERSION
+from cancerjev.research.specs import LUAD_DISCOVERY_V1, RESEARCH_SPEC_SCHEMA_VERSION
 from cancerjev.science.actions import ACTION_REGISTRY, ACTION_REGISTRY_VERSION
+from cancerjev.science.methods import (
+    MUTATION_INFERENCE_DECISION_ID,
+    MUTATION_INFERENCE_DECISION_VERSION,
+)
 from cancerjev.storage.database import SCHEMA_VERSION as SQLITE_SCHEMA_VERSION
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
@@ -90,6 +90,7 @@ def collect_facts() -> dict[str, object]:
             f"{MUTATION_INFERENCE_DECISION_ID} v{MUTATION_INFERENCE_DECISION_VERSION}"),
         "expression_disposition_policy": EXPRESSION_DISPOSITION_POLICY_VERSION,
         "expression_aliquot_identity": EXPRESSION_ALIQUOT_IDENTITY_STATUS,
+        "cnv_disposition_policy": CNV_DISPOSITION_POLICY_VERSION,
         "hypothesis_projection_version": HYPOTHESIS_PROJECTION_VERSION,
         "hypothesis_question_set": HYPOTHESIS_QUESTION_SET_VERSION,
         "mutation_discovery_result_schema_version": DISCOVERY_SCHEMA_VERSION,

@@ -9,6 +9,7 @@ import pytest
 from cancerjev.gdc.endpoints import (
     MAX_CNV_CASE_SHARD_SIZE,
     MAX_CNV_OCCURRENCES_PAGE,
+    EndpointError,
     cnv_occurrence_shard_page_request,
 )
 from cancerjev.gdc.parsers import ParserError, ResponseMeta, parse_cnv_occurrence_scan_page
@@ -59,10 +60,10 @@ def test_shard_request_is_fixed_and_bounded():
     assert request.logical_query_id == "cnv-shard-scan:TCGA-LUAD"
     assert request.page == 2
 
-    with pytest.raises(Exception):
+    with pytest.raises(EndpointError):
         cnv_occurrence_shard_page_request(
             "TCGA-LUAD", [f"case-{index:04d}" for index in range(MAX_CNV_CASE_SHARD_SIZE + 1)])
-    with pytest.raises(Exception):
+    with pytest.raises(EndpointError):
         cnv_occurrence_shard_page_request("TCGA-LUAD", CASES, size=MAX_CNV_OCCURRENCES_PAGE + 1)
 
 

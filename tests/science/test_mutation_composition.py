@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import pytest
 
-from cancerjev.domain.measurements import ContractError
 from cancerjev.gdc.parsers import ResponseMeta, parse_ssm_occurrence_page
 from cancerjev.gdc.transport import GDCResponse
 from cancerjev.research.acquisition import acquire_project_mutation_occurrence_scan
