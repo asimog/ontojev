@@ -59,6 +59,8 @@ Primary upstream references:
 - https://github.com/NCI-GDC/gdc-workflow-overview
 - https://github.com/NCI-GDC/gdc-client
 
+Upstream clones are pinned in the untracked `.upstream/` workspace with an exact-SHA inventory and current/historical classification (`.upstream/SOURCES.lock.json`).
+
 `gdcdatamodel2` is the data-model implementation authority.
 
 Established NCI/GDAN/TCGA computational methods are preferred over ad hoc bioinformatics methods:
