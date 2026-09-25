@@ -24,6 +24,8 @@ Systematic complete-universe discovery (`GENE_ID_ASC_INDEXED_COMPLETE_V1`) is th
 
 Evidence maturity is derived deterministically from persisted typed evidence (`evidence-maturity-v1`: `MEASURED` → `DESCRIPTIVE_CANDIDATE`, with higher levels reported together with their exact missing prerequisite); no Jev judgment or ranking can promote it. Known-cancer context and evaluation labels are machine-checked out of feature construction, disposition triggers and admission (see `tests/leakage/`), and replication holdouts, when declared, are deterministic hash-sorted case partitions with a method-specific rationale.
 
+Pathway membership is adopted from Reactome top-level pathways (`REACTOME_TOP_LEVEL_ENSEMBL_V1`, CC-BY-4.0, filtered Homo sapiens snapshot with a recorded hash and an exact-identifier contract against the live Content Service for TP53); it is descriptive membership only — enrichment, p/q-values and cross-modal pathway analysis are deferred to their declared contracts, and an unmapped gene is `NO_PATHWAY_MEMBERSHIP_OBSERVED`, never negative.
+
 ### Measurement reconciliation retained from the previous architecture document
 
 The frozen `tests/reconciliation/fixtures/reconciliation_dr46` corpus independently compares analysis buckets with released `/ssm_occurrences`. For its TP53/TCGA-LUAD capture, the analysis bucket is 393, released occurrences are 299 and distinct cases are 281. These are fixture-specific observations, not current live counts. A gene with no released occurrences can still have a nonzero analysis bucket. The bucket must therefore not be presented as a distinct released-case measurement.

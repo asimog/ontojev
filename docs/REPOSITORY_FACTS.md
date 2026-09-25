@@ -43,6 +43,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "mutation_reduction_method": "MUTATION_AFFECTED_CASE_COUNT_DESC_V1 v3",
   "no_jev_baseline_version": "no-jev-baseline-v1",
   "open_file_admission_version": "1",
+  "pathway_membership_method": "REACTOME_TOP_LEVEL_ENSEMBL_V1 v1",
   "presentation_payload_schema_version": 4,
   "registered_action_ids": [
     "CHECK_EVIDENCE_INTEGRITY_V1",
