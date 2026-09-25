@@ -91,6 +91,45 @@ class EvidenceCheck:
 
 
 @dataclass(frozen=True)
+class MeasuredObservation:
+    """One deterministic measured value newly produced by a registered action.
+
+    Unlike a restated baseline, this records evidence computed by the action's
+    declared method over an explicit bounded population; an unavailable
+    observation carries its typed reason and never fabricates a VERIFIED check.
+    """
+
+    method_id: str
+    method_version: str
+    evidence_kind: str
+    observed: bytes
+    availability: str
+    n_effective: int | None
+    population_hash: str
+    reason: str | None = None
+    notes: tuple[str, ...] = ()
+    limitations: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for value in (self.method_id, self.method_version, self.evidence_kind):
+            text(value, "measured observation")
+        require(self.availability in {"OBSERVED", "NOT_OBSERVED"},
+                "invalid measured observation availability")
+        if type(self.observed) is not bytes:
+            raise ContractError("measured observation payload must be immutable boundary bytes")
+        decode(self.observed)
+        if self.n_effective is not None:
+            count(self.n_effective, "measured observation n_effective")
+        sha256(self.population_hash, "measured observation population hash")
+        if self.reason is not None:
+            text(self.reason, "measured observation reason")
+        if self.availability == "NOT_OBSERVED":
+            require(self.reason is not None, "an unavailable observation requires its reason")
+        strings(self.notes, "measured observation notes")
+        strings(self.limitations, "measured observation limitations")
+
+
+@dataclass(frozen=True)
 class BaselineObservation:
     """Typed restatement of one measured baseline value.
 
@@ -296,6 +335,7 @@ class EvidenceState:
     quality: Quality
     warnings: tuple[str, ...]
     provenance: EvidenceProvenance
+    measured_observations: tuple[MeasuredObservation, ...] = ()
 
     def __post_init__(self) -> None:
         require(isinstance(self.entity, EntityRef), "invalid evidence entity")
@@ -310,6 +350,8 @@ class EvidenceState:
                     "E0 is an accepted baseline, not an action revision")
             require(self.puzzle is not None and self.puzzle.origin == "STATISTICAL_STATE_BASELINE",
                     "E0 requires its baseline puzzle")
+            require(not self.measured_observations,
+                    "E0 carries no action-measured observations")
         else:
             require(self.parent_evidence_hash is not None and isinstance(self.action, ActionRef),
                     "action revision requires parent hash and action")
@@ -327,6 +369,9 @@ class EvidenceState:
         require(type(self.baseline_observations) is tuple
                 and all(isinstance(o, BaselineObservation) for o in self.baseline_observations),
                 "baseline observations must be immutable records")
+        require(type(self.measured_observations) is tuple
+                and all(isinstance(o, MeasuredObservation) for o in self.measured_observations),
+                "measured observations must be immutable records")
         CheckSummary.from_checks(self.checks)
         require(type(self.project_evidence) is tuple
                 and all(isinstance(r, ProjectEvidenceRow) for r in self.project_evidence),

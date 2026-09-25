@@ -276,6 +276,37 @@ def files_capability_request(project_id: str, *, data_type: str | None = None) -
     )
 
 
+def ssm_occurrence_gene_page_request(project_id: str, gene_id: str, *, offset: int = 0,
+                                     size: int = MAX_SSM_OCCURRENCES_PAGE) -> GDCRequest:
+    """Fixed bounded detail page for one declared project/gene occurrence query.
+
+    This is the shared per-gene detail contract (P07 composition fields); pages
+    are bounded by the caller's declared page budget.
+    """
+    _validate_ids([project_id], limit=1, label="project_id")
+    _validate_ids([gene_id], limit=1, label="gene_id")
+    _validate_bounded_int(size, minimum=1, maximum=MAX_SSM_OCCURRENCES_PAGE,
+                          label="SSM detail size")
+    _validate_bounded_int(offset, minimum=0, maximum=None, label="SSM detail offset")
+    return _request(
+        resolve_endpoint("GET", "/ssm_occurrences"),
+        {
+            "size": size,
+            "from": offset,
+            "sort": "ssm_occurrence_id:asc",
+            "filters": _filter_json({"op": "and", "content": [
+                {"op": "in", "content": {
+                    "field": "case.project.project_id", "value": [project_id]}},
+                {"op": "in", "content": {
+                    "field": "ssm.consequence.transcript.gene.gene_id", "value": [gene_id]}},
+            ]}),
+            "fields": ",".join(SSM_OCCURRENCE_FIELDS),
+        },
+        logical_query_id=f"ssm-gene-detail:{project_id}:{gene_id}",
+        page=(offset // size) + 1,
+    )
+
+
 def genes_request(gene_ids: list[str]) -> GDCRequest:
     _validate_ids(gene_ids, limit=MAX_GENE_IDS, label="gene_ids")
     return _request(

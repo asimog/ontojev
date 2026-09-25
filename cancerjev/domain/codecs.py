@@ -48,6 +48,7 @@ from cancerjev.domain.evidence import (
     EvidenceProvenance,
     EvidenceState,
     InputArtifactRef,
+    MeasuredObservation,
     MissingEvidence,
     ProjectEvidenceRow,
     ResearchPuzzle,
@@ -518,6 +519,18 @@ def _baseline_observation(value: object) -> BaselineObservation:
     )
 
 
+def _measured_observation(value: object) -> MeasuredObservation:
+    d = obj(value, "method_id method_version evidence_kind observed availability n_effective "
+                   "population_hash reason notes limitations")
+    return MeasuredObservation(
+        string(d["method_id"]), string(d["method_version"]), string(d["evidence_kind"]),
+        canonical_bytes(d["observed"]), string(d["availability"]),
+        None if d["n_effective"] is None else integer(d["n_effective"]),
+        string(d["population_hash"]), optional_string(d["reason"]),
+        string_tuple(d["notes"]), string_tuple(d["limitations"]),
+    )
+
+
 def _action(value: object) -> ActionRef | None:
     if value is None:
         return None
@@ -633,6 +646,8 @@ def _evidence_identity_payload(state: EvidenceState) -> dict[str, object]:
         for artifact in provenance.get("input_artifacts", []):
             if isinstance(artifact, dict):
                 artifact["ref"] = None
+    if payload.get("measured_observations") == []:
+        payload.pop("measured_observations", None)
     return payload
 
 
@@ -713,9 +728,13 @@ def read_evidence(data: bytes, *, expected_hash: str | None = None) -> EvidenceS
     try:
         d = decode(data)
         _unsupported(d, EVIDENCE_SCHEMA_VERSION, "EVIDENCE_STATE")
-        obj(d, "schema_version kind entity accepted_state_hash source_state parent_evidence_hash "
-               "revision_index action puzzle checks baseline_observations project_evidence missing_evidence "
-               "quality warnings provenance evidence_hash")
+        required = set(
+            "schema_version kind entity accepted_state_hash source_state parent_evidence_hash "
+            "revision_index action puzzle checks baseline_observations project_evidence "
+            "missing_evidence quality warnings provenance evidence_hash".split())
+        allowed = required | {"measured_observations"}
+        require(set(d) <= allowed, "evidence state carries unexpected fields")
+        require(set(d) >= required, "evidence state is missing required fields")
         state = EvidenceState(
             _entity(d["entity"]), string(d["accepted_state_hash"]), _source_state_binding(d["source_state"]),
             optional_string(d["parent_evidence_hash"]), integer(d["revision_index"]), _action(d["action"]),
@@ -725,6 +744,7 @@ def read_evidence(data: bytes, *, expected_hash: str | None = None) -> EvidenceS
             tuple(_project_evidence_row(item) for item in seq(d["project_evidence"])),
             tuple(_missing_evidence(item) for item in seq(d["missing_evidence"])),
             _quality(d["quality"]), string_tuple(d["warnings"]), _evidence_provenance(d["provenance"]),
+            tuple(_measured_observation(item) for item in seq(d.get("measured_observations", []))),
         )
         _binding(evidence_identity(state), d["evidence_hash"], expected_hash)
         return state
