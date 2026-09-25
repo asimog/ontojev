@@ -174,13 +174,21 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: StoredS
         narrative="; ".join(check_outcomes) or None,
         reason=None if revisions else "no evidence revision was recorded",
     )
+    maturity_note = ""
+    if state is not None:
+        maturity = derive_evidence_maturity(state.state)
+        maturity_note = (f"; evidence maturity {maturity.level.value} with "
+                         f"{len(maturity.unattained)} higher level(s) unattained")
     sections["project_evidence"] = _section(
         "OBSERVED" if last_evidence is not None else "NOT_ACQUIRED",
         narrative=(
-            ", ".join(
-                f"{row.project_id}: {row.affected_case_count.value} affected of "
-                f"{row.examined_cases.value} examined"
-                for row in (last_evidence.project_evidence if last_evidence is not None else ())
+            (
+                ", ".join(
+                    f"{row.project_id}: {row.affected_case_count.value} affected of "
+                    f"{row.examined_cases.value} examined"
+                    for row in (last_evidence.project_evidence
+                                if last_evidence is not None else ())
+                ) + maturity_note
             ) or None
         ),
         reason=None if last_evidence is not None else "no project-level evidence was recorded",
@@ -191,15 +199,6 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: StoredS
         reason=(f"a single cohort is examined; {cohort_label} is never pooled with another cohort"
                 if cohort_label else
                 "a single cohort is examined; no cross-cohort pooling is performed"))
-    if state is not None:
-        maturity = derive_evidence_maturity(state.state)
-        sections["evidence_maturity"] = _section(
-            "OBSERVED",
-            narrative=(f"level {maturity.level.value}; " + "; ".join(
-                f"{level} requires {reason}" for level, reason in maturity.unattained)))
-    else:
-        sections["evidence_maturity"] = _section(
-            "NOT_ACQUIRED", reason="no statistical state was recorded for this candidate")
     sections["cross_modal_evidence"] = _section(
         "NOT_ACQUIRED", reason="case-to-sample resolution for expression values is UNVERIFIED")
     sections["contradictory_evidence"] = _section(
