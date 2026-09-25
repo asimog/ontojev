@@ -11,21 +11,16 @@ from uuid import uuid4
 from cancerjev.domain.codecs import write_expression_discovery
 from cancerjev.domain.discovery import (
     EXPRESSION_LIMITATIONS,
-    EXPRESSION_TAIL_METHOD_ID,
-    EXPRESSION_TAIL_VERSION,
     ExpressionDiscoveryEntry,
     ExpressionDiscoveryResult,
-    ExpressionTailDescriptor,
 )
 from cancerjev.domain.measurements import (
     EntityRef,
-    MethodIdentityRef,
     MetricAvailability,
     PopulationFrame,
     PopulationUnit,
-    digest,
 )
-from cancerjev.domain.scientific import ExpressionSummaryResult, UnavailableLane
+from cancerjev.domain.scientific import ExpressionSummaryResult
 from cancerjev.gdc.endpoints import cohort_project_request, status_request
 from cancerjev.gdc.parsers import GeneRecord, parse_projects, parse_status
 from cancerjev.research.acquisition import (
@@ -37,64 +32,11 @@ from cancerjev.research.acquisition import (
 )
 from cancerjev.research.discovery import acquire_gene_universe
 from cancerjev.research.specs import ResearchSpec
+from cancerjev.science.descriptors import expression_tail_descriptor
 from cancerjev.science.expression import expression_observation
 from cancerjev.science.methods import ProjectFrame, expression_result
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
-
-
-def _linear_quantile(sorted_values: list[float], probability: float) -> float:
-    position = (len(sorted_values) - 1) * probability
-    lower = math.floor(position)
-    upper = math.ceil(position)
-    if lower == upper:
-        return sorted_values[lower]
-    fraction = position - lower
-    return sorted_values[lower] + fraction * (sorted_values[upper] - sorted_values[lower])
-
-
-def expression_tail_descriptor(
-    outcome: ExpressionSummaryResult | UnavailableLane,
-    spec: Any,
-) -> ExpressionTailDescriptor:
-    parameters = {
-        "minimum_n": spec.minimum_tail_n,
-        "quantile_rule": spec.quantile_rule,
-        "iqr_multiplier": spec.iqr_multiplier,
-        "input_unit": spec.input_unit,
-        "transform": spec.transform,
-    }
-    method = MethodIdentityRef(
-        EXPRESSION_TAIL_METHOD_ID, EXPRESSION_TAIL_VERSION, digest(parameters))
-    if isinstance(outcome, UnavailableLane):
-        return ExpressionTailDescriptor(
-            MetricAvailability.NOT_OBSERVED, outcome.reason, None, None, None, None,
-            (), (), 0, method,
-        )
-    transformed = sorted(
-        (math.log2(value.uqfpkm + 1.0), value.case_id) for value in outcome.values)
-    if len(transformed) < spec.minimum_tail_n:
-        return ExpressionTailDescriptor(
-            MetricAvailability.INSUFFICIENT, "INSUFFICIENT_FINITE_VALUES", None, None, None, None,
-            (), (), len(transformed), method,
-        )
-    ordered_values = [value for value, _ in transformed]
-    q1 = _linear_quantile(ordered_values, 0.25)
-    q3 = _linear_quantile(ordered_values, 0.75)
-    iqr = q3 - q1
-    if iqr == 0:
-        return ExpressionTailDescriptor(
-            MetricAvailability.UNAVAILABLE, "DEGENERATE_REFERENCE", None, None, None, None,
-            (), (), len(transformed), method,
-        )
-    lower_fence = q1 - spec.iqr_multiplier * iqr
-    upper_fence = q3 + spec.iqr_multiplier * iqr
-    lower_ids = tuple(sorted(case_id for value, case_id in transformed if value < lower_fence))
-    upper_ids = tuple(sorted(case_id for value, case_id in transformed if value > upper_fence))
-    return ExpressionTailDescriptor(
-        MetricAvailability.OBSERVED, None, q1, q3, lower_fence, upper_fence,
-        lower_ids, upper_ids, len(transformed), method,
-    )
 
 
 def _request_plan_max(spec: ResearchSpec) -> int:

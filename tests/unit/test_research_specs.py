@@ -113,9 +113,9 @@ def test_expression_discovery_spec_rejects_semantic_drift(overrides, message):
         ExpressionDiscoverySpec(**overrides)
 
 
-def test_luad_spec_round_trips_through_schema_six():
+def test_luad_spec_round_trips_through_schema_seven():
     emitted = LUAD_RESEARCH_V1.as_dict()
-    assert emitted["schema_version"] == RESEARCH_SPEC_SCHEMA_VERSION == 6
+    assert emitted["schema_version"] == RESEARCH_SPEC_SCHEMA_VERSION == 7
     assert emitted["kind"] == "RESEARCH_SPEC"
     assert set(emitted) == {
         "schema_version", "kind", "spec_id", "intent", "cohort", "discovery", "acquisition",
@@ -140,7 +140,8 @@ def test_reader_rejects_legacy_unknown_and_extra_fields():
         {**payload, "schema_version": 3},
         {**payload, "schema_version": 4},
         {**payload, "schema_version": 5},
-        {**payload, "schema_version": 7},
+        {**payload, "schema_version": 6},
+        {**payload, "schema_version": 8},
         {**payload, "schema_version": 2},
     ):
         with pytest.raises(ValueError, match="unsupported research spec version/kind"):

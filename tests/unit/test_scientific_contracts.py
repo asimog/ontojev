@@ -454,11 +454,11 @@ def test_cnv_retains_raw_categories_and_missing_sample_context():
 # ------------------------------------------------------------ boundary codecs
 
 
-def test_state_schema_4_round_trip_preserves_typed_fields():
+def test_state_schema_5_round_trip_preserves_typed_fields():
     state = build_state()
     raw = write_state(state)
     payload = json.loads(raw)
-    assert payload["schema_version"] == 4
+    assert payload["schema_version"] == 5
     assert payload["kind"] == "STATISTICAL_STATE"
     assert payload["state_hash"] == state_identity(state)
     assert read_state(raw) == state

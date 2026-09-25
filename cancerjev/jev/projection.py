@@ -22,12 +22,13 @@ from cancerjev.domain.measurements import (
     ObservedScalar,
 )
 from cancerjev.domain.scientific import (
+    CnvOccurrenceResult,
     ExpressionSummaryResult,
     StatisticalState,
 )
-from cancerjev.science.actions import ACTION_REGISTRY
+from cancerjev.science.actions import ACTION_REGISTRY, eligible_actions
 
-PROJECTION_VERSION = "jev-state-projection-v3"
+PROJECTION_VERSION = "jev-state-projection-v4"
 EVIDENCE_PROJECTION_VERSION = "jev-evidence-projection-v2"
 HYPOTHESIS_PROJECTION_VERSION = "jev-hypothesis-projection-v2"
 PROJECTION_BYTE_CAP = 65_536
@@ -59,6 +60,11 @@ INCLUDED_FIELDS = (
     "cohort.expression_n_missing",
     "cohort.expression_provider_median",
     "cohort.expression_provider_stddev",
+    "cohort.cnv_observed",
+    "cohort.cnv_positive_cases",
+    "cohort.cnv_conflicting_cases",
+    "cohort.cnv_categories",
+    "cohort.cnv_callers",
     "cohort.coverage_imbalance",
     "cohort.completeness",
     "cohort.scientific_sufficiency",
@@ -85,6 +91,8 @@ def _limitations(completeness: str) -> list[str]:
         "population denominator).",
         "The examined gene set is selected from the provider top-mutated ranking and is not an unbiased "
         "genome-wide scan.",
+        "CNV rows, when present, are positive provider-labelled occurrences; absence is not a neutral state "
+        "and category case sets may overlap.",
     ]
     if completeness != "COMPLETE":
         limitations.append("Some provider aggregations were partial; totals may be incomplete.")
@@ -126,6 +134,23 @@ def build_projection(record: StateRecord) -> dict[str, Any]:
         expression_sample_sd = None
         expression_n_finite = None
         expression_n_missing = None
+    cnv = project.cnv
+    if isinstance(cnv, CnvOccurrenceResult):
+        category_cases: dict[str, set[str]] = {}
+        labels_by_case: dict[str, set[str]] = {}
+        for occurrence in cnv.occurrences:
+            category_cases.setdefault(occurrence.raw_category, set()).add(occurrence.case_id)
+            labels_by_case.setdefault(occurrence.case_id, set()).add(occurrence.raw_category)
+        cnv_categories = {key: len(value) for key, value in sorted(category_cases.items())}
+        cnv_positive_cases = len(labels_by_case)
+        cnv_conflicting_cases = sum(len(labels) > 1 for labels in labels_by_case.values())
+        cnv_callers = sorted({occurrence.caller for occurrence in cnv.occurrences
+                              if occurrence.caller is not None})
+    else:
+        cnv_categories = None
+        cnv_positive_cases = None
+        cnv_conflicting_cases = None
+        cnv_callers = []
     provider = project.provider_expression
     missingness = list(state.missingness)
     for warning in state.warnings:
@@ -164,13 +189,20 @@ def build_projection(record: StateRecord) -> dict[str, Any]:
             "expression_n_missing": expression_n_missing,
             "expression_provider_median": provider.median if provider is not None else None,
             "expression_provider_stddev": provider.stddev if provider is not None else None,
+            "cnv_observed": isinstance(cnv, CnvOccurrenceResult),
+            "cnv_positive_cases": cnv_positive_cases,
+            "cnv_conflicting_cases": cnv_conflicting_cases,
+            "cnv_categories": cnv_categories,
+            "cnv_callers": cnv_callers,
             "coverage_imbalance": state.cross_project.coverage_imbalance,
             "completeness": completeness,
             "scientific_sufficiency": state.quality.sufficiency.value,
         },
         "missingness": missingness,
         "limitations": _limitations(completeness),
-        "eligible_followups": [],
+        "eligible_followups": [
+            item.action_id for item in eligible_actions(state, "STATISTICAL_STATE") if item.eligible
+        ],
     }
     encoded = canonical_json(projection)
     if len(encoded) > PROJECTION_BYTE_CAP:

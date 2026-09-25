@@ -21,7 +21,8 @@ COHORT_FIELDS = {
     "mutation_coverage_complete", "ssm_coverage_cases", "expression_observed",
     "expression_median", "expression_sample_sd", "expression_n_finite", "expression_n_missing",
     "expression_provider_median", "expression_provider_stddev", "coverage_imbalance",
-    "completeness", "scientific_sufficiency",
+    "cnv_observed", "cnv_positive_cases", "cnv_conflicting_cases", "cnv_categories",
+    "cnv_callers", "completeness", "scientific_sufficiency",
 }
 
 
@@ -43,7 +44,8 @@ def test_projection_is_deterministic_and_compact():
     assert first["cohort"]["mutation_observed"] is True
     assert first["cohort"]["expression_observed"] is True
     assert first["cohort"]["coverage_imbalance"] is False
-    assert first["eligible_followups"] == []
+    assert first["eligible_followups"] == [
+        "CHECK_EVIDENCE_INTEGRITY_V1", "SUMMARIZE_EXPRESSION_TAIL_V1"]
     assert len(str(first)) < PROJECTION_BYTE_CAP
 
 

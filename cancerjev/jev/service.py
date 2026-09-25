@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from cancerjev.config import Settings
+from cancerjev.config import JEV_INPUT_TOKEN_RESERVATION_PER_ATTEMPT, Settings
 from cancerjev.domain.envelopes import EvidenceRecord, HypothesisRecord, StateRecord
 from cancerjev.domain.events import canonical_json, utc_now
 from cancerjev.domain.measurements import digest
@@ -102,6 +102,8 @@ class JevService:
     artifacts: ArtifactStore
     adapter_factory: Callable[[], TypeSafeAdapter] | None = None
     _question_artifacts: dict[tuple[str, str], Any] = field(default_factory=dict, repr=False)
+    _provider_attempts_reserved: int = field(default=0, init=False, repr=False)
+    _input_tokens_reserved: int = field(default=0, init=False, repr=False)
 
     # ------------------------------------------------------------------ helpers
 
@@ -184,6 +186,16 @@ class JevService:
     def _invoke(self, adapter: TypeSafeAdapter, projection: dict[str, Any],
                 questions: tuple[QuestionDefinition, ...]) -> tuple[ProviderAnswerSet, ValidatedAnswers]:
         """One provider call plus fail-closed validation of its answers."""
+        if self._provider_attempts_reserved >= self.settings.jev_max_attempts:
+            raise JevProviderError("JEV_ATTEMPT_BUDGET_EXHAUSTED", "no provider attempt remains")
+        reservation = JEV_INPUT_TOKEN_RESERVATION_PER_ATTEMPT
+        if self._input_tokens_reserved + reservation > self.settings.jev_max_input_units:
+            raise JevProviderError(
+                "JEV_INPUT_TOKEN_BUDGET_EXHAUSTED",
+                f"reserving {reservation} tokens would exceed the configured envelope",
+            )
+        self._provider_attempts_reserved += 1
+        self._input_tokens_reserved += reservation
         answer_set = adapter.evaluate(projection, questions)
         return answer_set, read_answers(questions, answer_set.answers)
 

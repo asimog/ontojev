@@ -1,9 +1,9 @@
 # Discovery implementation roadmap and deliverable index
 
-Current roadmap after the Stage 6 survivor-only CNV implementation (2026-09-25). Stages 0–6 are
-IMPLEMENTED and offline verified. **Descriptive held-data actions and cutover are the next Stage 7
-task.** Stages 7–9 are PLANNED; proposed action and inferential contracts below are design,
-**not current runtime behavior**.
+Current roadmap after the Stage 6/7/8 implementations (2026-09-25). Stages 0–8 are
+IMPLEMENTED (offline verified where stated). **Conditional inferential extensions are the next
+Stage 9 task and remain deferred behind their review gates.** The remaining proposed contracts
+below are design, **not current runtime behavior**.
 [Implementation status](IMPLEMENTATION_STATUS.md) owns current facts;
 [architecture](ARCHITECTURE.md) owns the current runtime chain.
 
@@ -18,12 +18,13 @@ task.** Stages 7–9 are PLANNED; proposed action and inferential contracts belo
 | 4: bounded broad universe | Explicit release/filter/ordered 1,000-gene prefix over `/genes`, ≤100-gene indexed count batches, deterministic ≤10-survivor reduction | IMPLEMENTED (2026-09-25): strict page guards (duplicate/offset/total/order/biotype/slice), explicit zero vs absent vs partial, one disposition per requested gene, reducer `MUTATION_LUAD_AFFECTED_COUNT_DESC_V1`, persisted schema-1 result; live acceptance 1,000/1,000 with 10 survivors |
 | 5: independent expression arm | Optional explicitly budgeted case-labelled descriptors and within-gene extremes | **IMPLEMENTED (offline verified)**: separate `discover-expression --live`; same release-bound 1,000-gene universe; ≤100-gene × ≤250-case strict batches; complete declared population/missingness; local summaries and Tukey tails only; no tumor-normal, causal or sample-matching claim; live acceptance UNVERIFIED |
 | 6: narrow CNV lane | Fixed builders and strict occurrence parser; complete survivor queries only | **IMPLEMENTED (offline verified)**: Stage 4 artifact/release/frame binding; ≤10 survivors × ≤10 strict 250-row pages; real-shape fixture for generic Loss, missing sample ID and caller context; unique positive cases per category with explicit conflicts; no neutral/negative inference; full live acceptance UNVERIFIED |
-| 7: descriptive actions and cutover | Reuse the investigation loop; expression-tail/CNV-category actions; typed versioned projections; no new semantic questions | PLANNED: held-data methods and authorization enforced; explicit model attempt/token budget; unchanged judgments/policies |
-| 8: prospective evaluation | Blinded grouped labels, fixed development/holdout, ablations and resource comparison | PLANNED: blocked on a labelled historical corpus and human review; no ranking-only value claim |
+| 7: descriptive actions and cutover | Reuse the investigation loop; expression-tail/CNV-category actions; typed versioned projections; no new semantic questions | **IMPLEMENTED (offline verified)**: exact Stage 4-6 binding cutover to one schema-5 state per survivor (`research/cutover.py`); shared descriptors (`science/descriptors.py`); `SUMMARIZE_EXPRESSION_TAIL_V1`/`SUMMARIZE_CNV_CATEGORIES_V1` registered (registry version 3); projection `jev-state-projection-v4` adds CNV fields and Python-computed `eligible_followups`; several eligible actions require one explicit operator action id; Jev attempt/token envelopes configured; no new semantic questions |
+| 8: prospective evaluation | Blinded grouped labels, fixed development/holdout, ablations and resource comparison | **IMPLEMENTED (offline verified)**: `research/prospective.py` validates blinded grouped labels (≥2 adjudicated reviewers, no split/group leakage), arm outputs bound to the protocol, per-arm metrics and grouped-bootstrap precision@3 differences by declared seed; report always `HUMAN_REVIEW_REQUIRED`. No protocol executed, no labelled historical corpus exists |
 | 9: conditional inferential extensions | Matched mutation-expression/CNV-expression, survival, later scRNA | DEFERRED: separate source/matching/reference/censoring/statistical review; not unlocked by finishing earlier engineering stages |
 
-Stages 4–6 are IMPLEMENTED as separate bounded pre-Wide tasks in the existing architecture. Stage 7 remains
-FIX AS PART OF NEW ARCHITECTURE work. A total paid-model spend gate remains a
+Stages 4–7 are IMPLEMENTED as separate bounded pre-Wide tasks in the existing architecture; Stage 8's
+offline protocol validator is implemented while any executed protocol remains blocked on a labelled
+historical corpus and human review. A total paid-model spend gate remains a
 prerequisite for scaling paid model work, not for offline contract implementation. Retain the
 small deterministic baseline throughout.
 

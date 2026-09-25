@@ -19,11 +19,12 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, cast
 
 from cancerjev.domain.actions import IntegrityCheck, IntegrityOutcome
 from cancerjev.domain.codecs import read_state, state_identity
+from cancerjev.domain.discovery import ExpressionDiscoverySpec
 from cancerjev.domain.events import canonical_json
 from cancerjev.domain.evidence import EvidenceState, InputArtifactRef
 from cancerjev.domain.measurements import (
@@ -33,10 +34,12 @@ from cancerjev.domain.measurements import (
     ObservedScalar,
 )
 from cancerjev.domain.scientific import (
+    CnvOccurrenceResult,
     ExpressionSummaryResult,
     StatisticalState,
     UnavailableLane,
 )
+from cancerjev.science.descriptors import cnv_category_summaries, expression_tail_descriptor
 
 CHECK_VERIFIED: IntegrityOutcome = "VERIFIED"
 CHECK_CONTRADICTED: IntegrityOutcome = "CONTRADICTED"
@@ -87,7 +90,7 @@ class ActionDefinition:
         }
 
 
-ACTION_REGISTRY_VERSION = "2"
+ACTION_REGISTRY_VERSION = "3"
 
 ACTION_REGISTRY: dict[str, ActionDefinition] = {
     "CHECK_EVIDENCE_INTEGRITY_V1": ActionDefinition(
@@ -144,6 +147,46 @@ ACTION_REGISTRY: dict[str, ActionDefinition] = {
             "is reported as NOT_OBSERVED.",
         ),
         input_kind="EVIDENCE_STATE",
+    ),
+    "SUMMARIZE_EXPRESSION_TAIL_V1": ActionDefinition(
+        action_id="SUMMARIZE_EXPRESSION_TAIL_V1", version="1",
+        title="Summarize the held within-gene expression tail",
+        question=(
+            "Which held case-labelled observations fall outside the fixed Tukey 1.5xIQR fences "
+            "for this gene's log2(UQFPKM+1) distribution?"
+        ),
+        interpretation=(
+            "The result is a within-gene descriptive tail over the retained cohort frame. It is "
+            "not differential expression, a p-value, a diagnosis or a causal effect."
+        ),
+        method_id="EXPRESSION_TUKEY_TAIL_V1", method_version="1", unit="cases",
+        required_evidence=("CASE_LABELLED_EXPRESSION_VALUES", "COMPLETE_POPULATION_FRAME"),
+        limitations=(
+            "Requires at least 20 finite held values and a positive IQR.",
+            "Selected on the same cohort; no confirmatory or tumor-normal claim is supported.",
+            "Acquires no data and calls no model.",
+        ),
+        input_kind="STATISTICAL_STATE",
+    ),
+    "SUMMARIZE_CNV_CATEGORIES_V1": ActionDefinition(
+        action_id="SUMMARIZE_CNV_CATEGORIES_V1", version="1",
+        title="Summarize held provider-labelled CNV categories",
+        question=(
+            "How many distinct positive cases occur in each exact provider CNV category, while "
+            "retaining cases assigned multiple categories and caller context?"
+        ),
+        interpretation=(
+            "Counts are positive occurrence descriptors only. Absence is never neutral or negative, "
+            "and overlapping category case sets are not summed."
+        ),
+        method_id="CNV_INDEXED_POSITIVE_CASES_V1", method_version="1", unit="cases",
+        required_evidence=("COMPLETE_CNV_OCCURRENCES", "PROVIDER_CATEGORY", "COHORT_CASE_FRAME"),
+        limitations=(
+            "Generic Loss remains distinct from Homozygous Deletion.",
+            "Numerical copy-number values are not compared across callers.",
+            "Acquires no data and calls no model.",
+        ),
+        input_kind="STATISTICAL_STATE",
     ),
 }
 
@@ -263,6 +306,24 @@ def eligibility(record: StatisticalState | EvidenceState, definition: ActionDefi
         if not isinstance(record, StatisticalState):
             raise ActionError("WRONG_INPUT_KIND", f"{definition.action_id} requires a StatisticalState")
         reasons, prerequisites = _state_prerequisites(record)
+        if definition.action_id == "SUMMARIZE_EXPRESSION_TAIL_V1":
+            expression = next((project.expression for project in record.projects
+                               if isinstance(project.expression, ExpressionSummaryResult)), None)
+            if expression is None:
+                reasons.append("EXPRESSION_VALUES_NOT_OBSERVED")
+            else:
+                descriptor = expression_tail_descriptor(expression, ExpressionDiscoverySpec())
+                prerequisites["expression_valid_n"] = descriptor.valid_n
+                prerequisites["tail_availability"] = descriptor.availability.value
+                if descriptor.availability is not MetricAvailability.OBSERVED:
+                    reasons.append(descriptor.reason or "EXPRESSION_TAIL_UNAVAILABLE")
+        elif definition.action_id == "SUMMARIZE_CNV_CATEGORIES_V1":
+            cnv = next((project.cnv for project in record.projects
+                        if isinstance(project.cnv, CnvOccurrenceResult)), None)
+            if cnv is None:
+                reasons.append("CNV_OCCURRENCES_NOT_OBSERVED")
+            else:
+                prerequisites["cnv_occurrences"] = len(cnv.occurrences)
     elif definition.input_kind == "EVIDENCE_STATE":
         if not isinstance(record, EvidenceState):
             raise ActionError("WRONG_INPUT_KIND", f"{definition.action_id} requires an EvidenceState")
@@ -781,13 +842,57 @@ def execute(action_id: str, record: StatisticalState | EvidenceState, *,
     decision = eligibility(record, definition)
     if not decision.eligible:
         raise ActionError("ACTION_INELIGIBLE", ";".join(decision.reasons))
-    if isinstance(record, StatisticalState):
+    checks: tuple[IntegrityCheck, ...]
+    if isinstance(record, StatisticalState) and action_id == "SUMMARIZE_EXPRESSION_TAIL_V1":
+        expression = next(project.expression for project in record.projects
+                          if isinstance(project.expression, ExpressionSummaryResult))
+        descriptor = expression_tail_descriptor(expression, ExpressionDiscoverySpec())
+        observed = asdict(descriptor)
+        observed["availability"] = descriptor.availability.value
+        observed["method"] = asdict(descriptor.method)
+        checks = (_check(
+            "EXPRESSION_TAIL_SUMMARY",
+            "The fixed Tukey descriptor is computed from the complete held case-labelled values.",
+            CHECK_VERIFIED, observed=observed,
+            expected={"minimum_n": 20, "iqr_multiplier": 1.5, "input_unit": "UQFPKM"},
+            n_effective=descriptor.valid_n, limitations=definition.limitations,
+        ),)
+        inputs = [InputArtifactRef("STATISTICAL_STATE_ARTIFACT", record.entity.gene_id,
+                                   state_identity(record), True)]
+    elif isinstance(record, StatisticalState) and action_id == "SUMMARIZE_CNV_CATEGORIES_V1":
+        cnv = next(project.cnv for project in record.projects
+                   if isinstance(project.cnv, CnvOccurrenceResult))
+        categories, conflicts = cnv_category_summaries(cnv)
+        observed = {
+            "categories": [
+                {"raw_category": item.raw_category, "category": item.category.value,
+                 "case_ids": list(item.case_ids), "unique_case_count": len(item.case_ids)}
+                for item in categories
+            ],
+            "conflicting_case_ids": list(conflicts),
+            "callers": sorted({occurrence.caller for occurrence in cnv.occurrences
+                               if occurrence.caller is not None}),
+            "missing_sample_occurrence_ids": sorted(
+                occurrence.occurrence_id for occurrence in cnv.occurrences
+                if occurrence.sample_id is None),
+        }
+        checks = (_check(
+            "CNV_CATEGORY_SUMMARY",
+            "Distinct positive cases are grouped by exact provider category with conflicts retained.",
+            CHECK_VERIFIED, observed=observed,
+            expected={"absence_means_neutral": False, "overlap_is_summed": False},
+            n_effective=len({occurrence.case_id for occurrence in cnv.occurrences}),
+            limitations=definition.limitations,
+        ),)
+        inputs = [InputArtifactRef("STATISTICAL_STATE_ARTIFACT", record.entity.gene_id,
+                                   state_identity(record), True)]
+    elif isinstance(record, StatisticalState):
         frame = _check_frame_agreement(record)
         coverage = _check_expression_coverage(record)
         scope = _check_mutation_scope(record)
         universe, universe_inputs = _check_tested_universe(record, read_artifact)
         integrity, response_inputs = _check_response_integrity(record, read_artifact)
-        checks: tuple[IntegrityCheck, ...] = (frame, coverage, scope, universe, integrity)
+        checks = (frame, coverage, scope, universe, integrity)
         inputs = [InputArtifactRef("STATISTICAL_STATE_ARTIFACT", record.entity.gene_id,
                                    state_identity(record), True)]
         inputs += universe_inputs + response_inputs

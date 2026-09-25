@@ -219,7 +219,7 @@ def _build(runtime, *, drop_columns: int = 0, empty_expression: bool = False,
 
 
 def test_registered_actions_have_explicit_contracts():
-    assert ACTION_REGISTRY_VERSION == "2"
+    assert ACTION_REGISTRY_VERSION == "3"
     integrity = ACTION_REGISTRY[ACTION_ID]
     assert integrity.version == "1" and integrity.input_kind == "STATISTICAL_STATE"
     assert integrity.method_id == "EVIDENCE_INTEGRITY_V1"
@@ -232,6 +232,9 @@ def test_registered_actions_have_explicit_contracts():
     assert revision.method_id == "REVISION_FAITHFULNESS_V1"
     assert revision.question and revision.interpretation and revision.limitations
     assert revision.ref()["action_id"] == REVISION_ACTION_ID
+
+    assert ACTION_REGISTRY["SUMMARIZE_EXPRESSION_TAIL_V1"].method_id == "EXPRESSION_TUKEY_TAIL_V1"
+    assert ACTION_REGISTRY["SUMMARIZE_CNV_CATEGORIES_V1"].method_id == "CNV_INDEXED_POSITIVE_CASES_V1"
 
 
 def test_wrong_input_kind_is_refused_not_silently_skipped(runtime):
@@ -448,7 +451,8 @@ def test_revision_action_is_eligible_only_for_a_revision(runtime):
     revision_decisions = eligible_actions(evidence.revision, "EVIDENCE_STATE")
     assert [item.action_id for item in revision_decisions] == [REVISION_ACTION_ID]
     assert revision_decisions[0].eligible is True and revision_decisions[0].reasons == ()
-    assert [item.action_id for item in eligible_actions(evidence.state, "STATISTICAL_STATE")] == [ACTION_ID]
+    assert [item.action_id for item in eligible_actions(evidence.state, "STATISTICAL_STATE")] == [
+        ACTION_ID, "SUMMARIZE_CNV_CATEGORIES_V1", "SUMMARIZE_EXPRESSION_TAIL_V1"]
     with pytest.raises(ActionError) as exc:
         eligible_actions(evidence.state, "EVIDENCE_STATE")
     assert exc.value.code == "WRONG_INPUT_KIND"

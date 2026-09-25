@@ -157,7 +157,9 @@ def test_luad_spec_is_the_single_production_spec():
                                      project_id="TCGA-LUAD")
     assert spec.cohort.cohort_id == spec.cohort.project_id
     assert spec.cohort.cohort_id != "TCGA-LUSC"
-    assert spec.allowed_actions == ("CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1")
+    assert spec.allowed_actions == (
+        "CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1",
+        "SUMMARIZE_EXPRESSION_TAIL_V1", "SUMMARIZE_CNV_CATEGORIES_V1")
     assert set(spec.allowed_actions) <= IMPLEMENTED_ACTIONS
     assert spec.limits.max_promotions < spec.limits.max_survivors <= 10
     assert spec.limits.max_revisions <= 2
@@ -168,9 +170,9 @@ def test_luad_spec_is_the_single_production_spec():
     assert "_score is provider selection metadata" in spec.gene_selection_rule()
 
 
-def test_spec_boundary_reader_is_strict_schema_6():
+def test_spec_boundary_reader_is_strict_schema_7():
     payload = LUAD_RESEARCH_V1.as_dict()
-    assert payload["schema_version"] == RESEARCH_SPEC_SCHEMA_VERSION == 6
+    assert payload["schema_version"] == RESEARCH_SPEC_SCHEMA_VERSION == 7
     assert research_spec_from_dict(json.loads(json.dumps(payload))) == LUAD_RESEARCH_V1
 
     legacy = dict(payload)

@@ -1,7 +1,7 @@
 """Typed lane and state results; constructing these records admits no new provider capability.
 
 The canonical ``StatisticalState`` is the sole runtime scientific object. Its
-serialized schema-4 form is a boundary representation produced and read only by
+serialized schema-5 form is a boundary representation produced and read only by
 ``domain.codecs``; operational ids, attempt/cache links and provider ranking
 metadata are carried in the operational envelope and never fill a measured field.
 """
@@ -384,6 +384,8 @@ class ProjectState:
     expression: ExpressionSummaryResult | UnavailableLane
     provider_expression: ProviderExpressionSummary | None
     discovery: ProviderDiscoveryMetadata | None
+    cnv: CnvOccurrenceResult | UnavailableLane = UnavailableLane(
+        Lane.CNV, False, UnavailableStatus.NOT_ACQUIRED, "CNV_NOT_ACQUIRED")
 
     def __post_init__(self) -> None:
         require(isinstance(self.population, PopulationRecord), "invalid project population")
@@ -403,6 +405,12 @@ class ProjectState:
                     "unavailable provider summary cannot carry a median")
         if self.discovery is not None:
             require(isinstance(self.discovery, ProviderDiscoveryMetadata), "invalid provider discovery metadata")
+        require(isinstance(self.cnv, (CnvOccurrenceResult, UnavailableLane)), "wrong CNV result type")
+        if isinstance(self.cnv, UnavailableLane):
+            require(self.cnv.lane == Lane.CNV, "unavailable lane in wrong CNV slot")
+        else:
+            require(self.cnv.frame == frame, "CNV/population frame mismatch")
+            require(self.cnv.entity == self.mutation.entity, "CNV/mutation entity mismatch")
 
 
 @dataclass(frozen=True)
@@ -510,7 +518,7 @@ class StatisticalState:
         strings(tuple(m.method_id for m in self.methods), "state method ids")
         sha256(self.environment_hash, "state environment hash")
         for project in self.projects:
-            for lane_result in (project.mutation, project.expression):
+            for lane_result in (project.mutation, project.expression, project.cnv):
                 if isinstance(lane_result, UnavailableLane):
                     continue
                 if isinstance(lane_result, MutationCountResult):
@@ -518,9 +526,12 @@ class StatisticalState:
                     for value in (lane_result.affected_cases, lane_result.ssm_coverage_cases):
                         if isinstance(value, ObservedCount):
                             require(set(value.sources) <= set(self.sources), "unbound mutation sources")
-                else:
+                elif isinstance(lane_result, ExpressionSummaryResult):
                     require(lane_result.entity == self.entity, "expression entity/state mismatch")
                     require(set(lane_result.sources) <= set(self.sources), "unbound expression sources")
+                else:
+                    require(lane_result.entity == self.entity, "CNV entity/state mismatch")
+                    require(set(lane_result.sources) <= set(self.sources), "unbound CNV sources")
 
     @property
     def gene_symbol(self) -> str | None:

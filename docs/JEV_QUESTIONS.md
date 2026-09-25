@@ -9,7 +9,7 @@ owns the capability review.
 
 | Set / projection | Questions | Applicability |
 |---|---|---|
-| `wide-v3` / `jev-state-projection-v3` | `evidence_quality_adequate`; `mutation_evidence_coherent`; `expression_evidence_coherent`; `signal_explained_by_coverage`; `unresolved_uncertainty_material`; `warrants_deeper_investigation` (Noul); `dominant_limitation` (Choice) | mutation/expression-specific questions require that lane observed; others `any_observation` |
+| `wide-v3` / `jev-state-projection-v4` | `evidence_quality_adequate`; `mutation_evidence_coherent`; `expression_evidence_coherent`; `signal_explained_by_coverage`; `unresolved_uncertainty_material`; `warrants_deeper_investigation` (Noul); `dominant_limitation` (Choice) | mutation/expression-specific questions require that lane observed; others `any_observation` |
 | `deep-v1` / `jev-evidence-projection-v2` | `revision_reliable`; `evidence_sufficient_for_next_step`; `next_step_warranted`; `stopping_more_honest` (Noul); `dominant_limitation` (Choice) | `integrity_observed` for reliability; `revision_evidence_present` otherwise |
 | `hypothesis-v2` / `jev-hypothesis-projection-v2` | `hypothesis_testable`; `hypothesis_exceeds_recorded_evidence` (Noul); `hypothesis_dominant_unsupported_assumption` (Choice) | `hypothesis_present` |
 

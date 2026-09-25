@@ -54,6 +54,7 @@ class DemoOrchestrator:
             ),
             research_spec=LUAD_RESEARCH_V1,
             deep_selection=DEMO_DEEP_SELECTION,
+            deep_action_id="CHECK_EVIDENCE_INTEGRITY_V1",
             deep_followup_authorized=True,
             deep_hypotheses_requested=True,
             run_mode="FIXTURE",

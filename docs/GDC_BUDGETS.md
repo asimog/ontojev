@@ -54,7 +54,12 @@ application counters are not inflated or hidden by automatic SDK retries.
 - The installed typesafe-sdk version documents configurable retries; this project explicitly
   disables them. A future change to retry behavior requires its own recorded decision and must
   update the counter semantics rather than silently multiplying provider attempts.
-- PLANNED before larger paid discovery: shared attempt/token/spend reservations, terminal usage
+- IMPLEMENTED (Stage 7): explicit Jev provider attempt and input-token envelopes.
+  `CANCERJEV_JEV_MAX_ATTEMPTS` (default 25, hard cap 1,015) and `CANCERJEV_JEV_MAX_INPUT_TOKENS`
+  (default 1,600,000; each attempt reserves 64,000 input tokens before any provider call) refuse
+  further work with typed `JEV_ATTEMPT_BUDGET_EXHAUSTED` / `JEV_INPUT_TOKEN_BUDGET_EXHAUSTED`
+  outcomes.
+- PLANNED before larger paid discovery: shared spend reservations across arms, terminal usage
   including unknown values, bounded review/retry authorization and cancellation tests. A total
   paid-model spend gate does not exist, and current Jev/LLM dollar budgets are not enforced.
 - The GDC transport ledger covers GDC attempts only; model calls are not in it.

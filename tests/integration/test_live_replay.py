@@ -242,7 +242,7 @@ def test_live_replay_produces_typed_states_without_jev(runtime, monkeypatch):
         assert state_identity(stored.state) == row["state_hash"]
         assert read_state(stored.artifact.content, expected_hash=row["state_hash"]) == stored.state
         boundary = json.loads(stored.artifact.content)
-        assert boundary["schema_version"] == 4
+        assert boundary["schema_version"] == 5
         assert boundary["kind"] == "STATISTICAL_STATE"
 
         state = stored.state
@@ -358,7 +358,7 @@ def test_live_replay_with_jev_wide_evaluation(runtime, monkeypatch):
     projections = repository.page_child("jev_projections", run_id, 50, None, {})["items"]
     assert len(projections) == 2
     for projection in projections:
-        assert projection["projection_version"] == "jev-state-projection-v3"
+        assert projection["projection_version"] == "jev-state-projection-v4"
         assert projection["source_state_hash"] in state_hashes.values()
         assert len(projection["projection_hash"]) == 64
 
@@ -369,7 +369,7 @@ def test_live_replay_with_jev_wide_evaluation(runtime, monkeypatch):
         vector = evaluation["vector"]
         assert vector["input_ref_kind"] == "STATISTICAL_STATE"
         assert vector["question_set_version"] == "wide-v3"
-        assert vector["projection_version"] == "jev-state-projection-v3"
+        assert vector["projection_version"] == "jev-state-projection-v4"
         assert vector["resolved_model"] == "jev-1.13.0"
         assert vector["cache_source_evaluation_id"] is None
         assert vector["error"] is None
@@ -406,7 +406,7 @@ def test_live_replay_with_jev_wide_evaluation(runtime, monkeypatch):
     assert rankings["jev"]["admission"]["promotion_limit"] == 3
     listing = client.get(f"/api/runs/{run_id}/projections").json()["items"]
     assert len(listing) == 2
-    assert {item["projection_version"] for item in listing} == {"jev-state-projection-v3"}
+    assert {item["projection_version"] for item in listing} == {"jev-state-projection-v4"}
 
 
 def test_jev_evaluations_are_cacheable_by_pinned_model_identity(runtime, monkeypatch):

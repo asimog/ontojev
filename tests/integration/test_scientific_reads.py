@@ -41,7 +41,8 @@ def _canned_run(tmp_path_factory):
     repository = Repository(database)
     orchestrator, _, _ = _orchestrator(
         (settings, repository, ArtifactStore(data_dir)), jev_adapter=_hypothesis_adapter(),
-        deep_selection="GENEONE", deep_followup_authorized=True)
+        deep_selection="GENEONE", deep_followup_authorized=True,
+        deep_action_id="CHECK_EVIDENCE_INTEGRITY_V1")
     run_id = orchestrator.run()
     assert repository.get_run(run_id)["status"] == "COMPLETED"
     candidate = next(row for row in repository.list_table("candidates", run_id)

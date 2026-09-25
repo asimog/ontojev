@@ -9,10 +9,10 @@ chain; [persistence](PERSISTENCE.md) owns storage.
 
 | Record | Role and protected invariant |
 |---|---|
-| `ResearchSpec` (schema 6) | Sole canonical research configuration: `spec_id`, intent, `CohortSpec`, fixed mutation `DiscoverySpec`, fixed `ExpressionDiscoverySpec`, fixed survivor-only `CnvDiscoverySpec`, bounded acquisition limits, scientific limits, allowed registered action IDs and fixed policy versions. Unsupported configurations are rejected or not representable |
+| `ResearchSpec` (schema 7) | Sole canonical research configuration: `spec_id`, intent, `CohortSpec`, fixed mutation `DiscoverySpec`, fixed `ExpressionDiscoverySpec`, fixed survivor-only `CnvDiscoverySpec`, bounded acquisition limits, scientific limits, allowed registered action IDs and fixed policy versions. Unsupported configurations are rejected or not representable |
 | `ExpressionDiscoveryEntry` / `ExpressionDiscoveryResult` (schema 1) | One typed expression outcome and empirical-tail availability per gene in the release-bound systematic universe; complete case-frame accounting, workflow/strategy provenance, fixed request envelope and no model/ranking input |
 | `CnvDiscoveryEntry` / `CnvDiscoveryResult` (schema 1) | One typed complete-or-unavailable occurrence outcome per Stage 4 survivor; exact mutation-result/release/frame binding; unique positive cases by provider five-category label, caller/source context, explicit case conflicts and missing sample IDs; no neutral inference or model input |
-| `StatisticalState` (schema 4) | Typed entity, annotation, research scope, universe, tested context, per-project lane results, quality and separate scientific/operational sources |
+| `StatisticalState` (schema 5) | Typed entity, annotation, research scope, universe, tested context, per-project lane results (including the Stage 6 CNV lane), quality and separate scientific/operational sources |
 | `EvidenceState` (schema 4) | Accepted state hash, parent evidence hash, E0/E1/E2 index, `ActionRef`, immutable checks, derived `CheckSummary`, quality and sources |
 | `Candidate` | Run-local promoted/selected candidate binding (projection row plus `CandidateEvidence` in `research/deep.py`): candidate id, entity, promotion slot, accepted state binding, lifecycle |
 | `HypothesisDraft` | Bounded generated statement, mechanism, predictions, falsification criteria, distinguishing tests and assumptions; cannot be a measurement |
@@ -83,9 +83,12 @@ summaries. It does not add a neutral denominator, broad CNV universe or cross-la
 
 ## Actions, candidates and hypotheses
 
-- Registered actions (`cancerjev/science/actions.py`, registry version 2):
-  `CHECK_EVIDENCE_INTEGRITY_V1` (input `STATISTICAL_STATE`) and
-  `CHECK_REVISION_FAITHFULNESS_V1` (input `EVIDENCE_STATE`). `ActionDefinition` declares
+- Registered actions (`cancerjev/science/actions.py`, registry version 3):
+  `CHECK_EVIDENCE_INTEGRITY_V1` (input `STATISTICAL_STATE`),
+  `CHECK_REVISION_FAITHFULNESS_V1` (input `EVIDENCE_STATE`),
+  `SUMMARIZE_EXPRESSION_TAIL_V1` (input `STATISTICAL_STATE`, held-data Tukey tail) and
+  `SUMMARIZE_CNV_CATEGORIES_V1` (input `STATISTICAL_STATE`, held-data positive-case category
+  summary). `ActionDefinition` declares
   question, falsifiable interpretation, method/version, unit, required evidence, limitations and
   input kind. `ActionEligibility` is a deterministic fail-closed prerequisite check;
   `ActionOutcome` carries typed checks. Failure creates no successful revision.
@@ -107,9 +110,9 @@ summaries. It does not add a neutral denominator, broad CNV universe or cross-la
 
 ## Serialization, versioning and identity
 
-- IMPLEMENTED: `domain/codecs.py` reads and writes StatisticalState schema 4, EvidenceState
+- IMPLEMENTED: `domain/codecs.py` reads and writes StatisticalState schema 5, EvidenceState
   schema 4, MutationDiscoveryResult schema 1, ExpressionDiscoveryResult schema 1 and
-  CnvDiscoveryResult schema 1 only. `research/specs.py` reads and writes ResearchSpec schema 6
+  CnvDiscoveryResult schema 1 only. `research/specs.py` reads and writes ResearchSpec schema 7
   only. Older or unknown versions fail with a typed unsupported-version
   error; there is no fixture fallback, dictionary identity path, or legacy reader.
 - IMPLEMENTED: strict JSON boundary primitives in `domain/_json.py` reject duplicate keys,

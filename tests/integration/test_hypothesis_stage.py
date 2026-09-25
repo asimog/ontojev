@@ -51,6 +51,7 @@ def _run(runtime, monkeypatch, *, jev_adapter=None, authorized=True, hypotheses_
     orchestrator, _, repository = _orchestrator(
         runtime, monkeypatch, jev_adapter=adapter, deep_selection="GENEONE",
         deep_followup_authorized=authorized, deep_hypotheses_requested=hypotheses_requested,
+        deep_action_id="CHECK_EVIDENCE_INTEGRITY_V1",
         llm_generator=llm_generator, **replay_options)
     run_id = orchestrator.run()
     assert repository.get_run(run_id)["status"] == "COMPLETED"
@@ -363,7 +364,8 @@ def test_identical_generated_text_reuses_its_review(runtime, monkeypatch):
 def test_dossiers_keep_their_reviews_to_their_own_candidate(runtime, monkeypatch):
     orchestrator, _, repository = _orchestrator(
         runtime, monkeypatch, jev_adapter=_hypothesis_adapter(),
-        deep_selections=("GENEONE", "GENETWO"), deep_followup_authorized=True)
+        deep_selections=("GENEONE", "GENETWO"), deep_followup_authorized=True,
+        deep_action_id="CHECK_EVIDENCE_INTEGRITY_V1")
     run_id = orchestrator.run()
     assert repository.get_run(run_id)["status"] == "COMPLETED"
     candidates = repository.list_table("candidates", run_id)
@@ -392,7 +394,8 @@ def test_dossiers_keep_their_reviews_to_their_own_candidate(runtime, monkeypatch
 def test_duplicate_selections_are_investigated_once(runtime, monkeypatch):
     orchestrator, _, repository = _orchestrator(
         runtime, monkeypatch, jev_adapter=_hypothesis_adapter(),
-        deep_selections=("GENEONE", "GENEONE"), deep_followup_authorized=True)
+        deep_selections=("GENEONE", "GENEONE"), deep_followup_authorized=True,
+        deep_action_id="CHECK_EVIDENCE_INTEGRITY_V1")
     run_id = orchestrator.run()
     deep = next(event for event in _events(repository, run_id)
                 if event["type"] == "RUN_COMPLETED")["data"]["deep"]

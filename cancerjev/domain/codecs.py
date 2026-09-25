@@ -99,7 +99,7 @@ from cancerjev.domain.scientific import (
     UnavailableLane,
 )
 
-STATE_SCHEMA_VERSION = 4
+STATE_SCHEMA_VERSION = 5
 EVIDENCE_SCHEMA_VERSION = 4
 DISCOVERY_SCHEMA_VERSION = 1
 EXPRESSION_DISCOVERY_SCHEMA_VERSION = 1
@@ -380,11 +380,12 @@ def _provider_expression(value: object) -> ProviderExpressionSummary:
 
 
 def _project_state(value: object) -> ProjectState:
-    d = obj(value, "population mutation expression provider_expression discovery")
+    d = obj(value, "population mutation expression provider_expression discovery cnv")
     return ProjectState(
         _population_record(d["population"]), _mutation(d["mutation"]), _expression(d["expression"]),
         None if d["provider_expression"] is None else _provider_expression(d["provider_expression"]),
         None if d["discovery"] is None else _provider_discovery(d["discovery"]),
+        _cnv(d["cnv"]),
     )
 
 

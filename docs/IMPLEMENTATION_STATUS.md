@@ -1,10 +1,10 @@
 # Implementation status
 
 Factual source of truth for the current repository state after the Stage 3 hard cutover and the
-Stage 6 survivor-only CNV implementation (2026-09-25). Every claim is labeled IMPLEMENTED,
-PLANNED or UNVERIFIED. Historical stage narratives, handoff documents and audit journals are
-retired (git history is the archive of record); they are not current instructions or current
-capability claims.
+Stage 6/7/8 discovery, cutover-action and prospective-protocol implementations (2026-09-25). Every
+claim is labeled IMPLEMENTED, PLANNED or UNVERIFIED. Historical stage narratives, handoff documents
+and audit journals are retired (git history is the archive of record); they are not current
+instructions or current capability claims.
 
 ## Current architecture — IMPLEMENTED
 
@@ -13,10 +13,11 @@ One typed runtime chain:
 ```text
 GDC open-access API -> strict parsers -> typed acquisition/lane records
  -> canonical typed StatisticalState
- -> deterministic Wide Jev projection (jev-state-projection-v3)
+ -> deterministic Wide Jev projection (jev-state-projection-v4)
  -> validated typed answers -> Python admission (wide-policy-v2) -> Candidate
  -> immutable typed EvidenceState E0
- -> registered deterministic action -> immutable revision E1/E2
+ -> operator-authorized registered action (explicit deep action id)
+     -> immutable revision E1/E2
  -> Deep Jev (jev-evidence-projection-v2, question set deep-v1)
  -> Python next-move policy (deep-policy-v2)
  -> optional bounded hypothesis generation
@@ -45,28 +46,54 @@ Survivor-only CNV arm (Stage 6, python -m cancerjev discover-cnv --live --stage4
  -> strict occurrence parsing with category, caller/source and missing-sample context
  -> unique positive cases per provider category, explicit conflicts and no neutral inference
  -> immutable persisted CnvDiscoveryResult (schema 1); no Jev or cross-lane inference
+
+Stage 7 cutover and descriptive actions (`research/cutover.py`, `science/descriptors.py`,
+`science/actions.py` registry version 3):
+ Stages 4-6 artifacts bound exactly (spec, release, cohort, universe, frame, survivors, entities)
+ -> one canonical schema-5 StatisticalState per Stage 4 survivor
+ -> registered held-data descriptive actions SUMMARIZE_EXPRESSION_TAIL_V1 and
+    SUMMARIZE_CNV_CATEGORIES_V1 (zero acquisition, zero model calls); several eligible actions
+    require one explicitly operator-requested action id; deep dispatch never auto-selects
+
+Stage 8 prospective protocol (`research/prospective.py`, offline operator tool):
+ declared blinded grouped labels (>=2 reviewers, adjudicated, no split/group leakage)
+ -> arm outputs bound to the protocol and covering every item
+ -> grouped-bootstrap precision@3 differences by fixed seed; report always says
+    HUMAN_REVIEW_REQUIRED and makes no value/superiority claim
 ```
 
 - IMPLEMENTED: Python domain names are unsuffixed (`StatisticalState`, `EvidenceState`,
   `ResearchSpec`, `Candidate`, `HypothesisDraft`). Operational ids/hashes travel in
   `StateRecord` / `EvidenceRecord` / `HypothesisRecord` envelopes and never enter scientific
   identity.
-- IMPLEMENTED: serialized schema versions. StatisticalState 4; EvidenceState 4; ResearchSpec 6;
-  MutationDiscoveryResult 1; ExpressionDiscoveryResult 1; CnvDiscoveryResult 1; SQLite schema 5. Older/unknown schemas are rejected fail-closed;
+- IMPLEMENTED: serialized schema versions. StatisticalState 5; EvidenceState 4; ResearchSpec 7;
+  MutationDiscoveryResult 1; ExpressionDiscoveryResult 1; CnvDiscoveryResult 1; SQLite schema 5.
+  Older/unknown schemas are rejected fail-closed;
   there are **no migrations and no legacy readers**. Historical databases and artifacts are
   retained, not rewritten.
 - IMPLEMENTED: question sets `wide-v3`, `deep-v1` and `hypothesis-v2` with unchanged semantics;
-  projections `jev-state-projection-v3`, `jev-evidence-projection-v2` and
-  `jev-hypothesis-projection-v2`; policies `wide-policy-v2` and `deep-policy-v2`.
+  projections `jev-state-projection-v4`, `jev-evidence-projection-v2` and
+  `jev-hypothesis-projection-v2`; policies `wide-policy-v2` and `deep-policy-v2`. The v4 state
+  projection adds the observed CNV fields and the Python-computed `eligible_followups` list; it
+  introduces no new semantic question.
 - IMPLEMENTED: registered deterministic actions are exactly `CHECK_EVIDENCE_INTEGRITY_V1`
-  (input `STATISTICAL_STATE`, 5 checks) and `CHECK_REVISION_FAITHFULNESS_V1` (input
-  `EVIDENCE_STATE`, 4 checks), registry version 2. They acquire no data, call no model and
-  compute no new biological quantity.
+  (input `STATISTICAL_STATE`, 5 checks), `CHECK_REVISION_FAITHFULNESS_V1` (input
+  `EVIDENCE_STATE`, 4 checks), `SUMMARIZE_EXPRESSION_TAIL_V1` (input `STATISTICAL_STATE`,
+  held-data Tukey tail) and `SUMMARIZE_CNV_CATEGORIES_V1` (input `STATISTICAL_STATE`, held-data
+  positive-case category summary), registry version 3. They acquire no data, call no model and
+  compute no new biological quantity; the two descriptor actions only restate held case-labelled
+  values with the fixed predeclared methods.
 - IMPLEMENTED: Python owns loops, routing, budgets, dispatch, stopping and abstention.
   `FOLLOWUP_LIMIT = 3` and `EVIDENCE_ITERATION_LIMIT = 2` bound one candidate arc; deep policy
   records exactly one typed move (`COMPLETE` / `FOLLOW_UP` / `GENERATE_HYPOTHESES` / `ABSTAIN`)
   and never dispatches it. Dispatch is a separate Python step requiring explicit operator
-  authorization. Wide admission never dispatches a follow-up.
+  authorization; with several eligible actions the run refuses `EXPLICIT_ACTION_REQUIRED` unless
+  the operator named one action id. Wide admission never dispatches a follow-up.
+- IMPLEMENTED: bounded Jev provider envelopes. `CANCERJEV_JEV_MAX_ATTEMPTS` (default 25, hard cap
+  1,015) counts provider attempts and `CANCERJEV_JEV_MAX_INPUT_TOKENS` (default 1,600,000, hard
+  cap 1,015 × 64,000) reserves 64,000 input tokens per attempt before any provider call; both are
+  typed `JEV_*_BUDGET_EXHAUSTED` outcomes, never silent continuation. A total paid-model spend
+  gate remains absent.
 - IMPLEMENTED: one canonical `ResearchSpec`, `LUAD_RESEARCH_V1` (`domain=lung cancer`,
   `cohort_id=TCGA-LUAD`, `project_id=TCGA-LUAD`): single explicit TCGA-LUAD cohort, bounded
   acquisition, implemented composition (provider-ranked mutation discovery, local
@@ -101,6 +128,23 @@ Survivor-only CNV arm (Stage 6, python -m cancerjev discover-cnv --live --stage4
   endpoint-shape probe verified generic `Loss`, missing tumor-sample IDs and mixed ASCAT callers;
   the full Stage 6 live workload remains UNVERIFIED. Absence is never neutral, overlapping case
   categories are not summed, and no Jev/model or cross-lane inference occurs.
+- IMPLEMENTED: Stage 7 cutover and descriptive actions (`research/cutover.py`,
+  `science/descriptors.py`, registry version 3). `compose_discovery_states` binds Stages 4-6
+  artifacts exactly — spec, release, cohort/project, universe membership, population frame,
+  survivor list and per-gene entities — and composes one schema-5 `StatisticalState` per Stage 4
+  survivor with the mutation, expression and CNV lanes and the selection-bias limitation recorded
+  in `TestedContext`. Any cross-stage drift is a typed `CutoverError` refusal. The shared
+  deterministic descriptors (`science/descriptors.py`) back both Stage 5/6 discovery and the
+  registered `SUMMARIZE_*` actions. Stage 7 is offline-verified; it performs no acquisition and
+  no model call.
+- IMPLEMENTED and offline-verified: Stage 8 prospective protocol validation
+  (`research/prospective.py`). It is an offline operator tool: declared blinded grouped labels
+  (at least two independent reviewers, adjudicated, no split/group leakage), arm outputs strictly
+  bound to the protocol and covering every item, per-arm metrics over a fixed split, and a
+  grouped-bootstrap precision@3 difference against the required baseline arm using the declared
+  seed. The report always records `HUMAN_REVIEW_REQUIRED` and makes no incremental-value or
+  superiority claim. It runs on supplied documents only; no historical corpus exists and no live
+  protocol has been executed.
 - IMPLEMENTED: `run --fixture demo` runs the **same shared `LiveOrchestrator`** offline with
   `FixtureTransport` + `FixtureJevAdapter` (mode `FIXTURE`, synthetic notice in the dossier).
   There is no second execution engine.
@@ -113,13 +157,14 @@ Survivor-only CNV arm (Stage 6, python -m cancerjev discover-cnv --live --stage4
   payloads for `/api/states/{id}` and `/api/evidence/{id}`; the ETag is computed from the
   response bytes, while `X-Artifact-Id` / `X-Artifact-SHA256` retain source artifact identity.
 - IMPLEMENTED: TypeSafe SDK retries are explicitly disabled (`RetryPolicy(max_retries=0)`), so a
-  logical evaluation corresponds to at most one HTTP attempt.
+  logical evaluation corresponds to at most one HTTP attempt per logical evaluation, inside the
+  configured attempt/token envelopes above.
 - IMPLEMENTED: cache reuse requires a pinned/versioned model identity whose provider resolution
   equals it; a mutable alias is always evaluated and never treated as already resolved.
 - NOT IMPLEMENTED / not representable: universe enumeration beyond the fixed deterministic
   prefix (no full-genome scan, no random sample, no caller-controlled filters), broad-universe
-  CNV acquisition, combined cross-lane discovery/reduction, further registered actions,
-  offline autoresearch, and any incremental-value result.
+  CNV acquisition, combined cross-lane discovery/reduction, further registered actions beyond
+  registry version 3, offline autoresearch, and any incremental-value result.
 
 ## Removed architecture (git history is the archive; do not reintroduce)
 
@@ -139,9 +184,9 @@ documents (`STAGE_01_HANDOFF`, `STAGE_02_HANDOFF`, `STAGE_03_HANDOFF`, `PHASE_3_
 | Capability | Status |
 |---|---|
 | Anonymous bounded GDC acquisition + deterministic measurements | IMPLEMENTED; one production LUAD ResearchSpec; LUAD/LUSC never pooled |
-| Typed domain runtime (state, evidence, candidate, hypotheses, envelopes) | IMPLEMENTED; state/evidence 4/4, ResearchSpec 6, mutation/expression/CNV discovery results 1/1/1, SQLite 5, fail-closed rejection of older schemas |
-| Wide semantic judgment and admission | IMPLEMENTED: `jev-state-projection-v3`, `wide-v3`, `wide-policy-v2`, at most three promoted candidates; zero promotions is valid |
-| Deep evidence/actions | IMPLEMENTED: E0/E1/E2, two registered integrity actions, explicit operator selection/authorization |
+| Typed domain runtime (state, evidence, candidate, hypotheses, envelopes) | IMPLEMENTED; state/evidence 5/4, ResearchSpec 7, mutation/expression/CNV discovery results 1/1/1, SQLite 5, fail-closed rejection of older schemas |
+| Wide semantic judgment and admission | IMPLEMENTED: `jev-state-projection-v4`, `wide-v3`, `wide-policy-v2`, at most three promoted candidates; zero promotions is valid |
+| Deep evidence/actions | IMPLEMENTED: E0/E1/E2, four registered actions (two integrity, two held-data descriptors), explicit operator selection/authorization; several eligible actions require one explicit action id |
 | Deep judgment and next move | IMPLEMENTED: `jev-evidence-projection-v2`, `deep-v1`, `deep-policy-v2`; recorded move never dispatched by the policy |
 | Hypotheses | IMPLEMENTED: deterministic default, optional injected OpenRouter adapter, at most three per candidate, `hypothesis-v2` critique; generated text is never evidence |
 | Dossiers | IMPLEMENTED: authoritative JSON + derived Markdown with per-section availability, schema 2, live notice |
@@ -152,7 +197,10 @@ documents (`STAGE_01_HANDOFF`, `STAGE_02_HANDOFF`, `STAGE_03_HANDOFF`, `PHASE_3_
 | Systematic mutation discovery (bounded indexed prefix) | IMPLEMENTED (Stage 4): 1,000-gene protein-coding prefix, ≤100-gene batches, deterministic ≤10 survivors, persisted result; prefix-biased by construction |
 | Independent expression arm | IMPLEMENTED and offline-verified (Stage 5); live acceptance UNVERIFIED |
 | Survivor-only CNV arm | IMPLEMENTED and offline-verified (Stage 6); bounded live shape probe passed, full live acceptance UNVERIFIED |
-| Combined multi-lane reduction and descriptive actions | PLANNED (Stage 7+); not current runtime |
+| Discovery cutover to canonical states | IMPLEMENTED and offline-verified (Stage 7): exact Stage 4-6 binding, one schema-5 state per survivor, fail-closed refusals |
+| Held-data descriptive actions | IMPLEMENTED and offline-verified (Stage 7): `SUMMARIZE_EXPRESSION_TAIL_V1`, `SUMMARIZE_CNV_CATEGORIES_V1`; zero acquisition, zero model calls |
+| Prospective protocol evaluation | IMPLEMENTED and offline-verified (Stage 8): blinded grouped labels, grouped bootstrap by declared seed, `HUMAN_REVIEW_REQUIRED` always; no protocol executed yet |
+| Combined multi-lane reduction and inferential extensions | PLANNED (Stage 9+); not current runtime |
 | Offline autoresearch and demonstrated Jev incremental value | NOT IMPLEMENTED / UNVERIFIED |
 
 ## Verification performed in this environment (2026-09-25)
@@ -247,10 +295,12 @@ repeated judgments may differ.
   mutation batches, per-gene outcomes and dispositions, the reducer identity, survivor IDs,
   warnings and limitations. No Jev, TypeSafe, OpenRouter or provider-ranked input participated.
 
-## Next: Stage 7
+## Next: Stage 9
 
-Descriptive held-data actions and cutover are the next separately authorized task. Stages 5 and 6
-are complete offline but their full live GDC acceptance remains UNVERIFIED; do not convert that
-into a scientific-readiness claim.
+Conditional inferential extensions (matched mutation-expression / CNV-expression association,
+survival) are the next separately authorized work and remain deferred behind their source,
+matching, reference, censoring and statistical-review gates. Stages 5-7 are complete offline but
+their full live GDC acceptance remains UNVERIFIED; Stage 8 has no executed protocol or labelled
+corpus. Do not convert any of that into a scientific-readiness claim.
 [The roadmap](DISCOVERY_ROADMAP.md) indexes the remaining evidence gates. Do not extend the action
 registry or question sets without a separately authorized task.

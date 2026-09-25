@@ -158,7 +158,7 @@ def test_demo_states_are_typed_immutable_and_recomputable(runtime):
     for row in states:
         stored = read_state_record(repository, artifacts, row["state_id"])
         boundary = json.loads(stored.artifact.content)
-        assert boundary["schema_version"] == 4
+        assert boundary["schema_version"] == 5
         assert boundary["kind"] == "STATISTICAL_STATE"
         assert state_identity(stored.state) == row["state_hash"]
         assert read_state(stored.artifact.content, expected_hash=row["state_hash"]) == stored.state

@@ -17,6 +17,9 @@ GDC_MAX_BYTES_HARD_CAP = _DOCUMENTED_CAPS.max_bytes
 GDC_PER_RESPONSE_BYTES_HARD_CAP = _DOCUMENTED_CAPS.per_response_bytes
 GDC_TIMEOUT_SECONDS_HARD_CAP = _DOCUMENTED_CAPS.timeout_seconds
 JEV_MAX_STATES_HARD_CAP = 1000
+JEV_MAX_ATTEMPTS_HARD_CAP = 1015
+JEV_INPUT_TOKEN_RESERVATION_PER_ATTEMPT = 64_000
+JEV_MAX_INPUT_TOKENS_HARD_CAP = JEV_MAX_ATTEMPTS_HARD_CAP * JEV_INPUT_TOKEN_RESERVATION_PER_ATTEMPT
 # Documented ceiling for one Jev provider request. Like the GDC socket timeout,
 # the default equals the hard cap: operational settings may lower it only.
 JEV_TIMEOUT_SECONDS_HARD_CAP = 30.0
@@ -84,6 +87,8 @@ class Settings:
     gdc_cache_enabled: bool = True
     jev_model: str = "jev-1.13.0"
     jev_max_states: int = 1000
+    jev_max_attempts: int = 25
+    jev_max_input_units: int = 1_600_000
     jev_timeout_seconds: float = 30.0
     llm_model: str = DEFAULT_LLM_MODEL
     llm_timeout_seconds: float = 120.0
@@ -110,6 +115,10 @@ class Settings:
             gdc_cache_enabled=os.getenv("CANCERJEV_GDC_CACHE", "1") not in {"0", "false", "False"},
             jev_model=os.getenv("CANCERJEV_JEV_MODEL", "jev-1.13.0"),
             jev_max_states=_bounded_int("CANCERJEV_JEV_MAX_STATES", 1000, JEV_MAX_STATES_HARD_CAP),
+            jev_max_attempts=_bounded_int(
+                "CANCERJEV_JEV_MAX_ATTEMPTS", 25, JEV_MAX_ATTEMPTS_HARD_CAP),
+            jev_max_input_units=_bounded_int(
+                "CANCERJEV_JEV_MAX_INPUT_TOKENS", 1_600_000, JEV_MAX_INPUT_TOKENS_HARD_CAP),
             jev_timeout_seconds=_bounded_seconds(
                 "CANCERJEV_JEV_TIMEOUT_SECONDS", 30.0, JEV_TIMEOUT_SECONDS_HARD_CAP,
             ),

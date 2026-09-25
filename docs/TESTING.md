@@ -70,7 +70,7 @@ substitute for the Python offline suite and vice versa.
 - Typed contracts: invalid numeric/status/unit variants, immutable nested fields,
   entity/population binding, coverage accounting, minimum summary n, revision/check counts,
   strict composition and operational/scientific identity separation.
-- Versioned readers: schema-4 state/evidence round trips and Versioned research-spec readers,
+- Versioned readers: schema-5 state and schema-4 evidence round trips and Versioned research-spec readers,
   malformed schemas/values/populations, corruption refusal and offline E0/E1/E2 replay with
   explicit event ordering.
 - Lane composition and typed flow: independent lane availability, explicit zero versus absent
@@ -92,13 +92,22 @@ substitute for the Python offline suite and vice versa.
   carry `access=open`; a controlled or access-missing record fails closed; 401/403 become
   `UNAVAILABLE_ACCESS` with no retry or credential lookup.
 
-## PLANNED: prospective Jev incremental-value protocol
+## IMPLEMENTED (offline): prospective protocol validator; PLANNED executed protocol
 
 Objective: does a semantic stage improve *reviewable bounded research decisions* over
 deterministic selection at matched workload, without increasing unsupported claims? This is not a
 clinical or biological target-validation study. `python -m cancerjev evaluate` reports overlap
 and labelled hits against operator-supplied labels; it does not implement this protocol or
 establish superiority.
+
+IMPLEMENTED (offline, Stage 8): `research/prospective.py` is the protocol validator for the
+planned executed study. It fail-closes on unblinded, unreviewed or duplicate labels, on any
+group crossing fixed splits, on a gene reassigned across groups, and on arm outputs that do not
+bind the protocol or cover every item once. It computes per-arm metrics over one fixed split and
+grouped-bootstrap precision@3 differences against the required baseline arm using the declared
+seed. Every report records `HUMAN_REVIEW_REQUIRED` and makes no incremental-value or superiority
+claim. No protocol document has been executed; the labelled historical corpus below remains
+absent.
 
 ### Corpus and labels
 

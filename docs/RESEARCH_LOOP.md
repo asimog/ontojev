@@ -18,7 +18,7 @@ Proposed discovery changes are separate in the [roadmap](DISCOVERY_ROADMAP.md).
    `log2(x+1)` summaries. Multi-batch provider summaries are not pooled:
    `BATCHED_PROVIDER_SUMMARY_NOT_COHORT_WIDE` is retained.
 5. Per-gene typed `StatisticalState` records (schema 4) are serialized once at the artifact
-   boundary. With `--jev`, `jev-state-projection-v3` and `wide-v3` produce validated typed
+   boundary. With `--jev`, `jev-state-projection-v4` and `wide-v3` produce validated typed
    answers and separate baseline/Jev rankings. Python admission (`wide-policy-v2`) promotes at
    most three candidates; zero is valid.
 6. Only explicitly selected candidates enter deep investigation. Selection can use an existing

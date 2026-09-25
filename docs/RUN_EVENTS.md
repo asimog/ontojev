@@ -45,7 +45,7 @@ event.
 | GDC_REQUEST_COMPLETED/FAILED, GDC_CACHE_HIT | request_id/source_request_id, status, body bytes, response ref?, completeness, latency, totals, reason? |
 | GDC_RESPONSE_LIMIT_EXCEEDED, GDC_REQUEST_BUDGET_EXHAUSTED, GDC_RUN_BYTE_BUDGET_EXHAUSTED | resource, configured_limit, consumed, requested, affected query/candidate, disposition |
 | WIDE_SCAN_STARTED/COMPLETED, STATISTICAL_STATE_CREATED, PREFILTER_REJECTED, WIDE_STATE_DEFERRED | state refs, lane, counts, validity/selection reason |
-| JEV_PROJECTION_CREATED | projection_id, state_id, projection_version (`jev-state-projection-v3`/`jev-evidence-projection-v2`/`jev-hypothesis-projection-v2`), source hash, projection_hash, artifact ref, included-field contract |
+| JEV_PROJECTION_CREATED | projection_id, state_id, projection_version (`jev-state-projection-v4`/`jev-evidence-projection-v2`/`jev-hypothesis-projection-v2`), source hash, projection_hash, artifact ref, included-field contract |
 | JEV_WIDE_STARTED/COMPLETED, JEV_DEEP_STARTED | evaluation refs, state count, call count, full-vector summary ref, model, usage, errors |
 | JEV_WIDE_STATE_EVALUATED, JEV_EVALUATION_FAILED | evaluation ref, input ref, applicability map, raw judgment vector or fail-closed error, cache source, model |
 | JEV_WIDE_STATE_CAP_ENFORCED | configured cap, skipped state ids, disposition |

@@ -72,6 +72,7 @@ class _FailsOnEvidenceJudgment(StubAdapter):
 
 
 def _completed_slice(runtime, monkeypatch, *, jev_adapter=None, **kwargs):
+    kwargs.setdefault("deep_action_id", "CHECK_EVIDENCE_INTEGRITY_V1")
     adapter = jev_adapter if jev_adapter is not None else StubAdapter()
     orchestrator, _, repository = _orchestrator(
         runtime, monkeypatch, jev_adapter=adapter, deep_selection="GENEONE", **kwargs)
@@ -85,6 +86,7 @@ def _completed_slice(runtime, monkeypatch, *, jev_adapter=None, **kwargs):
 
 
 def _operator_slice(runtime, monkeypatch, **kwargs):
+    kwargs.setdefault("deep_action_id", "CHECK_EVIDENCE_INTEGRITY_V1")
     orchestrator, _, repository = _orchestrator(
         runtime, monkeypatch, jev_adapter=_abstaining_adapter(),
         deep_selection="GENEONE", deep_followup_authorized=True, **kwargs)
@@ -437,6 +439,27 @@ def test_unknown_action_selection_abstains_before_any_attempt(runtime, monkeypat
     assert abstained and abstained[-1]["data"]["reason_code"] == "SELECTED_ACTION_NOT_ELIGIBLE"
 
 
+def test_several_eligible_actions_require_an_explicit_requested_action(runtime, monkeypatch):
+    orchestrator, _, repository = _orchestrator(
+        runtime, monkeypatch, jev_adapter=StubAdapter(), deep_selection="GENEONE",
+        deep_followup_authorized=True)
+    run_id = orchestrator.run()
+    assert repository.get_run(run_id)["status"] == "COMPLETED"
+    completed = next(event for event in _events(repository, run_id)
+                     if event["type"] == "RUN_COMPLETED")
+    summary = completed["data"]["deep"]["candidates"][0]
+    assert summary["status"] == "EXPLICIT_ACTION_REQUIRED"
+    assert summary["final_move"] is None
+    assert summary["steps"] == []
+    assert repository.followup_executions_for(summary["candidate_id"]) == []
+    eligibility = next(event for event in _events(repository, run_id)
+                       if event["type"] == "ELIGIBLE_ACTIONS_COMPUTED")
+    assert len(eligibility["data"]["eligible_action_ids"]) >= 2
+    abstained = [event for event in _events(repository, run_id)
+                 if event["type"] == "FOLLOWUP_ABSTAINED"]
+    assert abstained and abstained[-1]["data"]["reason_code"] == "EXPLICIT_ACTION_REQUIRED"
+
+
 def test_unmatched_selection_is_not_dispatched(runtime, monkeypatch):
     orchestrator, _, repository = _orchestrator(
         runtime, monkeypatch, jev_adapter=StubAdapter(), deep_selection="NOT-A-GENE")
@@ -511,7 +534,8 @@ def test_operator_selection_obeys_promotion_cap(runtime, monkeypatch):
 def test_multiple_selections_get_independent_arcs(runtime, monkeypatch):
     orchestrator, _, repository = _orchestrator(
         runtime, monkeypatch, jev_adapter=_abstaining_adapter(),
-        deep_selections=("GENEONE", "GENETWO"), deep_followup_authorized=True)
+        deep_selections=("GENEONE", "GENETWO"), deep_followup_authorized=True,
+        deep_action_id="CHECK_EVIDENCE_INTEGRITY_V1")
     run_id = orchestrator.run()
     assert repository.get_run(run_id)["status"] == "COMPLETED"
     deep = next(event for event in _events(repository, run_id)

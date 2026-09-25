@@ -30,7 +30,7 @@ IDs are program keys, not question meaning. Calculations and exact lookups remai
 
 wide-v3 (6 Noul+1 Choice), deep-v1 (4 Noul+1 Choice), hypothesis-v2 (2 Noul+1 Choice) are IMPLEMENTED
 and unchanged by the Stage 3 hard cutover. Projection versions are current and typed:
-jev-state-projection-v3, jev-evidence-projection-v2 and jev-hypothesis-projection-v2. Existing
+jev-state-projection-v4, jev-evidence-projection-v2 and jev-hypothesis-projection-v2. Existing
 versions and provisional thresholds remain unchanged. See [questions](JEV_QUESTIONS.md). The current
 Deep policy has four moves including GENERATE_HYPOTHESES; policy never dispatches its own decision.
 

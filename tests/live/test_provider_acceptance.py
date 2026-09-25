@@ -88,6 +88,7 @@ def test_bounded_live_run_and_separate_generation(tmp_path, monkeypatch, record_
     run_id = LiveOrchestrator(
         cached, repository, artifacts, jev_service=service(cached),
         deep_selection=f"gene:{symbol}", deep_followup_authorized=True,
+        deep_action_id="CHECK_EVIDENCE_INTEGRITY_V1",
     ).run()
     record_property("source_run_id", run_id)
     record_property("data_directory", str(settings.data_dir))
@@ -121,6 +122,7 @@ def test_bounded_live_run_and_separate_generation(tmp_path, monkeypatch, record_
     replay_id = LiveOrchestrator(
         replay_settings, repository, artifacts, jev_service=service(replay_settings),
         deep_selection=f"gene:{symbol}", deep_followup_authorized=True,
+        deep_action_id="CHECK_EVIDENCE_INTEGRITY_V1",
     ).run()
     assert repository.get_run(replay_id)["status"] == "COMPLETED"
     final_totals = repository.gdc_run_totals(replay_id)
