@@ -145,6 +145,25 @@ CNV_LIMITATIONS = (
     "Category case sets are descriptive and may overlap; conflicts are retained rather than summed "
     "or resolved, and no expression association or causal claim is made.",
 )
+CNV_SCAN_SELECTION_RULE = "CNV_PROJECT_CASE_SHARD_SCAN_V1"
+CNV_SHARD_EVIDENCE_METHOD_ID = "CNV_SHARD_OCCURRENCE_SCAN_V1"
+CNV_SHARD_EVIDENCE_VERSION = "1"
+CNV_CASE_SHARD_SIZE = 25
+CNV_SCAN_MAX_PAGES = 3000
+CNV_DISPOSITION_POLICY_VERSION = "cnv-dispositions-v1"
+CNV_RETAIN_MIN_AMPLIFICATION_CASES = 5
+CNV_RETAIN_MIN_HOMOZYGOUS_DELETION_CASES = 5
+CNV_RETAIN_REASON = "RECURRENT_AMPLIFICATION_OR_HOMOZYGOUS_DELETION"
+CNV_DROP_REASON = "BELOW_RECURRENCE_THRESHOLD"
+CNV_JEV_REVIEW_CONFLICT_TRIGGER = "CALLER_CONFLICT_ON_RECURRENT_EVENT"
+CNV_SCAN_LIMITATIONS = (
+    "Independent project scan: positive indexed occurrences only; absence is never diploid, "
+    "neutral or a callable negative.",
+    "Provider five-category labels, caller and source context are retained per record; numerical "
+    "copy numbers are not compared across ASCAT, ABSOLUTE, DNAcopy or GATK4 products.",
+    "Recurrence dispositions use declared case-count thresholds, never p-values, and are evaluated "
+    "only on the merged all-shard evidence; an operational case shard cannot change them.",
+)
 
 
 @dataclass(frozen=True)
@@ -317,6 +336,14 @@ class DiscoveryDisposition(StrEnum):
 
 class ExpressionDisposition(StrEnum):
     """Exactly one declared disposition per expression universe gene."""
+
+    RETAIN = "RETAIN"
+    JEV_REVIEW = "JEV_REVIEW"
+    DROP = "DROP"
+
+
+class CnvDisposition(StrEnum):
+    """Exactly one declared disposition per CNV-observed gene after shard merge."""
 
     RETAIN = "RETAIN"
     JEV_REVIEW = "JEV_REVIEW"
@@ -677,6 +704,77 @@ class CnvCategorySummary:
         strings(self.case_ids, "CNV category case IDs")
         require(self.case_ids == tuple(sorted(self.case_ids)),
                 "CNV category case IDs must be sorted")
+
+
+@dataclass(frozen=True)
+class CnvGeneEvidence:
+    """Merged per-gene positive CNV evidence; absence is never neutral evidence."""
+
+    gene_id: str
+    categories: tuple[CnvCategorySummary, ...]
+    callers: tuple[str, ...]
+    conflicting_case_ids: tuple[str, ...]
+    missing_sample_occurrence_ids: tuple[str, ...]
+    records: int
+
+    def __post_init__(self) -> None:
+        text(self.gene_id, "CNV evidence gene id")
+        require(type(self.categories) is tuple
+                and all(isinstance(item, CnvCategorySummary) for item in self.categories),
+                "invalid CNV evidence categories")
+        raw = tuple(item.raw_category for item in self.categories)
+        require(raw == tuple(sorted(raw)) and len(set(raw)) == len(raw),
+                "CNV evidence categories must be sorted and unique")
+        case_ids = tuple(sorted({case_id for item in self.categories
+                                 for case_id in item.case_ids}))
+        for values, name in ((self.callers, "CNV evidence callers"),
+                             (self.conflicting_case_ids, "CNV evidence conflicts"),
+                             (self.missing_sample_occurrence_ids, "CNV evidence missing samples")):
+            strings(values, name)
+            require(values == tuple(sorted(values)) and len(set(values)) == len(values),
+                    f"{name} must be sorted and unique")
+        require(set(self.conflicting_case_ids) <= set(case_ids),
+                "CNV conflicts must be observed cases")
+        count(self.records, "CNV evidence records")
+        require(self.records >= 1, "observed CNV evidence requires at least one record")
+        require(all(item.case_ids for item in self.categories),
+                "CNV categories need case IDs")
+
+
+@dataclass(frozen=True)
+class CnvShardEvidence:
+    """One operational case shard's complete positive CNV evidence."""
+
+    shard_index: int
+    case_ids: tuple[str, ...]
+    project_id: str
+    release: str
+    genes: tuple[CnvGeneEvidence, ...]
+    records: int
+    sources: tuple[OperationalSource, ...]
+    warnings: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        count(self.shard_index, "CNV shard index")
+        strings(self.case_ids, "CNV shard cases")
+        require(self.case_ids and self.case_ids == tuple(sorted(self.case_ids))
+                and len(set(self.case_ids)) == len(self.case_ids),
+                "CNV shard cases must be sorted and unique")
+        for value in (self.project_id, self.release):
+            text(value, "CNV shard identity")
+        require(type(self.genes) is tuple
+                and all(isinstance(item, CnvGeneEvidence) for item in self.genes),
+                "invalid CNV shard genes")
+        gene_ids = [item.gene_id for item in self.genes]
+        require(gene_ids == sorted(gene_ids) and len(set(gene_ids)) == len(gene_ids),
+                "CNV shard genes must be sorted and unique")
+        count(self.records, "CNV shard records")
+        require(bool(self.genes) == (self.records >= 1),
+                "a shard records rows exactly when it carries genes")
+        require(type(self.sources) is tuple
+                and all(isinstance(source, OperationalSource) for source in self.sources),
+                "invalid CNV shard sources")
+        strings(self.warnings, "CNV shard warnings", unique=False)
 
 
 @dataclass(frozen=True)

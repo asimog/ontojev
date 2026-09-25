@@ -6,6 +6,11 @@ import math
 from typing import Any
 
 from cancerjev.domain.discovery import (
+    CNV_DROP_REASON,
+    CNV_JEV_REVIEW_CONFLICT_TRIGGER,
+    CNV_RETAIN_MIN_AMPLIFICATION_CASES,
+    CNV_RETAIN_MIN_HOMOZYGOUS_DELETION_CASES,
+    CNV_RETAIN_REASON,
     CNV_SUMMARY_METHOD_ID,
     CNV_SUMMARY_VERSION,
     EXPRESSION_DROP_INSUFFICIENT_REASON,
@@ -16,11 +21,14 @@ from cancerjev.domain.discovery import (
     EXPRESSION_TAIL_METHOD_ID,
     EXPRESSION_TAIL_VERSION,
     CnvCategorySummary,
+    CnvDisposition,
+    CnvGeneEvidence,
     ExpressionDisposition,
     ExpressionTailDescriptor,
 )
 from cancerjev.domain.measurements import MethodIdentityRef, MetricAvailability, digest
 from cancerjev.domain.scientific import (
+    CnvCategory,
     CnvOccurrenceResult,
     ExpressionSummaryResult,
     UnavailableLane,
@@ -129,3 +137,26 @@ def expression_lane_disposition(
         return (ExpressionDisposition.JEV_REVIEW, EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER,
                 EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER)
     return ExpressionDisposition.RETAIN, EXPRESSION_RETAIN_REASON, None
+
+
+def cnv_lane_disposition(evidence: CnvGeneEvidence) -> tuple[CnvDisposition, str, str | None]:
+    """Declared recurrence disposition on merged evidence; case-count constants, no p-values.
+
+    RETAIN = recurrent amplification or homozygous deletion at the declared
+    category-specific case-count thresholds; JEV_REVIEW = a recurrent gene whose
+    cases carry conflicting provider categories (conflicts are never resolved
+    here); DROP = below the declared recurrence thresholds. Absence of an
+    occurrence never reaches this function.
+    """
+    amplification_cases = sum(len(summary.case_ids) for summary in evidence.categories
+                              if summary.category is CnvCategory.AMPLIFICATION)
+    homozygous_deletion_cases = sum(len(summary.case_ids) for summary in evidence.categories
+                                    if summary.category is CnvCategory.HOMOZYGOUS_DELETION)
+    recurrent = (amplification_cases >= CNV_RETAIN_MIN_AMPLIFICATION_CASES
+                 or homozygous_deletion_cases >= CNV_RETAIN_MIN_HOMOZYGOUS_DELETION_CASES)
+    if not recurrent:
+        return CnvDisposition.DROP, CNV_DROP_REASON, None
+    if evidence.conflicting_case_ids:
+        return (CnvDisposition.JEV_REVIEW, CNV_JEV_REVIEW_CONFLICT_TRIGGER,
+                CNV_JEV_REVIEW_CONFLICT_TRIGGER)
+    return CnvDisposition.RETAIN, CNV_RETAIN_REASON, None

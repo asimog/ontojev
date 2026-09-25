@@ -16,6 +16,8 @@ from cancerjev.domain.discovery import (
     CnvDiscoveryEntry,
     CnvDiscoveryResult,
     CnvDiscoverySpec,
+    CnvGeneEvidence,
+    CnvShardEvidence,
     MutationDiscoveryResult,
 )
 from cancerjev.domain.measurements import (
@@ -30,6 +32,7 @@ from cancerjev.domain.measurements import (
     digest,
 )
 from cancerjev.domain.scientific import (
+    CnvCategory,
     CnvOccurrence,
     CnvOccurrenceResult,
     Lane,
@@ -53,6 +56,61 @@ CNV_QUALITY_REASON = (
     "Complete positive-occurrence query; absence is not CNV-neutral evidence and caller "
     "compatibility remains unverified."
 )
+
+
+def merge_cnv_shard_evidence(shards: tuple[CnvShardEvidence, ...], *,
+                             expected_shards: int) -> tuple[CnvGeneEvidence, ...]:
+    """Union complete case-shard evidence, refusing any missing or overlapping shard.
+
+    Shards are operational: they cannot change the recurrence thresholds, which
+    are evaluated only here, on the merged all-shard evidence.
+    """
+    indices = sorted(shard.shard_index for shard in shards)
+    if expected_shards < 1 or indices != list(range(expected_shards)):
+        raise LiveRunError(
+            "CNV_SHARDS_NOT_TERMINAL",
+            f"expected shards 0..{expected_shards - 1}, observed {indices}")
+    seen_cases: set[str] = set()
+    for shard in shards:
+        overlap = seen_cases & set(shard.case_ids)
+        if overlap:
+            raise LiveRunError("CNV_SHARD_CASE_OVERLAP",
+                               f"case shards overlap on {sorted(overlap)[:3]}")
+        seen_cases.update(shard.case_ids)
+    categories: dict[str, dict[str, tuple[CnvCategory, set[str]]]] = {}
+    callers: dict[str, set[str]] = {}
+    conflicts: dict[str, set[str]] = {}
+    missing: dict[str, set[str]] = {}
+    records: dict[str, int] = {}
+    for shard in shards:
+        for gene in shard.genes:
+            per_gene = categories.setdefault(gene.gene_id, {})
+            for summary in gene.categories:
+                existing = per_gene.get(summary.raw_category)
+                if existing is None:
+                    per_gene[summary.raw_category] = (summary.category, set(summary.case_ids))
+                    continue
+                category, case_ids = existing
+                if category is not summary.category:
+                    raise LiveRunError(
+                        "CNV_CATEGORY_MAPPING_CONFLICT",
+                        f"{gene.gene_id}/{summary.raw_category} maps differently across shards")
+                case_ids.update(summary.case_ids)
+            callers.setdefault(gene.gene_id, set()).update(gene.callers)
+            conflicts.setdefault(gene.gene_id, set()).update(gene.conflicting_case_ids)
+            missing.setdefault(gene.gene_id, set()).update(gene.missing_sample_occurrence_ids)
+            records[gene.gene_id] = records.get(gene.gene_id, 0) + gene.records
+    merged: list[CnvGeneEvidence] = []
+    for gene_id in sorted(categories):
+        summaries = tuple(
+            CnvCategorySummary(raw, category, tuple(sorted(case_ids)))
+            for raw, (category, case_ids) in sorted(categories[gene_id].items()))
+        merged.append(CnvGeneEvidence(
+            gene_id, summaries, tuple(sorted(callers[gene_id])),
+            tuple(sorted(conflicts[gene_id])), tuple(sorted(missing[gene_id])),
+            records[gene_id],
+        ))
+    return tuple(merged)
 
 
 def _summary_method(spec: CnvDiscoverySpec) -> MethodIdentityRef:
