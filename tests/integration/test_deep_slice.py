@@ -442,25 +442,24 @@ def test_unknown_action_selection_abstains_before_any_attempt(runtime, monkeypat
     assert abstained and abstained[-1]["data"]["reason_code"] == "SELECTED_ACTION_NOT_ELIGIBLE"
 
 
-def test_several_eligible_actions_require_an_explicit_requested_action(runtime, monkeypatch):
+def test_several_eligible_actions_are_resolved_by_the_declared_policy(runtime, monkeypatch):
     orchestrator, _, repository = _orchestrator(
         runtime, monkeypatch, jev_adapter=StubAdapter(), deep_selection="GENEONE",
         deep_followup_authorized=True)
     run_id = orchestrator.run()
     assert repository.get_run(run_id)["status"] == "COMPLETED"
-    completed = next(event for event in _events(repository, run_id)
-                     if event["type"] == "RUN_COMPLETED")
-    summary = completed["data"]["deep"]["candidates"][0]
-    assert summary["status"] == "EXPLICIT_ACTION_REQUIRED"
-    assert summary["final_move"] is None
-    assert summary["steps"] == []
-    assert repository.followup_executions_for(summary["candidate_id"]) == []
     eligibility = next(event for event in _events(repository, run_id)
                        if event["type"] == "ELIGIBLE_ACTIONS_COMPUTED")
     assert len(eligibility["data"]["eligible_action_ids"]) >= 2
-    abstained = [event for event in _events(repository, run_id)
-                 if event["type"] == "FOLLOWUP_ABSTAINED"]
-    assert abstained and abstained[-1]["data"]["reason_code"] == "EXPLICIT_ACTION_REQUIRED"
+    assert eligibility["data"]["selection_policy"] == "deep-action-policy-v1"
+    completed = next(event for event in _events(repository, run_id)
+                     if event["type"] == "RUN_COMPLETED")
+    summary = completed["data"]["deep"]["candidates"][0]
+    assert summary["status"] == "COMPLETED"
+    assert summary["first_step"]["action_id"] in (
+        "CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1",
+        "SUMMARIZE_EXPRESSION_TAIL_V1", "SUMMARIZE_CNV_CATEGORIES_V1")
+    assert repository.followup_executions_for(summary["candidate_id"])
 
 
 def test_unmatched_selection_is_not_dispatched(runtime, monkeypatch):

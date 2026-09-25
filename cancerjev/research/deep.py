@@ -66,6 +66,30 @@ from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.readers import ScientificReadError, read_candidate_state, read_revision_chain
 from cancerjev.storage.repositories import Repository
 
+DEEP_ACTION_POLICY_VERSION = "deep-action-policy-v1"
+EVIDENCE_PRODUCING_ACTIONS: tuple[str, ...] = ()
+CHECK_ACTION_ORDER = ("CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1")
+SUMMARY_ACTION_ORDER = ("SUMMARIZE_EXPRESSION_TAIL_V1", "SUMMARIZE_CNV_CATEGORIES_V1")
+
+
+def _policy_select(eligible_ids: tuple[str, ...],
+                   executed_ids: frozenset[str]) -> tuple[str | None, str | None, str | None]:
+    """Declared priority table; ambiguity abstains and never falls back to registry order."""
+    tiers = (
+        ("EVIDENCE_PRODUCING", EVIDENCE_PRODUCING_ACTIONS),
+        ("CHECK", CHECK_ACTION_ORDER),
+        ("SUMMARY", SUMMARY_ACTION_ORDER),
+    )
+    for tier_name, tier in tiers:
+        candidates = [action_id for action_id in eligible_ids
+                      if action_id in tier and action_id not in executed_ids]
+        if len(candidates) == 1:
+            return candidates[0], None, f"POLICY_SELECTED_{tier_name}_ACTION"
+        if len(candidates) > 1:
+            return None, "POLICY_AMBIGUOUS_TIER", (
+                f"{len(candidates)} eligible {tier_name} actions remain: {','.join(candidates)}")
+    return None, "POLICY_ABSTAINED_NO_PRIORITY", "no declared policy tier resolves an action"
+
 FOLLOWUP_LIMIT = 3
 EVIDENCE_ITERATION_LIMIT = 2
 LIVE_RESEARCH_NOTICE = (
@@ -511,11 +535,34 @@ def plan_deep_slice(*, run_id: str, candidate: dict[str, Any], repository: Repos
                   {"action_id": item.action_id, "reasons": list(item.reasons)}
                   for item in eligibilities if not item.eligible
               ],
-              "selection_policy": "EXPLICIT_SELECTION_ONLY",
+              "selection_policy": ("EXPLICIT_ACTION" if requested_action_id
+                                   else DEEP_ACTION_POLICY_VERSION),
               "registry_version": ACTION_REGISTRY_VERSION},
     )
 
-    action_id, abstain_reason, abstain_detail = _resolve_requested_action(eligibilities, requested_action_id)
+    eligible_ids_tuple = tuple(item.action_id for item in eligibilities if item.eligible)
+    input_evidence_hash = evidence.record.state_hash
+    completed = [row for row in repository.followup_executions_for(candidate["candidate_id"])
+                 if row["status"] == "COMPLETED"]
+    action_id: str | None
+    abstain_reason: str | None
+    abstain_detail: str | None
+    if requested_action_id is None:
+        if not eligible_ids_tuple:
+            reasons_text = ";".join(
+                f"{item.action_id}:{','.join(item.reasons)}"
+                for item in eligibilities if item.reasons)
+            action_id, abstain_reason, abstain_detail = (
+                None, "NO_ELIGIBLE_ACTION", reasons_text or "no registered action is eligible")
+        else:
+            executed_for_input = frozenset(
+                row["action_id"] for row in completed
+                if row["input_evidence_hash"] == input_evidence_hash)
+            action_id, abstain_reason, abstain_detail = _policy_select(
+                eligible_ids_tuple, executed_for_input)
+    else:
+        action_id, abstain_reason, abstain_detail = _resolve_requested_action(
+            eligibilities, requested_action_id)
     if action_id is None:
         emit(
             run_id, "FOLLOWUP_ABSTAINED", f"deep:{candidate['candidate_id']}:abstained:{abstain_reason}",
