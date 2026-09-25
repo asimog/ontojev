@@ -1,7 +1,10 @@
 # Verification and prospective calibration
 
-Current verification contract after the Stage 3 hard cutover (2026-09-25). Claims are labeled
-IMPLEMENTED, PLANNED or UNVERIFIED.
+Current verification contract. Claims are labeled IMPLEMENTED, PLANNED or UNVERIFIED; the dated
+verification record (offline suite, ruff, mypy, live acceptance) lives in
+[implementation status](IMPLEMENTATION_STATUS.md). Current mutable versions are the
+machine-checked values in [repository facts](REPOSITORY_FACTS.md); the doc-facts gate below is
+pytest-enforced.
 
 ## IMPLEMENTED: default gates
 
@@ -9,15 +12,13 @@ IMPLEMENTED, PLANNED or UNVERIFIED.
 |---|---|---|
 | Python lint | `python -m ruff check cancerjev apps tests` | Whole Python tree |
 | Offline suite | `python -m pytest` | `tests/`; live markers excluded by `pyproject.toml` `addopts` |
-| Static check | `python -m mypy` | Scoped strict check over the explicit `[tool.mypy] files` list in `pyproject.toml` (28 modules); `follow_imports = "silent"`; not whole-repository typing |
+| Static check | `python -m mypy` | Scoped strict check over the explicit `[tool.mypy] files` list in `pyproject.toml`; `follow_imports = "silent"`; not whole-repository typing |
 | Whitespace | `git diff --check` | Changed files only |
+| Doc facts | `python tests/repository_facts.py check` | Documentation-facts contract (also pytest-enforced) |
 
 - Default tests are offline and must not contact GDC, TypeSafe/Jev, OpenRouter or any LLM. The
   shared test fixture blocks outbound non-loopback network connections except loopback test
   servers. No default test needs Docker, PostgreSQL, Redis, provider credentials or secrets.
-- In this environment (2026-09-25): **534 offline pytest tests pass** (live opt-in markers
-  excluded); Ruff is clean; the scoped strict mypy check passes. These are the current verified
-  Python results.
 - Fixture runs use the same shared `LiveOrchestrator` with `FixtureTransport` and
   `FixtureJevAdapter`; a browser scenario deliberately uses 2.5-second fixture-stage delays to
   make progress observable, so browser timing is independent of the Python suite.
@@ -27,21 +28,10 @@ IMPLEMENTED, PLANNED or UNVERIFIED.
 ## Opt-in provider checks — live acceptance PASSED (2026-09-25)
 
 `tests/live` contains opt-in acceptance code; markers are `live`, `live_gdc`, `live_jev`,
-`live_llm` and `live_acceptance`. They are excluded from ordinary pytest and CI.
-
-- `python -m pytest -m live_acceptance` first ran one fresh bounded LUAD sweep with real GDC
-  (16 attempts, 367,862 bytes, zero cache hits) and real `wide-v3` judgments against
-  `jev-1.13.0` (10 states; one provider answer set failed strict validation and was recorded
-  fail-closed as `INVALID_DISTRIBUTION`). `wide-policy-v2` recorded its natural ABSTAIN.
-- The operator then explicitly selected the baseline top gene and authorized one follow-up over
-  the retained cache: 16/16 GDC cache hits, an E0→E1 revision from `CHECK_EVIDENCE_INTEGRITY_V1`,
-  one real `deep-v1` judgment and a ready dossier.
-- A separately labelled check used exactly one OpenRouter request
-  (`deepseek/deepseek-v4.1-flash`, 316 input / 3,501 output tokens) and 2 of at most 3
-  `hypothesis-v2` critiques, all resolved as `jev-1.13.0`; it appended nothing to the run.
-- Replay then ran with sockets refused: 16/16 cache hits, no new Jev calls, identical state
-  hashes. The combined check used 14 of at most 15 Jev attempts and one LLM attempt; no policy
-  threshold was changed and no result was retried.
+`live_llm` and `live_acceptance`. They are excluded from ordinary pytest and CI. The dated
+live-acceptance record (fresh bounded sweep, real Jev/LLM calls, cache-only replay, exact usage
+and envelope details) lives in [implementation status](IMPLEMENTATION_STATUS.md); this section
+owns the mechanics only.
 
 Missing credentials skip these tests before any acquisition or provider call (`TYPESAFE_API_KEY`,
 `OPENROUTER_API_KEY`, a pinned `CANCERJEV_JEV_MODEL`, optionally `CANCERJEV_LLM_MODEL` from
@@ -70,7 +60,7 @@ substitute for the Python offline suite and vice versa.
 - Typed contracts: invalid numeric/status/unit variants, immutable nested fields,
   entity/population binding, coverage accounting, minimum summary n, revision/check counts,
   strict composition and operational/scientific identity separation.
-- Versioned readers: schema-5 state and schema-4 evidence round trips and Versioned research-spec readers,
+- Versioned readers: current-schema state/evidence round trips and versioned research-spec readers,
   malformed schemas/values/populations, corruption refusal and offline E0/E1/E2 replay with
   explicit event ordering.
 - Lane composition and typed flow: independent lane availability, explicit zero versus absent
@@ -97,8 +87,8 @@ substitute for the Python offline suite and vice versa.
 The runtime Stage 8 contract (`tests/integration/test_stage8_finalize.py`) proves per candidate:
 one deterministic `FINAL_CANDIDATE_RESULT` bound to the final evidence revision, the actual policy
 stop reason (COMPLETE/ABSTAIN keep their reason; terminal moves are never routed through the
-follow-up dispatcher), the authoritative schema-3 dossier with Markdown derived from the same
-structured payload, accurate admission provenance (`wide-policy-v2` vs `operator-selection-v1`
+follow-up dispatcher), the authoritative dossier with Markdown derived from the same
+structured payload, accurate admission provenance (policy vs operator selection
 from persisted records), the read-only `no-jev-baseline-v1` replay (same evidence, no mutation,
 no actions, no hypotheses, no model call, `NOT_COMPARABLE` where unsupported), the fail-closed
 multi-action rule, `CANDIDATE_COMPLETE` only after final result + dossier persistence, automatic
@@ -212,9 +202,6 @@ validation.
 
 | Change | Required focused verification |
 |---|---|
-| Broad-universe lane | Unique IDs/totals/page guards; absence not zero; all selection/rejection reasons retained; within existing request/byte caps — **IMPLEMENTED 2026-09-25** (Stage 4 offline suite + live acceptance) |
-| Expression arm | Complete declared population/missingness; not tumor-normal/causal; no sample-matching claim; lane-specific recall/coverage |
-| CNV lane | Requested ID membership, correct project/gene, paging/duplicates, Loss in the five-category field, unknown label, missing sample ID, mixed/conflicting callers |
 | New actions | Typed input kind, estimator eligibility, no failure promotion, deterministic results/identity, budget reserved before acquisition, authorized dispatch only |
 | Strict cursor/API | Decoded scalar type/length validation; undeclared-parameter rejection; OpenAPI metadata cleanup |
 | Resource accounting | Each provider HTTP attempt counted including timeouts; token/spend unknown preserved; no cap reset by repartition/restart; explicit spend gate |

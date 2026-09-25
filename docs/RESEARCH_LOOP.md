@@ -1,6 +1,6 @@
 # Run and investigation lifecycles
 
-Current behavior after the Stage 3 hard cutover (2026-09-25). Research owns orchestration and
+Current behavior (2026-09-25). Research owns orchestration and
 policy; `Repository._reduce` maintains committed projections. API/UI never execute research.
 Proposed discovery changes are separate in the [roadmap](DISCOVERY_ROADMAP.md).
 

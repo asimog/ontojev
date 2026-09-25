@@ -238,11 +238,10 @@ See [architecture](docs/ARCHITECTURE.md), [domain models](docs/DOMAIN_MODELS.md)
 [persistence](docs/PERSISTENCE.md), [scientific invariants](docs/SCIENTIFIC_INVARIANTS.md),
 [research loop](docs/RESEARCH_LOOP.md), [run events](docs/RUN_EVENTS.md),
 [GDC strategy](docs/GDC_STRATEGY.md), [GDC budgets](docs/GDC_BUDGETS.md),
-[GDC discovery captures](docs/GDC_DISCOVERY_CAPTURES.md), [source review](docs/SOURCE_REVIEW.md),
+[source review](docs/SOURCE_REVIEW.md),
 [Jev design](docs/JEV_DESIGN.md), [question architecture](docs/JEV_QUESTIONS.md),
 [API contract](docs/API_CONTRACT.md), [UI spec](docs/UI_SPEC.md),
-[testing contract](docs/TESTING.md), [development skills](docs/DEVELOPMENT_SKILLS.md),
+[testing contract](docs/TESTING.md),
 [repository facts](docs/REPOSITORY_FACTS.md),
-[implementation status](docs/IMPLEMENTATION_STATUS.md),
-[deployment portability](docs/DEPLOYMENT_PORTABILITY.md) and the
+[implementation status](docs/IMPLEMENTATION_STATUS.md) and the
 [discovery roadmap](docs/DISCOVERY_ROADMAP.md).

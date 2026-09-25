@@ -32,7 +32,7 @@ GDC open-access API -> strict parsers -> typed acquisition/lane records
       (deterministic template by default; injected OpenRouter adapter on an
        explicitly authorized path)
  -> Jev hypothesis critique (jev-hypothesis-projection-v2, question set hypothesis-v2)
- -> dossier (schema 3)
+ -> authoritative dossier
 
 Systematic pre-Wide mutation funnel (Stage 4, python -m cancerjev discover --live):
  GDC release/project inventory -> cohort case frame
@@ -69,7 +69,7 @@ Stage 8 finalization (`research/finalize.py`, `research/investigation.py`):
  -> FinalCandidateResult derived deterministically from the recorded run state
  -> no-jev-baseline-v1 read-only deterministic comparison (observed Jev path vs declared
     baseline replay; NOT_COMPARABLE where unsupported; read-only, no model call)
- -> authoritative JSON dossier (schema 3) embedding result and comparison; Markdown derived
+ -> authoritative JSON authoritative dossier embedding result and comparison; Markdown derived
  -> DOSSIER_READY -> CANDIDATE_COMPLETE -> next candidate -> RUN_COMPLETED
 
 Optional evaluation harness (outside the numbered runtime stages; never invoked by the runtime):
@@ -151,7 +151,7 @@ Optional evaluation harness (outside the numbered runtime stages; never invoked 
   full provenance), computes the `no-jev-baseline-v1` comparison as a read-only deterministic
   replay over the same evidence (never mutating EvidenceState, never executing actions, never
   generating hypotheses, calling no model; unsupported dimensions are `NOT_COMPARABLE`, never
-  invented), persists the authoritative dossier (schema 3, Markdown derived from the same
+  invented), persists the authoritative dossier (Markdown derived from the same
   structured payload) and the final result artifact, records `DOSSIER_READY`, and marks the
   candidate `CANDIDATE_COMPLETE` only after both are persisted. Terminal moves stop the arc with
   their actual reason (`INVESTIGATION_COMPLETE`, `DEEP_JUDGMENT_UNAVAILABLE`, ...); several
@@ -229,66 +229,56 @@ documents (`STAGE_01_HANDOFF`, `STAGE_02_HANDOFF`, `STAGE_03_HANDOFF`, `PHASE_3_
 | Multi-modal Stage 9 target skeleton (Arm Jev, candidate union, integrated states) | PROVISIONAL PLANNED, pending source-grounded Stage 9 design reviews; not current runtime |
 | Offline autoresearch and demonstrated Jev incremental value | NOT IMPLEMENTED / UNVERIFIED |
 
-## Verification performed in this environment (2026-09-25)
+## Verification record (2026-09-25)
 
 | Gate | Command | Result |
 |---|---|---|
 | Python lint | `python -m ruff check cancerjev apps tests` | Clean (IMPLEMENTED) |
 | Offline suite | `python -m pytest` | All offline tests pass; `tests/live` opt-in markers excluded (IMPLEMENTED) |
 | Static check | `python -m mypy` | Scoped strict check over the explicit `pyproject.toml` file list passes (IMPLEMENTED) |
+| Doc facts | `python tests/repository_facts.py check` | Repository-facts table matches code (IMPLEMENTED) |
 | Whitespace | `git diff --check` | Clean (IMPLEMENTED) |
 | Browser acceptance | `tests/browser/` (own Playwright config/package) | Suite exists and CI runs it as a separate job; **not executed in this environment — UNVERIFIED** |
-| Live GDC / TypeSafe-Jev / OpenRouter acceptance | `python -m pytest -m live_acceptance tests/live/test_provider_acceptance.py` | **PASSED (2026-09-25)** with real providers; see the recorded evidence below |
+| Live GDC / TypeSafe-Jev / OpenRouter acceptance | `python -m pytest -m live_acceptance tests/live/test_provider_acceptance.py` | **PASSED (2026-09-25)** with real providers (evidence below) |
 
-Recorded live-acceptance evidence (bounded by the documented caps; no result was retried to
-obtain a favorable outcome):
+Live acceptance and Stage 4-7 budget-gate evidence (all bounded by the documented caps; all runs
+anonymous public open-access GDC; TypeSafe key from `.env.local` only; no limit enlarged; no
+result retried for a favorable outcome):
 
-- Fresh LUAD sweep: 16 GDC attempts, 367,862 bytes, zero cache hits; 10 canonical typed states;
-  10 real `wide-v3` judgments against `jev-1.13.0`. The provider returned one answer set that
-  failed strict validation (`INVALID_DISTRIBUTION`), which was recorded fail-closed as a failed
-  evaluation and promoted nothing. `wide-policy-v2` then recorded its natural **ABSTAIN**.
-- Explicit operator selection and authorized follow-up over the retained cache: 16/16 GDC cache
-  hits (0 new bytes) and one operator-selected candidate with an E0→E1 revision from
-  `CHECK_EVIDENCE_INTEGRITY_V1`, one real `deep-v1` judgment, and a ready dossier.
-- Separate labelled generation check: exactly one OpenRouter request
-  (`deepseek/deepseek-v4.1-flash`, 316 input / 3,501 output tokens) and 2 of at most 3
-  `hypothesis-v2` critiques, all resolved as `jev-1.13.0`. The check appended nothing to the
-  production run's events.
-- Replay with sockets refused: 16/16 cache hits, no new Jev provider calls, identical state
-  hashes to the explicit-selection run (14 total Jev attempts, within the 15-attempt cap).
+- Stage 4 systematic discovery (`discover --live`, run `e2035487`): release 46.0; 1,000/1,000
+  universe genes complete; 27 attempts / 2,817,301 bytes; every requested gene has exactly one
+  typed outcome/disposition; 10 survivors under `MUTATION_LUAD_AFFECTED_COUNT_DESC_V1` (USH2A
+  402, ASPM 371, INSRR 365, PLEKHO1 363, MTMR11 361, ATP1A2 360, SLAMF7 359, SH2D2A 359, SELE
+  357, FMO1 357); labelled-comparator overlap with the provider top-20 is USH2A and ASPM (2 of
+  20, descriptive only). The persisted result reconstructs spec/release/universe/batches/reducer
+  identity; no Jev, model or provider-ranked input participated.
+- Stage 5 live (run `80848609`): 61 attempts / 5,007,079 bytes; 1,000/1,000 universe genes with
+  the same membership hash as the Stage 4 run; 585-case frame; workflows `STAR - Counts` /
+  `RNA-Seq`; 946 `ExpressionSummaryResult`, 54 typed
+  `UnavailableLane(PROVIDER_SUMMARY_NOT_REQUESTED_IN_STAGE_5)` (never zero); 941 OBSERVED + 5
+  `DEGENERATE_REFERENCE` tails; missing case columns retained per gene.
+- Stage 6 live (run `6303faff`, bound to Stage 4 run `e2035487`): 20 attempts / 1,860,737 bytes;
+  all 10 survivors complete with two strict 250-row pages each; provider categories
+  Gain/Amplification/Loss with caller and sample-source context; no category summed across
+  overlapping cases.
+- Stage 7 cutover over the live artifacts: 10 canonical states composed with exact
+  spec/release/universe/frame/survivor/entity binding; USH2A rank 1 (402 affected cases, 339 CNV
+  occurrences, explicit missingness); both held-data descriptor actions executed VERIFIED.
+- Stage 7 Jev budget gate (run `a3680ada`, 8 attempts / 180,008 bytes,
+  `CANCERJEV_JEV_MAX_ATTEMPTS=1`): 10 states projected; exactly one real TypeSafe judgment; the
+  other nine evaluations failed closed with `JEV_ATTEMPT_BUDGET_EXHAUSTED` and promoted nothing.
+- Live provider acceptance: fresh sweep 16 GDC attempts / 367,862 bytes, zero cache hits, 10
+  states, 10 real wide judgments against `jev-1.13.0`; one provider answer set failed strict
+  validation (`INVALID_DISTRIBUTION`) and was recorded fail-closed; admission recorded its
+  natural ABSTAIN. Operator-selected follow-up over the retained cache (16/16 cache hits): E0→E1
+  revision, one real deep judgment, ready dossier. Separate labelled generation check: one
+  OpenRouter request and 2 hypothesis critiques, appending nothing to the run. Replay with
+  sockets refused: 16/16 cache hits, no new provider calls, identical state hashes.
 
 No scientific-readiness or incremental-Jev-value claim follows from any demonstration. No
-provider invoice, account quota or cost field is measured. Bayesian/model reproducibility remains
+provider invoice, account quota or cost field is measured. Model reproducibility remains
 UNVERIFIED: no seed or temperature control exists, and one live answer set failed validation, so
 repeated judgments may differ.
-
-## Stage 5-7 live acceptance and Stage 7 budget gate — VERIFIED (2026-09-25)
-
-All runs anonymous public open-access GDC, TypeSafe key from `.env.local` only, caps unchanged,
-no limit enlarged, no result retried for a favorable outcome:
-
-- Stage 5 live (run `80848609-2caf-4ca2-9cbc-2dccdce2ea3e`): 61 live attempts, 5,007,079 bytes;
-  release 46.0, 1,000/1,000 universe genes (membership hash identical to the Stage 4 run);
-  585-case cohort frame; workflows `STAR - Counts` / `RNA-Seq`. Per-gene outcomes: 946
-  `ExpressionSummaryResult`, 54 typed `UnavailableLane(PROVIDER_SUMMARY_NOT_REQUESTED_IN_STAGE_5)`
-  (never zero), 941 OBSERVED tails, 5 `DEGENERATE_REFERENCE` tails; missing case columns retained
-  per gene (e.g. USH2A: 67 of 585 cases).
-- Stage 6 live (run `6303faff-6025-407f-9eff-32e0b3feee6c`, bound to Stage 4 run
-  `e2035487`): 20 live attempts, 1,860,737 bytes; all 10 survivors complete with two strict
-  250-row pages each; provider categories Gain/Amplification/Loss with caller and
-  sample-source context; no category summed across overlapping cases.
-- Stage 7 cutover over the live persisted artifacts: 10 canonical states composed with exact
-  spec/release/universe/frame/survivor/entity binding; USH2A rank 1 (402 affected cases, 339 CNV
-  occurrences, explicit missingness); `SUMMARIZE_EXPRESSION_TAIL_V1` and
-  `SUMMARIZE_CNV_CATEGORIES_V1` executed VERIFIED (n=518 expression values, n=339 occurrences).
-- Stage 7 Jev budget gate live (run `a3680ada-642b-46a9-af1d-a11ddc23b694`, 8 live attempts /
-  180,008 bytes; `CANCERJEV_JEV_MAX_ATTEMPTS=1`): 10 real states projected under
-  `jev-state-projection-v4`; exactly one real TypeSafe judgment; the other nine evaluations
-  failed closed with `JEV_ATTEMPT_BUDGET_EXHAUSTED` and promoted nothing; wide admission recorded
-  its natural ABSTAIN. Paid spend was bounded to one evaluation by configuration.
-
-No incremental-value or scientific-readiness claim follows: these are bounded acceptance runs of
-the implemented contracts, and the optional blinded evaluation has no executed protocol.
 
 ## Known limitations and open gaps
 
@@ -324,30 +314,6 @@ the implemented contracts, and the optional blinded evaluation has no executed p
 - NOT IMPLEMENTED: offline autoresearch (needs a labelled historical corpus and human review).
 - No scientific readiness, incremental Jev value or production-use claim is made. Public GDC
   evidence alone establishes no dependency, druggability, efficacy, safety or clinical benefit.
-
-## Stage 4 systematic discovery — IMPLEMENTED (2026-09-25)
-
-- IMPLEMENTED: `python -m cancerjev discover --live` executed one bounded anonymous Stage 4 run
-  (run `e2035487-cb7e-47b2-83d4-0cee31153143`, status `COMPLETED`). GDC release **46.0 (August 10,
-  2026)**; provider-reported protein-coding total **19,843**; universe requested/returned
-  **1,000/1,000**, complete; universe membership hash
-  `965dc709942f7f6cf2a4133d3bffa718e0021adc6e9a8522504c008e8e69ba06`; 10 strictly validated
-  `/genes` pages; 10 indexed mutation-count batches of 100 genes; **27 GDC attempts,
-  2,817,301 bytes**, zero cache hits, no retries.
-- IMPLEMENTED outcome (all natural; no limit was enlarged and nothing was retried): every one of
-  the 1,000 requested genes has exactly one typed outcome and disposition — 1,000 complete
-  observed affected-case counts (no explicit zeros, no absent buckets, no partial or unavailable
-  outcomes in this prefix) — and 10 survivors under `MUTATION_LUAD_AFFECTED_COUNT_DESC_V1`
-  (count descending, gene_id ascending tie break): USH2A 402, ASPM 371, INSRR 365, PLEKHO1 363,
-  MTMR11 361, ATP1A2 360, SLAMF7 359, SH2D2A 359, SELE 357, FMO1 357 (gene IDs in the persisted
-  result). Disposition totals: 10 `RETAINED`, 990 `BELOW_SURVIVOR_CUTOFF`.
-- IMPLEMENTED: labelled comparator only — overlap between the 10 systematic survivors and the
-  provider top-20 baseline is USH2A and ASPM (2 of 20). Overlap is descriptive and never entered
-  survivor selection.
-- The persisted result artifact (`runs/<run>/discovery/result.json`, schema 1) reconstructs the
-  exact spec identity, GDC release, universe (source/filter/order/offset/membership hash), all
-  mutation batches, per-gene outcomes and dispositions, the reducer identity, survivor IDs,
-  warnings and limitations. No Jev, TypeSafe, OpenRouter or provider-ranked input participated.
 
 ## Next: Stage 9 (provisional, pending source-grounded design reviews)
 

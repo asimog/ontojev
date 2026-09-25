@@ -1,19 +1,20 @@
 # Domain models, records and scientific identity
 
-Current typed architecture after the Stage 3 hard cutover (2026-09-25). All records below are
+Current typed architecture. All records below are
 IMPLEMENTED. Python domain names are unsuffixed; operational ids and hashes travel in envelope
 records and never enter scientific identity. [Architecture](ARCHITECTURE.md) owns the runtime
-chain; [persistence](PERSISTENCE.md) owns storage.
+chain; [persistence](PERSISTENCE.md) owns storage. Current schema versions for every record are
+the machine-checked values in [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md) and are not restated here.
 
 ## Domain records
 
 | Record | Role and protected invariant |
 |---|---|
-| `ResearchSpec` (schema 7) | Sole canonical research configuration: `spec_id`, intent, `CohortSpec`, fixed mutation `DiscoverySpec`, fixed `ExpressionDiscoverySpec`, fixed survivor-only `CnvDiscoverySpec`, bounded acquisition limits, scientific limits, allowed registered action IDs and fixed policy versions. Unsupported configurations are rejected or not representable |
-| `ExpressionDiscoveryEntry` / `ExpressionDiscoveryResult` (schema 1) | One typed expression outcome and empirical-tail availability per gene in the release-bound systematic universe; complete case-frame accounting, workflow/strategy provenance, fixed request envelope and no model/ranking input |
-| `CnvDiscoveryEntry` / `CnvDiscoveryResult` (schema 1) | One typed complete-or-unavailable occurrence outcome per Stage 4 survivor; exact mutation-result/release/frame binding; unique positive cases by provider five-category label, caller/source context, explicit case conflicts and missing sample IDs; no neutral inference or model input |
-| `StatisticalState` (schema 5) | Typed entity, annotation, research scope, universe, tested context, per-project lane results (including the Stage 6 CNV lane), quality and separate scientific/operational sources |
-| `EvidenceState` (schema 4) | Accepted state hash, parent evidence hash, E0/E1/E2 index, `ActionRef`, immutable checks, derived `CheckSummary`, quality and sources |
+| `ResearchSpec` | Sole canonical research configuration: `spec_id`, intent, `CohortSpec`, fixed mutation `DiscoverySpec`, fixed `ExpressionDiscoverySpec`, fixed survivor-only `CnvDiscoverySpec`, bounded acquisition limits, scientific limits, allowed registered action IDs and fixed policy versions. Unsupported configurations are rejected or not representable |
+| `ExpressionDiscoveryEntry` / `ExpressionDiscoveryResult` | One typed expression outcome and empirical-tail availability per gene in the release-bound systematic universe; complete case-frame accounting, workflow/strategy provenance, fixed request envelope and no model/ranking input |
+| `CnvDiscoveryEntry` / `CnvDiscoveryResult` | One typed complete-or-unavailable occurrence outcome per Stage 4 survivor; exact mutation-result/release/frame binding; unique positive cases by provider five-category label, caller/source context, explicit case conflicts and missing sample IDs; no neutral inference or model input |
+| `StatisticalState` | Typed entity, annotation, research scope, universe, tested context, per-project lane results (including the CNV lane), quality and separate scientific/operational sources |
+| `EvidenceState` | Accepted state hash, parent evidence hash, E0/E1/E2 index, `ActionRef`, immutable checks, derived `CheckSummary`, quality and sources |
 | `Candidate` | Run-local promoted/selected candidate binding (projection row plus `CandidateEvidence` in `research/deep.py`): candidate id, entity, promotion slot, accepted state binding, lifecycle |
 | `HypothesisDraft` | Bounded generated statement, mechanism, predictions, falsification criteria, distinguishing tests and assumptions; cannot be a measurement |
 | `StateRecord` | Envelope: `state_id`, `state_hash`, typed `StatisticalState` |
@@ -35,7 +36,7 @@ There is no general inheritance or serialization framework.
 | `PopulationFrame` | cohort/project, CASE or SAMPLE unit, known eligible IDs or UNKNOWN eligibility, examined IDs, membership hash, selection rule; subset membership checked |
 | `TestedUniverse` | ordered IDs, hash, source/release/filter/order/offset, reported total, completeness for the declared slice; inferential family separately identified |
 | `DiscoverySpec` (domain/discovery.py) | Fixed Stage 4 configuration: `GENE_ID_ASC_INDEXED_PREFIX_V1`, protein_coding, `GENE_ID_ASC`, offset 0, limit 1..1,000 within the 10-page cap, batch ≤100. No caller-controlled filters are representable |
-| `MutationDiscoveryEntry` / `MutationDiscoveryResult` (schema 1) | One typed outcome + disposition + rank per requested gene; result binds spec identity, release, `TestedUniverse`, reducer identity, universe-ordered entries, ≤10 survivor IDs in rank order, sources, warnings/limitations and an optional labelled comparator. Disposition totals equal the universe size; survivors are the retained entries in rank order; no provider rank, Jev, LLM or census knowledge enters the reducer |
+| `MutationDiscoveryEntry` / `MutationDiscoveryResult` | One typed outcome + disposition + rank per requested gene; result binds spec identity, release, `TestedUniverse`, reducer identity, universe-ordered entries, ≤10 survivor IDs in rank order, sources, warnings/limitations and an optional labelled comparator. Disposition totals equal the universe size; survivors are the retained entries in rank order; no provider rank, Jev, LLM or census knowledge enters the reducer |
 | `MethodRef` / `MethodParameters` | ID/version, units, duplicate rule, transform, estimator, missingness, limitations; parameters are only optional `ddof=1` and `pseudocount=1`, not a metric bag |
 | `ScientificSource` | endpoint, canonical request hash, response hash, parser version, release, acquisition outcome |
 | `OperationalSource` | request/attempt/cache/artifact IDs, retrieval time, latency/status/bytes; separate from scientific identity |
@@ -83,7 +84,8 @@ summaries. It does not add a neutral denominator, broad CNV universe or cross-la
 
 ## Actions, candidates and hypotheses
 
-- Registered actions (`cancerjev/science/actions.py`, registry version 3):
+- Registered actions (`cancerjev/science/actions.py`; current roster and registry version in
+  [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md)):
   `CHECK_EVIDENCE_INTEGRITY_V1` (input `STATISTICAL_STATE`),
   `CHECK_REVISION_FAITHFULNESS_V1` (input `EVIDENCE_STATE`),
   `SUMMARIZE_EXPRESSION_TAIL_V1` (input `STATISTICAL_STATE`, held-data Tukey tail) and

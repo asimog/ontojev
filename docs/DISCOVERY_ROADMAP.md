@@ -139,7 +139,7 @@ historical package namespace.
 | 2 | Current implemented workflow truth | ARCHITECTURE |
 | 3 | Type-evidence flow and boundary classification | DOMAIN_MODELS |
 | 4 | Official GDC authority and mappings | SOURCE_REVIEW / GDC_STRATEGY |
-| 5 | Anonymous request/capture/provenance register | GDC_DISCOVERY_CAPTURES |
+| 5 | Design-time capture campaign record | git history (archived) |
 | 6 | GDC reality matrix and admission decisions | GDC_STRATEGY |
 | 7 | Measured versus estimated workloads | GDC_STRATEGY / GDC_BUDGETS |
 | 8 | Universe source, completeness and bias | ARCHITECTURE / this document |

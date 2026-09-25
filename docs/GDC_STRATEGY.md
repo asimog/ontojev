@@ -4,10 +4,10 @@ Status legend: rows describing the current runtime allowlist/parsers are IMPLEME
 LATER / REJECT are design verdicts for future separately authorized work (PLANNED or deferred, not
 current runtime); capture measurements are historical evidence that this environment did not
 re-run (UNVERIFIED here).
-Investigated 2026-09-24; current after the Stage 6 implementation (2026-09-25). ADMIT NOW means
+Investigated 2026-09-24; current after the Stage 4-8 implementations (2026-09-25). ADMIT NOW means
 suitable for a proposed future implementation phase **after its acceptance gates**, not already
-runtime-allowlisted. HTTP 200 is not scientific admission.
-[Capture register](GDC_DISCOVERY_CAPTURES.md) preserves requests, hashes and measurements.
+runtime-allowlisted. HTTP 200 is not scientific admission. The design-time capture campaign and
+its ledger are archived in git history; the workload table below retains the measured envelopes.
 
 IMPLEMENTED runtime endpoints are: `/status`, `/projects`, `/cases`, `/genes`,
 `/analysis/top_mutated_genes_by_project`, `/analysis/top_cases_counts_by_genes`,
@@ -63,7 +63,7 @@ Capture numbers refer to the register. Runtime means current allowlist, not futu
 | SSMs | mapping 006; 015 | variant ID, GRCh38 coordinates, alleles; occurrence project filter | Variant ≠ case; transcript rows are not independent mutations | Small partial search; explicit paging required | LATER variant enrichment; NOT ADMITTED as complete mutation burden |
 | SSM occurrences | mapping 007; 016/052 | case + ssm IDs, transcript gene IDs; TP53/project filter | 299 occurrences reported; multiple callers same sample observed; dedup by case/gene for case counts | Leaf observation fields work; broad `case.observation` gave a warning | LATER detailed lane; sample ID present, negative callability absent |
 | Gene CNVs | mapping 008; 017 | `cnv_id` + `consequence.gene.gene_id`, project filter | TP53 had 3 indexed category entities, not 3 cases | GRCh38, `gene_level_cn`; categories Loss/Gain/Amplification | not runtime-allowlisted; occurrence lane does not require this endpoint |
-| CNV occurrences | mapping 009; 018/050/051/055/067/068 plus 2026-09-25 shape probe | case + cnv + gene IDs, source file, caller | TP53 264 reported occurrences; no negative denominator | Strict pages; real fixture preserves generic Loss, ASCAT3 and missing sample ID; 250-row probe observed ASCAT2/ASCAT3/AscatNGS | IMPLEMENTED for bounded Stage 4 survivors only; full live Stage 6 workload UNVERIFIED |
+| CNV occurrences | mapping 009; 018/050/051/055/067/068 plus a bounded shape probe | case + cnv + gene IDs, source file, caller | TP53 264 reported occurrences; no negative denominator | Strict pages; committed fixture preserves generic Loss, ASCAT3 and missing sample ID; probe observed ASCAT2/ASCAT3/AscatNGS plus Loss/Gain/Amplification | IMPLEMENTED for Stage 4 survivors only (live-verified 2026-09-25; see [implementation status](IMPLEMENTATION_STATUS.md)) |
 | CNV 100 workload | 067 | first 100 universe genes + LUAD | 21,032 occurrence total; two sample hits only | Full scan would need 85 pages of 250, exceeding 10; facets count occurrences, not assured unique cases | REJECT full broad occurrence scan; reduce first; full 1,000 cost UNMEASURED |
 | Segment CNVs | mapping 010; 019 | segment ID, chromosome, start/end/length | 30,681 LUAD entities; no direct gene join admitted | Position/category response; projection to genes needs overlap/build policy | LATER; no segment discovery lane now |
 | Segment occurrences | mapping 011; 020/053 | case/segment/source file IDs, copy number | 32,385 reported; only 2 inspected; no complete cohort distribution | Leaf fields work; missing sample mapping | LATER; full scan outside the current page budget |
@@ -118,7 +118,7 @@ method and population.
 | CNV category evidence | `cnv_occurrence_id`, `case.case_id`, `cnv.cnv_id`, `cnv.consequence[].gene.gene_id`, `cnv.cnv_change/_5_category` | implemented `parse_cnv_occurrences_page`; required IDs/category, dedup/order and exact filter membership | `CNV_INDEXED_POSITIVE_CASES_V1`: unique positive cases per category over a complete query |
 | CNV contextual values | `case.observation[].copy_number`, `src_file_id`, `variant_calling.variant_caller`, tumor sample UUID | implemented optional context; missing ≠ invalid; multiple observations are ambiguous and rejected | provider observation, not a cross-caller numerical effect |
 | quality/completeness | `pagination` `count,total,from`; warnings; transport terminal status; missing sets | shared validated envelope + lane-specific completion checks | `Quality`/`Coverage`; warnings about requested scientific fields prevent admission |
-| derived extremes | parsed expression values and frame/universe above | no new provider field | proposed `EXPRESSION_WITHIN_GENE_EXTREME_V1` in the roadmap; descriptive only |
+| derived extremes | parsed expression values and frame/universe above | no new provider field | implemented `EXPRESSION_TUKEY_TAIL_V1` within-gene empirical tail; descriptive only |
 
 Scientific annotations such as dependency, druggability, clinical benefit, mutation-expression
 coherence or CNV-expression causation receive no field in the admitted measured contract.

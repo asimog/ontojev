@@ -1,7 +1,7 @@
 # Persistence and local runtime
 
-Current storage state after the Stage 3 hard cutover and the Stage 4-8 implementations
-(2026-09-25). The SQLite schema and the scientific artifact schema versions are the
+Current storage state (2026-09-25). The SQLite schema and the scientific artifact schema versions
+are the
 machine-checked values in [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md); they are not restated
 here. Older or unknown schemas are rejected fail-closed; there are **no migrations and no
 legacy readers**. Historical databases and artifacts are retained, not rewritten.
@@ -138,6 +138,29 @@ runs separately. All point to one absolute `CANCERJEV_DATA_DIR` so differing wor
 cannot create accidental databases. Fixture mode needs no keys or provider connectivity.
 Database connections are process-local; the API uses read transactions and does not hold
 long-lived snapshots across HTTP requests.
+
+## Deployment boundary (merged deployment notes)
+
+- Settings are environment-based (`CANCERJEV_DATA_DIR`, `CANCERJEV_WEB_ORIGIN`,
+  `NEXT_PUBLIC_CANCERJEV_API_URL`, the `CANCERJEV_GDC_*` caps, `CANCERJEV_JEV_MODEL`,
+  server-only `TYPESAFE_API_KEY`, CLI-only `OPENROUTER_API_KEY`); for local development they may
+  be placed in a gitignored `.env.local` (template: `.env.local.example`) loaded by
+  `cancerjev.config.load_local_env()` only for names the real environment does not define.
+  There is deliberately no GDC key: the GDC transport is anonymous and open-access by invariant.
+- One research process runs the CLI loop, one FastAPI process serves reads, one Next.js process
+  serves UI; API restarts never create runs, and no background research is spawned from web
+  serving. Fixture mode is offline, runs the same shared orchestrator with fixture doubles, and
+  rejects live provider construction (`--jev` requires `--live`).
+- The implemented vertical slice uses no Postgres, Redis, Celery, Docker, S3/MinIO,
+  WebSockets, microservices, distributed workers, generic workflow engine, accounts/OAuth/RBAC,
+  billing, Kubernetes/Kafka, vector DB/RAG/literature search or cloud adapters, and none is
+  approved speculatively; future infrastructure changes require a demonstrated workload need
+  and a separate design keeping scientific/domain code independent.
+- SQLite WAL and file locking assume a single local machine with reliable local filesystem
+  semantics (not NFS/network drives or multiple hosts); paths are `pathlib`-portable and
+  locking is cross-platform. Future backup must preserve a consistent SQLite backup plus all
+  referenced immutable artifacts — copying only a live `.db` while ignoring WAL is
+  insufficient; backup automation and retention are not implemented.
 
 Keep the existing `Repository` and `ArtifactStore` narrow; there are no separate
 RunRepository/EventRepository classes and no generic storage provider framework.

@@ -20,6 +20,11 @@ and the machine-checked [docs/REPOSITORY_FACTS.md](docs/REPOSITORY_FACTS.md).
   multi-modal target-discovery loop (PROVISIONAL TARGET ARCHITECTURE, SUBJECT TO THE
   SOURCE-GROUNDED STAGE 9 DESIGN REVIEWS). No Stage 9 contract is frozen in this baseline;
   scientific runtime behavior is unchanged by this documentation baseline.
+- **Documentation purge (2026-09-25):** deleted the archived capture register, the development
+  skills map/verification record and the deployment-portability note (durable facts merged into
+  AGENTS.md and PERSISTENCE.md); compressed historical verification/audit narrative into the
+  dated verification record in IMPLEMENTATION_STATUS.md; moved the repository to the compact
+  canonical documentation set with git history as the archive. No runtime behavior changed.
 - Governance note: this repository has no LICENSE file. Whether and under which license the
   repository is published remains an unresolved repository-governance decision; no license was
   invented as part of this baseline.

@@ -1,10 +1,10 @@
 # Source review
 
-Current source authority and transferred limitations after the Stage 3 hard cutover
-(2026-09-25). Claims are labeled IMPLEMENTED, PLANNED or UNVERIFIED. The user's current scope
-governs actions; current code/tests establish implementation; official provider documentation
-plus bounded representative responses establish what can be proposed. Prior-project designs do
-not authorize new calls or architecture, and this repository is not an OntoJev template.
+Current source authority and transferred limitations. Claims are labeled IMPLEMENTED, PLANNED or
+UNVERIFIED. The user's current scope governs actions; current code/tests establish
+implementation; official provider documentation plus bounded representative responses establish
+what can be proposed. Prior-project designs do not authorize new calls or architecture, and this
+repository is not an OntoJev template.
 
 ## Authority order
 
@@ -25,9 +25,10 @@ expression, analysis, CNV and scRNA material. Per-family live `_mapping` respons
 before the corresponding queries. Official documentation supports an endpoint, not every
 scientific interpretation of its fields.
 
-The 69-request anonymous campaign is retained in the [capture register](GDC_DISCOVERY_CAPTURES.md)
-with canonical recipes, hashes and local metadata location. [GDC strategy](GDC_STRATEGY.md) owns
-the reality matrix, field traces and ADMIT NOW/LATER/REJECT decisions. The documented GET survival
+[GDC strategy](GDC_STRATEGY.md) owns
+the reality matrix, per-endpoint field traces, measured workloads and ADMIT NOW/LATER/REJECT
+decisions (the design-time 69-request capture campaign and its ledger are archived in git
+history). The documented GET survival
 request returned 509 donors; older empty-response observations are not a current endpoint
 limitation, but the response still does not establish a local survival-analysis contract.
 
@@ -187,32 +188,34 @@ current unless labeled otherwise; none preserves a historical architecture instr
 
 ### Proposed, unregistered work
 
-- PLANNED: candidate action IDs `STRATIFY_BY_PROJECT_V1`, `LEAVE_ONE_PROJECT_OUT_V1`,
-  `CHECK_MISSINGNESS_V1`, `OUTLIER_SENSITIVITY_V1` and `COMPARE_MODALITIES_V1` are proposals,
-  not registered actions. Project stratification and leave-one-project-out are NOT APPLICABLE to
-  the single-cohort production scope. `CHECK_MISSINGNESS_V1` is partly redundant with the
-  `EXPRESSION_COVERAGE_ARITHMETIC` check of `CHECK_EVIDENCE_INTEGRITY_V1`; before registration it
-  needs a non-redundant, independently reproducible operation from retained evidence.
-- IMPLEMENTED offline / live UNVERIFIED: the bounded independent expression arm uses the existing
-  official expression contracts and fixed request envelope. PLANNED: a narrow CNV lane requires its own official
-  mapping review, fixed request plans, immutable fixtures and acceptance gates.
+Candidate action IDs (`STRATIFY_BY_PROJECT_V1`, `LEAVE_ONE_PROJECT_OUT_V1`,
+`CHECK_MISSINGNESS_V1`, `OUTLIER_SENSITIVITY_V1`, `COMPARE_MODALITIES_V1`) and the deferred
+association/survival contracts are proposals, not registered actions; their design conditions
+and eligibility decisions are owned by [the roadmap](DISCOVERY_ROADMAP.md). Project
+stratification and leave-one-project-out are NOT APPLICABLE to the single-cohort production
+scope; `CHECK_MISSINGNESS_V1` is partly redundant with the `EXPRESSION_COVERAGE_ARITHMETIC`
+check and needs a demonstrated non-redundant operation before registration.
+
 - UNVERIFIED: no demonstrated sample-matchable mutation-negative or CNV-neutral reference set
   exists in the admitted endpoints; recurrence rates, association tests and survival effects
   remain ineligible.
 
 ## Remaining UNVERIFIED
 
-- No live GDC, TypeSafe/Jev or OpenRouter call was made in this environment; verbatim live
-  behavior claims come from retained captures/history, not a fresh run.
-- Browser acceptance at `tests/browser/` exists and is a CI job; it was not executed here.
+- Live acceptance for the current chain is VERIFIED as of 2026-09-25 (dated record in
+  [implementation status](IMPLEMENTATION_STATUS.md)); model reproducibility (no seed/temperature
+  control; one live answer set failed validation), OpenRouter immutable-model resolution and any
+  incremental Jev value remain UNVERIFIED.
+- Browser acceptance at `tests/browser/` exists and is a CI job; it was not executed in the
+  recording environment.
 - Provider pricing/quota, account limits and scientific value of Jev remain unverified.
 - `Appendix_A/B/C` field support was not re-verified against the field appendix.
 
-## Next sequence
+## Current verification boundary
 
-Stages 4–6 are implemented as separately invoked bounded discovery tasks. Stage 6 survivor-only
-CNV discovery is offline verified; the bounded anonymous shape probe does not establish full live
-acceptance. Stages 4â€“8 are implemented; the optional human-labelled prospective harness and the
-deferred Stage 9 conditional inferential extensions remain as indexed in the
-[roadmap](DISCOVERY_ROADMAP.md). Engineering success cannot establish Jev incremental value; a
-labelled, human-reviewed corpus is required.
+Stages 4-8 are implemented (offline verified; live acceptance for Stages 4-7 VERIFIED — the
+dated record lives in [implementation status](IMPLEMENTATION_STATUS.md)). The optional
+human-labelled prospective harness has no executed protocol or labelled corpus. Conditional
+inferential follow-ups remain deferred behind their source, matching, reference, censoring and
+statistical-review gates, as indexed in the [roadmap](DISCOVERY_ROADMAP.md). Engineering
+success cannot establish Jev incremental value; a labelled, human-reviewed corpus is required.

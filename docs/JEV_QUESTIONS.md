@@ -2,7 +2,7 @@
 
 Current definitions live in `cancerjev/jev/questions.py`. The current question sets are the wide,
 deep and hypothesis sets (identities in [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md)); their
-semantics are unchanged by the Stage 3 hard cutover and a
+semantics are current and a
 new question set requires a separate versioned task and validation. [Jev design](JEV_DESIGN.md)
 owns the capability review.
 

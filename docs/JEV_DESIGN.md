@@ -29,8 +29,8 @@ IDs are program keys, not question meaning. Calculations and exact lookups remai
 ## Current implementation
 
 The current question sets (wide, deep, hypothesis — identities and roster sizes in
-[REPOSITORY_FACTS.md](REPOSITORY_FACTS.md) and [questions](JEV_QUESTIONS.md)) are IMPLEMENTED and
-unchanged by the Stage 3 hard cutover. Projection versions are current and typed (identities in
+[REPOSITORY_FACTS.md](REPOSITORY_FACTS.md) and [questions](JEV_QUESTIONS.md)) are IMPLEMENTED.
+Projection versions are current and typed (identities in
 [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md)). Existing
 versions and provisional thresholds remain unchanged. The current
 Deep policy has four moves including GENERATE_HYPOTHESES; policy never dispatches its own decision.

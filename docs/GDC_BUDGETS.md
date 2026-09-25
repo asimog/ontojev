@@ -1,7 +1,6 @@
-# Budgets: implemented limits, observations and proposals
+# Budgets: implemented limits and proposals
 
-Current after the Stage 3 hard cutover (2026-09-25). Limits below are application ceilings, not
-provider guarantees. No limit or dependency changed in the cutover. Offline replay is not a live
+Limits below are application ceilings, not provider guarantees. Offline replay is not a live
 workload or cost measurement.
 
 ## IMPLEMENTED
@@ -18,9 +17,9 @@ workload or cost measurement.
 | Cases/projects/files/discovery page size | 250 / 100 / 5 / 20 | endpoint builder validation |
 | Production cohort ceiling | 1,000 | `LUAD_RESEARCH_V1`; a general `AcquisitionSpec` must fit `page_size × 10` |
 | Production gene selection | discovery 20, count limit 100, candidate 10 | provider-ranked slice: labelled baseline/comparator path, unchanged |
-| Stage 4 systematic discovery | 10 `/genes` pages ×100 (gene_id asc, protein_coding) + 1 coverage + 10 count batches ×100 + 1 comparator | fixed `LUAD_DISCOVERY_V1` contract; 27 attempts / 2,817,301 bytes measured live (2026-09-25); no cap enlarged |
-| Stage 5 independent expression | status + project + ≤4 cohort pages + 10 `/genes` pages + 1 file-provenance request + up to 10 gene batches × 4 case batches × (availability + values) = ≤97 requests | fixed `ExpressionDiscoverySpec`; unchanged 150-request/64-MiB caps; **live: 61 attempts / 5,007,079 bytes, 1,000 genes, 946 observed + 54 typed unavailable (2026-09-25)** |
-| Stage 6 survivor-only CNV | status + ≤10 Stage 4 survivors × ≤10 `/cnv_occurrences` pages of 250 rows = ≤101 requests | fixed `CnvDiscoverySpec`; exact Stage 4 artifact/release/frame binding; an over-cap gene becomes typed unavailable with no partial evidence; unchanged 150-request/64-MiB caps; **live: 20 attempts / 1,860,737 bytes, 10/10 survivors complete (2026-09-25)** |
+| Stage 4 systematic discovery | 10 `/genes` pages ×100 (gene_id asc, protein_coding) + 1 coverage + 10 count batches ×100 + 1 comparator | fixed `LUAD_DISCOVERY_V1` contract; measured live under cap (2026-09-25, see [implementation status](IMPLEMENTATION_STATUS.md)); no cap enlarged |
+| Stage 5 independent expression | status + project + ≤4 cohort pages + 10 `/genes` pages + 1 file-provenance request + up to 10 gene batches × 4 case batches × (availability + values) = ≤97 requests | fixed `ExpressionDiscoverySpec`; unchanged 150-request/64-MiB caps; measured live under cap (2026-09-25, see [implementation status](IMPLEMENTATION_STATUS.md)) |
+| Stage 6 survivor-only CNV | status + ≤10 Stage 4 survivors × ≤10 `/cnv_occurrences` pages of 250 rows = ≤101 requests | fixed `CnvDiscoverySpec`; exact Stage 4 artifact/release/frame binding; an over-cap gene becomes typed unavailable with no partial evidence; unchanged 150-request/64-MiB caps; measured live under cap (2026-09-25, see [implementation status](IMPLEMENTATION_STATUS.md)) |
 | Wide states per invocation | `Settings.jev_max_states` ≤1,000 | capped prefix in `run_wide_evaluation`; not an underlying HTTP-attempt ledger |
 | Promotion slots | 3 | ranking and operator selection share the cap |
 | Follow-ups per candidate | 3 | `deep.FOLLOWUP_LIMIT`; the current registry/revision cap is tighter |
@@ -65,17 +64,6 @@ application counters are not inflated or hidden by automatic SDK retries.
 - The GDC transport ledger covers GDC attempts only; model calls are not in it.
 - Actual billing of failed provider requests remains unknown, not zero.
 
-## Measured anonymous architecture campaign (historical evidence)
-
-69 attempts / 6,093,958 bytes, all HTTP 200. Per-session maximum was 14 requests; largest session
-2,523,861 bytes. Largest individual body 284,276 bytes. Campaign ceilings 150/64 MiB, session
-30/8 MiB, response 5 MiB, genes 100/cases 250, pages 10, concurrency 1, timeout 30 s, no retries.
-Every attempted request has a terminal entry. [Register](GDC_DISCOVERY_CAPTURES.md) and
-[workloads](GDC_STRATEGY.md) include exact hashes, requests, measurements and the limited
-full-cohort extrapolation. The campaign is not a production run and did not enter production
-data. HTTP 200 with incomplete search pagination or missing scientific fields is not admitted
-evidence.
-
 ## Documented TypeSafe price/limits (not account guarantees)
 
 Official [models page](https://docs.typesafe.ai/models), checked 2026-09-24: `jev-1.13.0` input
@@ -84,54 +72,13 @@ question ≤32k; 250,000 tokens/s and 1,200 requests/min, explicitly subject to 
 options and Score 2–10 levels are documented primitive limits checked in current question
 definitions. Byte limits do not imply token limits. No account price/quota or invoice was queried.
 
-### Scenario arithmetic — ESTIMATED, not paid/benchmarked
-
-Let N states, S state tokens, Q total question tokens, L one request latency. Shared-state
-fan-out: `input = N×(S+Q)`. Separate questions repeat S; k equal-size questions cost
-`N×(k×S+Q)`. Price estimate = `input/1,000,000 × 0.042`. Add provider/tokenizer overhead and
-actual retries when measured.
-
-| Scenario | Assumptions | Logical requests | Input tokens | Estimated input cost |
-|---|---|---:|---:|---:|
-| Wide100, seven-question fan-out | S1500, Q700 | 100 | 220,000 | $0.00924 |
-| Wide1000 same workload | S1500, Q700 | 1,000 | 2,200,000 | $0.09240 |
-| Wide100, seven separate calls | each question 100 tokens | 700 | 1,120,000 | $0.04704 |
-| Survivor rerank10 | one profile 1500 + rubric 200 | 10 | 17,000 | $0.000714 |
-| Deep3 candidates ×2 revisions | state 3000 + five questions 500 | 6 | 21,000 | $0.000882 |
-| Hypothesis reviews9 | state 3000 + questions 300 | 9 | 29,700 | $0.0012474 |
-| Optional cascade100 | verifier 1,700 tokens each | 100 verifier calls | 170,000 | $0.00714 + UNKNOWN generator/escalation cost |
-
-A 100-state batched stage takes roughly 100L sequentially, versus 700L for serial separate
-questions. If L were 0.6 s (assumption), these are 60 s versus 420 s; this is not a measured LUAD
-latency. Batching different states into a giant context is not the same optimization as
-independent questions over one shared state and can impair relevance/context budget. Keep
-concurrency 1 initially; fan-out inside a provider request does not authorize application
-concurrency.
-
-For cascade escalation fraction r, total cost `= Ccheap + N×Cverify + r×N×Creasoning`.
-Conditional latency is `Lcheap + Lverify` plus `Lreasoning` for escalated cases; no generator
-price or r is established here. An optional semantic stage followed by unchanged Wide adds both
-stages' costs. Cache hits avoid new provider input charges but retain source usage provenance.
-Changing model/question/state invalidates cache; changing only ranking weights need not.
-
-## Historical OntoJev observations (retained, not current measurements)
-
-From dated records, retained without re-running providers:
-
-- 2026-09-22 `wide-v2`, projection v1, `jev-1.13.0`: 10 calls, 28,294 input/2,020 output,
-  about 0.9–1.2 s/call.
-- 2026-09-23 single-cohort `wide-v3` acceptance: 10 calls, 19,659 reported input tokens; provider
-  cost unknown.
-- 2026-09-23 `deep-v1` over E1, `jev-1.13.0`: 3,606 input/174 output, 587 ms for one call.
-- Historical wide/deep cache replay reported zero fresh provider calls. A cache demonstration is
-  not model reproducibility or scientific validation.
-- 2026-09-25 Stage 3 live acceptance, `jev-1.13.0`: fresh sweep 16 GDC attempts / 367,862 bytes
-  with 10 live `wide-v3` calls; explicit operator follow-up and one `deep-v1` call over the
-  retained cache (16/16 GDC cache hits, 0 new bytes); one OpenRouter generation
-  (`deepseek/deepseek-v4.1-flash`, 316 input / 3,501 output) and 2 `hypothesis-v2` critiques;
-  14 total Jev attempts of the 15-attempt budget. One live answer set failed strict validation
-  (`INVALID_DISTRIBUTION`) and was recorded fail-closed. Provider invoiced cost remains unknown.
-- OpenRouter acceptance is now IMPLEMENTED and PASSED for the bounded 2026-09-25 case; it is not
-  a reproducibility or scientific-value demonstration.
-
-Do not mix historical question workloads or use their latency as a present guarantee.
+Cost projections require measured latency/token envelopes: a shared-state fan-out is cheaper
+than serial separate questions (`input = N×(S+Q)` versus `N×(k×S+Q)` for k equal-size
+questions), and batching different states into a giant context is not the same optimization as
+independent questions over one shared state. Keep concurrency 1; fan-out inside a provider
+request does not authorize application concurrency. Cache hits avoid new provider input charges
+but retain source usage provenance; changing model/question/state invalidates cache, changing
+only ranking weights need not. Historical per-attempt latency and usage observations are
+archived in git history; the dated live-acceptance record lives in
+[implementation status](IMPLEMENTATION_STATUS.md). Do not mix historical question workloads or
+use their latency as a present guarantee.
