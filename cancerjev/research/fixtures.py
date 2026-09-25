@@ -76,16 +76,34 @@ def discovery_body(project_id: str) -> bytes:
     ], "pagination": {"count": 2, "total": 2, "size": 20, "from": 0, "pages": 1}}})
 
 
-def counts_body() -> bytes:
-    buckets = []
-    for project_id, counts in COUNTS.items():
-        gene_buckets = [{"key": gene_id, "doc_count": count} for gene_id, count in sorted(counts.items())]
-        buckets.append({"key": project_id, "doc_count": sum(counts.values()),
-                        "genes": {"my_genes": {"gene_id": {"buckets": gene_buckets}}}})
-    return _json({"took": 5, "timed_out": False, "_shards": {"total": 5, "successful": 5, "failed": 0},
-                  "hits": {"total": {"value": sum(sum(c.values()) for c in COUNTS.values())}},
-                  "sum_other_doc_count": 0, "doc_count_error_upper_bound": 0,
-                  "aggregations": {"projects": {"buckets": buckets}}})
+def count_records(project_id: str) -> list[dict[str, Any]]:
+    """One synthetic released occurrence per (gene, case) pair implied by ``COUNTS``.
+
+    Distinct-case semantics are exactly the counts the legacy bucket fixture used
+    to report: the corrected scan must derive the same counts without a bucket.
+    """
+    records: list[dict[str, Any]] = []
+    case_pool = case_ids(project_id, PROJECTS)
+    cursor = 0
+    for gene_id in sorted(COUNTS.get(project_id, {})):
+        for _ in range(COUNTS[project_id][gene_id]):
+            cursor += 1
+            records.append({
+                "ssm_occurrence_id": f"{project_id}-occ-{cursor:05d}",
+                "case": {"case_id": case_pool[(cursor - 1) % len(case_pool)],
+                         "project": {"project_id": project_id}},
+                "ssm": {"consequence": [{"transcript": {"gene": {"gene_id": gene_id}}}]},
+            })
+    return records
+
+
+def ssm_occurrence_body(project_id: str, *, offset: int, size: int) -> bytes:
+    records = count_records(project_id)
+    page = records[offset:offset + size]
+    pages = (len(records) + size - 1) // size if records else 0
+    return _json({"data": {"hits": page, "pagination": {
+        "total": len(records), "count": len(page), "size": size, "from": offset,
+        "pages": pages}}})
 
 
 def coverage_body() -> bytes:
@@ -190,10 +208,12 @@ class FixtureTransport:
             body = projects_body(self.project_case_counts, _filter_project(request))
         elif name == "top_mutated_genes_by_project":
             body = discovery_body(_filter_project(request))
-        elif name == "top_cases_counts_by_genes":
-            body = counts_body()
         elif name == "mutated_cases_count_by_project":
             body = coverage_body()
+        elif name == "ssm_occurrences":
+            params = dict(request.params)
+            body = ssm_occurrence_body(_filter_project(request), offset=int(params["from"]),
+                                       size=int(params["size"]))
         elif name == "genes":
             body = genes_body()
         elif name == "cases":

@@ -37,21 +37,14 @@ from cancerjev.domain.discovery import (
 from cancerjev.domain.events import utc_now
 from cancerjev.domain.measurements import (
     Acquisition,
-    Compatibility,
-    CountMeasurement,
     EntityRef,
     MethodIdentityRef,
     ObservedCount,
     OperationalSource,
     PopulationFrame,
     PopulationUnit,
-    Quality,
     ScientificSource,
-    Sufficiency,
     TestedUniverse,
-    UnavailableMeasurement,
-    UnavailableStatus,
-    Unit,
     digest,
 )
 from cancerjev.domain.scientific import MutationCountResult
@@ -83,12 +76,7 @@ from cancerjev.research.acquisition import (
     response_operational_source,
 )
 from cancerjev.research.specs import ResearchSpec
-from cancerjev.science.methods import (
-    ACQUISITION_COMPLETENESS_DEFINITION,
-    MUTATION_DISTINCT_CASE_COUNT_METHOD,
-    MUTATION_SCAN_SEMANTICS,
-    SSM_COVERAGE_METHOD,
-)
+from cancerjev.science.methods import scanned_mutation_result
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
 
@@ -173,34 +161,14 @@ def _mutation_outcome(project_id: str, gene: GeneRecord, population_frame: Popul
                       scan: MutationOccurrenceScan, release: str, coverage: ProjectCoverage,
                       coverage_source: OperationalSource, coverage_complete: bool,
                       scan_source: OperationalSource) -> tuple[MutationCountResult, bool]:
-    """Typed per-gene outcome from the complete occurrence scan."""
-    distinct, occurrence_docs = scan.counts_for(gene.gene_id)
-    affected: CountMeasurement = ObservedCount(
-        distinct, Unit.CASES, population_frame, MUTATION_DISTINCT_CASE_COUNT_METHOD,
-        (scan_source.source,))
-    ssm = _coverage_measurement(project_id, population_frame, coverage, coverage_source,
-                                coverage_complete)
-    quality = Quality(Acquisition.COMPLETE, Sufficiency.SUFFICIENT if coverage_complete
-                      else Sufficiency.PARTIAL, Compatibility.UNVERIFIED,
-                      (MUTATION_SCAN_SEMANTICS, ACQUISITION_COMPLETENESS_DEFINITION))
-    outcome = MutationCountResult(affected, ssm, coverage_complete, population_frame, quality,
-                                  EntityRef(gene.gene_id, gene.symbol, release))
-    eligible = coverage_complete
-    return outcome, eligible
-
-
-def _coverage_measurement(project_id: str, population_frame: PopulationFrame,
-                          coverage: ProjectCoverage, coverage_source: OperationalSource,
-                          coverage_complete: bool) -> CountMeasurement:
-    raw_coverage = coverage.case_with_ssm.get(project_id)
-    if raw_coverage is None:
-        return UnavailableMeasurement(UnavailableStatus.NOT_OBSERVED, "PROJECT_NOT_IN_COVERAGE",
-                                      Unit.CASES, population_frame)
-    if raw_coverage == 0 and not coverage_complete:
-        return UnavailableMeasurement(UnavailableStatus.UNAVAILABLE, "PARTIAL_AGGREGATION",
-                                      Unit.CASES, population_frame)
-    return ObservedCount(raw_coverage, Unit.CASES, population_frame, SSM_COVERAGE_METHOD,
-                         (coverage_source.source,))
+    """Typed per-gene V2 outcome from the complete occurrence scan."""
+    distinct, _occurrence_docs = scan.counts_for(gene.gene_id)
+    outcome = scanned_mutation_result(
+        project_id=project_id, gene=gene, population_frame=population_frame,
+        distinct_cases=distinct, release=release, coverage=coverage,
+        coverage_source=coverage_source.source, coverage_complete=coverage_complete,
+        scan_source=scan_source)
+    return outcome, coverage_complete
 
 
 @dataclass(frozen=True)
@@ -292,8 +260,9 @@ def _reducer_identity(project_id: str) -> MethodIdentityRef:
     return MethodIdentityRef(REDUCER_METHOD_ID, REDUCER_VERSION, digest(parameters))
 
 
-def _publish_scan(artifacts: ArtifactStore, repository: Repository, run_id: str,
-                  scan: MutationOccurrenceScan) -> tuple[Any, OperationalSource]:
+def publish_occurrence_scan(artifacts: ArtifactStore, repository: Repository, run_id: str,
+                            scan: MutationOccurrenceScan, *, relative_path: str,
+                            ) -> tuple[Any, OperationalSource]:
     """Persist the immutable scan record bundle and derive its aggregate source."""
     document = {
         "kind": "MUTATION_OCCURRENCE_SCAN",
@@ -307,7 +276,7 @@ def _publish_scan(artifacts: ArtifactStore, repository: Repository, run_id: str,
         "page_sources": [asdict(page_source.source) for page_source in scan.sources],
     }
     artifact = artifacts.publish(
-        f"runs/{run_id}/discovery/occurrence-scan.json",
+        relative_path,
         json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8"),
         "application/json", "mutation-occurrence-scan",
     )
@@ -403,7 +372,9 @@ def run_mutation_discovery(run_id: str, transport: AcquisitionTransport, reposit
                "pages": scan.page_count, "total_occurrences": scan.total_occurrences,
                "distinct_cases_total": sum(scan.distinct_cases_per_gene.values()),
                "release": release})
-    scan_artifact, scan_source = _publish_scan(artifacts, repository, run_id, scan)
+    scan_artifact, scan_source = publish_occurrence_scan(
+        artifacts, repository, run_id, scan,
+        relative_path=f"runs/{run_id}/discovery/occurrence-scan.json")
     sources.append(scan_source)
     entries, survivor_ids = build_discovery_entries(
         cohort.project_id, universe_acquisition.genes, universe_acquisition.universe.ordered_ids,

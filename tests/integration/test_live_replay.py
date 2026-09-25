@@ -60,12 +60,15 @@ WIDE_EVENT_ORDER = [
 
 
 def _test_spec(project_id: str = "TCGA-LUAD", *, page_size: int = 200, batch_size: int = 200,
-               max_cases: int = 600) -> ResearchSpec:
+               max_cases: int = 600, occurrence_page_size: int | None = None) -> ResearchSpec:
+    discovery = (LUAD_RESEARCH_V1.discovery if occurrence_page_size is None
+                 else dataclasses.replace(LUAD_RESEARCH_V1.discovery,
+                                          occurrence_scan_page_size=occurrence_page_size))
     return ResearchSpec(
         spec_id=f"TEST_{project_id}_V1",
         intent="bounded offline replay of one explicit cohort",
         cohort=CohortSpec(cohort_id=project_id, domain="test lung cancer", project_id=project_id),
-        discovery=LUAD_RESEARCH_V1.discovery,
+        discovery=discovery,
         acquisition=AcquisitionSpec(
             case_page_size=page_size, case_batch_size=batch_size, max_cohort_cases=max_cases,
             discovery_gene_limit=2, count_gene_limit=2, candidate_gene_limit=2,
@@ -314,6 +317,9 @@ def test_live_replay_links_scientific_sources_to_the_responses_that_supplied_the
     issued = {request.request_hash() for request in holder["transport"].requests}
     received = {published.sha256 for published in holder["transport"].published}
     assert issued and received
+    scan_artifact = repository.artifact_at_path(
+        f"runs/{run_id}/selection/occurrence-scan-TCGA-LUAD.json")
+    assert scan_artifact is not None, "the live path publishes its occurrence scan bundle"
 
     for row in repository.list_table("statistical_states", run_id):
         stored = read_state_record(repository, runtime[2], row["state_id"])
@@ -324,15 +330,66 @@ def test_live_replay_links_scientific_sources_to_the_responses_that_supplied_the
         assert {field.name for field in dataclasses.fields(ScientificSource)} == {
             "endpoint", "request_hash", "response_hash", "parser_version", "release", "acquisition"}
         for source in state.sources:
+            if source.endpoint == "/ssm_occurrences/scan":
+                assert source.response_hash == scan_artifact["sha256"]
+                assert source.acquisition.value == "COMPLETE"
+                continue
             assert source.request_hash in issued, "every scientific source names a request that started"
             assert source.response_hash in received, "every scientific source names the response that supplied it"
         for source in state.operational_sources:
             assert source.attempt_id and source.artifact_id and source.retrieved_at
-            assert source.source.request_hash in issued
-            assert source.source.response_hash in received
             metadata = repository.artifact(source.artifact_id)
             assert metadata is not None
             assert metadata["sha256"] == source.source.response_hash
+            if source.source.endpoint == "/ssm_occurrences/scan":
+                assert metadata["relative_path"] == scan_artifact["relative_path"]
+                continue
+            assert source.source.request_hash in issued
+            assert source.source.response_hash in received
+
+
+def test_live_path_derives_affected_cases_from_the_complete_occurrence_scan(runtime, monkeypatch):
+    orchestrator, holder, repository = _orchestrator(runtime, monkeypatch)
+    run_id = orchestrator.run()
+    assert repository.get_run(run_id)["status"] == "COMPLETED"
+
+    names = [request.endpoint.name for request in holder["transport"].requests]
+    assert names.count("ssm_occurrences") == 1
+    assert "top_cases_counts_by_genes" not in names, "the invalidated bucket is never requested"
+
+    artifact = repository.artifact_at_path(f"runs/{run_id}/selection/examined_genes.json")
+    payload = json.loads(runtime[2].read(artifact["relative_path"]))
+    assert payload["affected_count_method"] == "MUTATION_AFFECTED_CASE_COUNT_V2"
+    assert payload["affected_totals_in_scope"] == LUAD_AFFECTED
+
+    for gene_id in GENES:
+        _, stored = _typed_state(runtime, repository, run_id, gene_id)
+        affected = stored.state.projects[0].mutation.affected_cases
+        assert affected.value == LUAD_AFFECTED[gene_id]
+        assert affected.method.method_id == "MUTATION_AFFECTED_CASE_COUNT_V2"
+        assert tuple(source.endpoint for source in affected.sources) == ("/ssm_occurrences/scan",)
+
+
+def test_live_path_incomplete_occurrence_scan_fails_closed(runtime, monkeypatch):
+    spec = _test_spec(occurrence_page_size=10)
+    orchestrator, _, repository = _orchestrator(
+        runtime, monkeypatch, research_spec=spec, truncate_occurrence_page=True)
+    run_id = orchestrator.run()
+    assert repository.get_run(run_id)["status"] == "FAILED"
+    failed = [event for event in _events(repository, run_id) if event["type"] == "RUN_FAILED"]
+    assert failed[-1]["data"]["reason_code"] == "INVALID_PAGINATION"
+    assert repository.list_table("statistical_states", run_id) == []
+
+
+def test_live_path_duplicate_occurrence_across_pages_fails_closed(runtime, monkeypatch):
+    spec = _test_spec(occurrence_page_size=10)
+    orchestrator, _, repository = _orchestrator(
+        runtime, monkeypatch, research_spec=spec, duplicate_occurrence_across_pages=True)
+    run_id = orchestrator.run()
+    assert repository.get_run(run_id)["status"] == "FAILED"
+    failed = [event for event in _events(repository, run_id) if event["type"] == "RUN_FAILED"]
+    assert failed[-1]["data"]["reason_code"] == "DUPLICATE_OCCURRENCE_ACROSS_PAGES"
+    assert repository.list_table("statistical_states", run_id) == []
 
 
 # ------------------------------------------------------------------- wide Jev admission

@@ -9,6 +9,7 @@ p-value, no effect size, no biological direction.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any, cast
 
@@ -507,12 +508,80 @@ def _mutation_quality(observation: MutationObservation) -> Quality:
                    (MUTATION_ABSENCE_SEMANTICS, ACQUISITION_COMPLETENESS_DEFINITION))
 
 
+@dataclass(frozen=True)
+class ScannedMutationCounts:
+    """Corrected V2 distinct-case counts for one project from a complete occurrence scan.
+
+    Only observed occurrence genes appear in the map; a gene absent from a
+    complete scan is an observed zero, never NOT_OBSERVED and never a callable
+    negative. ``source`` is the aggregate immutable scan source; no aggregation
+    bucket value contributes to any count.
+    """
+
+    project_id: str
+    distinct_cases_per_gene: Mapping[str, int]
+    source: OperationalSource
+
+
+def _coverage_measurement(project_id: str, population_frame: PopulationFrame,
+                          coverage: ProjectCoverage,
+                          coverage_source: ScientificSource | None,
+                          coverage_complete: bool) -> CountMeasurement:
+    raw_coverage = coverage.case_with_ssm.get(project_id)
+    if raw_coverage is None:
+        return UnavailableMeasurement(UnavailableStatus.NOT_OBSERVED, "PROJECT_NOT_IN_COVERAGE",
+                                      Unit.CASES, population_frame)
+    if raw_coverage == 0 and not coverage_complete:
+        return UnavailableMeasurement(UnavailableStatus.UNAVAILABLE, "PARTIAL_AGGREGATION",
+                                      Unit.CASES, population_frame)
+    sources = () if coverage_source is None else (coverage_source,)
+    return ObservedCount(raw_coverage, Unit.CASES, population_frame, SSM_COVERAGE_METHOD, sources)
+
+
+def scanned_mutation_result(*, project_id: str, gene: GeneRecord,
+                            population_frame: PopulationFrame, distinct_cases: int, release: str,
+                            coverage: ProjectCoverage, coverage_source: ScientificSource,
+                            coverage_complete: bool,
+                            scan_source: OperationalSource) -> MutationCountResult:
+    """V2 mutation outcome from a complete occurrence scan (the scientific path)."""
+    affected: CountMeasurement = ObservedCount(
+        distinct_cases, Unit.CASES, population_frame, MUTATION_DISTINCT_CASE_COUNT_METHOD,
+        (scan_source.source,))
+    ssm = _coverage_measurement(project_id, population_frame, coverage, coverage_source,
+                                coverage_complete)
+    quality = Quality(
+        Acquisition.COMPLETE,
+        Sufficiency.SUFFICIENT if coverage_complete else Sufficiency.PARTIAL,
+        Compatibility.UNVERIFIED, (MUTATION_SCAN_SEMANTICS, ACQUISITION_COMPLETENESS_DEFINITION))
+    return MutationCountResult(affected, ssm, coverage_complete, population_frame, quality,
+                               _entity(gene, release))
+
+
 def _mutation_result(frame: ProjectFrame, population_frame: PopulationFrame, gene: GeneRecord,
-                     counts: GeneCaseCounts, coverage: ProjectCoverage,
-                     sources: tuple[OperationalSource, ...], release: str) -> MutationCountResult:
+                     counts: GeneCaseCounts | None, coverage: ProjectCoverage,
+                     sources: tuple[OperationalSource, ...], release: str,
+                     scan_counts: ScannedMutationCounts | None = None) -> MutationCountResult:
+    """One mutation lane outcome from either the V2 scan or the legacy bucket contract.
+
+    Exactly one input is supplied per state. The scan path is the scientific
+    path; the bucket path is the documented V1 contract retained for contract
+    tests and never admits an affected-case value in a live run.
+    """
+    coverage_sources = _endpoint_sources(sources, "/analysis/mutated_cases_count_by_project")
+    coverage_source = coverage_sources[0] if coverage_sources else None
+    if scan_counts is not None:
+        if coverage_source is None:
+            raise ScienceError("MISSING_COVERAGE_SOURCE",
+                               "scan-derived mutation result requires the coverage source")
+        return scanned_mutation_result(
+            project_id=frame.project_id, gene=gene, population_frame=population_frame,
+            distinct_cases=scan_counts.distinct_cases_per_gene.get(gene.gene_id, 0),
+            release=release, coverage=coverage, coverage_source=coverage_source,
+            coverage_complete=coverage.complete, scan_source=scan_counts.source)
+    if counts is None:
+        raise ScienceError("MISSING_COUNTS_INPUT", "the bucket contract requires counts")
     observation = mutation_observation(frame.project_id, gene.gene_id, counts, coverage)
     count_sources = _endpoint_sources(sources, "/analysis/top_cases_counts_by_genes")
-    coverage_sources = _endpoint_sources(sources, "/analysis/mutated_cases_count_by_project")
     if observation.affected_cases is None:
         status = (UnavailableStatus.UNAVAILABLE if observation.availability == "PARTIAL"
                   else UnavailableStatus.NOT_OBSERVED)
@@ -524,16 +593,8 @@ def _mutation_result(frame: ProjectFrame, population_frame: PopulationFrame, gen
     else:
         affected = ObservedCount(observation.affected_cases, Unit.CASES, population_frame,
                                  MUTATION_COUNT_METHOD, count_sources)
-    raw_coverage = coverage.case_with_ssm.get(frame.project_id)
-    if raw_coverage is None:
-        ssm: CountMeasurement = UnavailableMeasurement(
-            UnavailableStatus.NOT_OBSERVED, "PROJECT_NOT_IN_COVERAGE", Unit.CASES, population_frame)
-    elif raw_coverage == 0 and not coverage.complete:
-        ssm = UnavailableMeasurement(
-            UnavailableStatus.UNAVAILABLE, "PARTIAL_AGGREGATION", Unit.CASES, population_frame)
-    else:
-        ssm = ObservedCount(raw_coverage, Unit.CASES, population_frame,
-                            SSM_COVERAGE_METHOD, coverage_sources)
+    ssm = _coverage_measurement(frame.project_id, population_frame, coverage, coverage_source,
+                                coverage.complete)
     return MutationCountResult(affected, ssm, coverage.complete, population_frame,
                                _mutation_quality(observation), _entity(gene, release))
 
@@ -647,19 +708,27 @@ def compute_statistical_state(
     *,
     gene: GeneRecord,
     frames: list[ProjectFrame],
-    counts: GeneCaseCounts,
     coverage: ProjectCoverage,
     sources: tuple[OperationalSource, ...],
     warnings: list[str],
     scope_meta: dict[str, Any],
     discovery_meta: dict[str, Any],
+    counts: GeneCaseCounts | None = None,
+    scan_counts_by_project: Mapping[str, ScannedMutationCounts] | None = None,
 ) -> StatisticalState:
     """Assemble the sole canonical StatisticalState from typed lane results.
 
     Provider responses, request/response hashes, parser version and operational
     attempt/artifact links arrive as typed source records. No provider ranking
     score and no operational id fills a measured field or scientific identity.
+
+    Exactly one mutation-count input is required: corrected V2 per-project scan
+    counts (the scientific path) or the legacy indexed bucket contract retained
+    for its contract tests.
     """
+    if (counts is None) == (scan_counts_by_project is None):
+        raise ScienceError("INVALID_MUTATION_INPUT",
+                           "exactly one of counts or scan_counts_by_project is required")
     ordered = sorted(frames, key=lambda frame: frame.project_id)
     if not ordered:
         raise ScienceError("EMPTY_COHORT_FRAME", "statistical state requires at least one project frame")
@@ -679,8 +748,13 @@ def compute_statistical_state(
     for frame in ordered:
         population_frame = _population_frame(frame, cohort)
         population = _population(frame, population_frame, gene.gene_id)
+        scan_counts = (None if scan_counts_by_project is None
+                       else scan_counts_by_project.get(frame.project_id))
+        if scan_counts_by_project is not None and scan_counts is None:
+            raise ScienceError("MISSING_SCAN_COUNTS",
+                               f"no occurrence-scan counts for project {frame.project_id}")
         mutation_result = _mutation_result(frame, population_frame, gene, counts, coverage,
-                                           sources, release)
+                                           sources, release, scan_counts)
         observation = expression_observation(
             project_id=frame.project_id, gene_id=gene.gene_id,
             case_ids=tuple(case.case_id for case in frame.cases),
@@ -710,12 +784,16 @@ def compute_statistical_state(
         ))
 
     dominance, dominance_availability = project_dominance(observed_affected)
-    acquisition_complete = counts.complete and coverage.complete
+    state_warnings = list(warnings)
+    if scan_counts_by_project is not None:
+        acquisition_complete = coverage.complete
+    else:
+        assert counts is not None
+        acquisition_complete = counts.complete and coverage.complete
+        if not counts.complete:
+            state_warnings.append(f"mutation counts partial: {', '.join(counts.partial_reasons)}")
     sufficiency = scientific_sufficiency(evidence_rows, acquisition_complete)
     projects_with_mutation = len(observed_affected)
-    state_warnings = list(warnings)
-    if not counts.complete:
-        state_warnings.append(f"mutation counts partial: {', '.join(counts.partial_reasons)}")
     if not coverage.complete:
         state_warnings.append(f"mutation coverage partial: {', '.join(coverage.partial_reasons)}")
 

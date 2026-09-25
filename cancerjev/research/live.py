@@ -35,7 +35,6 @@ from cancerjev.gdc.endpoints import (
 )
 from cancerjev.gdc.parsers import (
     DiscoveryHit,
-    GeneCaseCounts,
     GeneRecord,
     ParserError,
     ProjectCoverage,
@@ -51,9 +50,9 @@ from cancerjev.jev.service import JevService
 from cancerjev.research.acquisition import (
     AcquisitionTransport,
     LiveRunError,
-    _sum_if_complete,
-    acquire_mutation_counts,
+    acquire_project_coverage,
     acquire_project_frame,
+    acquire_project_mutation_occurrence_scan,
     response_meta,
     response_operational_source,
 )
@@ -61,12 +60,18 @@ from cancerjev.research.acquisition import (
     _merge_expression_availability as _merge_expression_availability,
 )
 from cancerjev.research.deep import stable_id
+from cancerjev.research.discovery import publish_occurrence_scan
 from cancerjev.research.investigation import run_candidate_investigation
 from cancerjev.research.ranking import PROMOTION_LIMIT
 from cancerjev.research.seams import HypothesisGenerator
 from cancerjev.research.specs import LUAD_RESEARCH_V1, ResearchSpec
 from cancerjev.research.wide import run_wide_evaluation
-from cancerjev.science.methods import ProjectFrame, ScienceError, compute_statistical_state
+from cancerjev.science.methods import (
+    ProjectFrame,
+    ScannedMutationCounts,
+    ScienceError,
+    compute_statistical_state,
+)
 from cancerjev.storage.artifacts import ArtifactStore, PublishedArtifact
 from cancerjev.storage.repositories import Repository
 
@@ -125,7 +130,7 @@ class Selection:
     count_genes: list[str]
     selected_gene_ids: list[str]
     genes: dict[str, GeneRecord]
-    counts: GeneCaseCounts
+    scan_counts: dict[str, ScannedMutationCounts]
     coverage: ProjectCoverage
     sources: tuple[OperationalSource, ...]
     warnings: list[str]
@@ -627,13 +632,34 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
         count_genes = ranked_genes[:acquisition.count_gene_limit]
         if not count_genes:
             raise LiveRunError("NO_DISCOVERED_GENES", f"provider discovery returned no genes for {cohort.project_id}")
-        mutation = acquire_mutation_counts(transport, count_genes, inventory.release)
-        counts, coverage = mutation.counts, mutation.coverage
-        sources.extend(mutation.sources)
-        warnings.extend(mutation.warnings)
+        scan_counts: dict[str, ScannedMutationCounts] = {}
+        for project in inventory.selected:
+            scan = acquire_project_mutation_occurrence_scan(
+                transport, project.project_id,
+                self.research_spec.discovery.occurrence_scan_page_size, inventory.release)
+            scan_artifact, scan_source = publish_occurrence_scan(
+                self.artifacts, self.repository, run_id, scan,
+                relative_path=f"runs/{run_id}/selection/occurrence-scan-{project.project_id}.json")
+            self._event(
+                run_id, "DISCOVERY_OCCURRENCE_SCAN_ACQUIRED", f"scan:{project.project_id}",
+                "Complete released-occurrence scan acquired for the examined cohort.",
+                stage="GDC_FAST_SEARCH",
+                data={"project_id": project.project_id, "pages": scan.page_count,
+                      "total_occurrences": scan.total_occurrences,
+                      "distinct_cases_total": sum(scan.distinct_cases_per_gene.values()),
+                      "release": inventory.release},
+                artifact_refs=[scan_artifact.ref()],
+            )
+            scan_counts[project.project_id] = ScannedMutationCounts(
+                project.project_id, scan.distinct_cases_per_gene, scan_source)
+            sources.append(scan_source)
+            warnings.extend(scan.warnings)
+        coverage, coverage_source = acquire_project_coverage(transport, inventory.release)
+        sources.append(coverage_source)
         scope_ids = [project.project_id for project in inventory.selected]
         totals = {
-            gene_id: _sum_if_complete([counts.projects.get(project_id, {}).get(gene_id) for project_id in scope_ids])
+            gene_id: sum(scan_counts[project_id].distinct_cases_per_gene.get(gene_id, 0)
+                         for project_id in scope_ids)
             for gene_id in count_genes
         }
         selected_gene_ids = ranked_genes[:acquisition.candidate_gene_limit]
@@ -656,6 +682,11 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
             "provider_ranked_genes": ranked_genes,
             "counted_genes": count_genes,
             "affected_totals_in_scope": totals,
+            "affected_count_method": "MUTATION_AFFECTED_CASE_COUNT_V2",
+            "affected_count_note": (
+                "Totals are distinct released cases per gene over the complete /ssm_occurrences "
+                "scan; a gene absent from a complete scan is an observed zero."
+            ),
             "selected_gene_ids": selected_gene_ids,
             "provider_ranking_note": (
                 "Discovery uses the provider top-mutated ranking; _score is provider-internal selection "
@@ -668,8 +699,8 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
         examined_genes_hash = digest(selection_payload)
         return Selection(
             discovery_by_project=discovery_by_project, count_genes=count_genes,
-            selected_gene_ids=selected_gene_ids, genes=genes, counts=counts, coverage=coverage,
-            sources=tuple(sources), warnings=warnings, artifact=artifact,
+            selected_gene_ids=selected_gene_ids, genes=genes, scan_counts=scan_counts,
+            coverage=coverage, sources=tuple(sources), warnings=warnings, artifact=artifact,
             examined_genes_hash=examined_genes_hash,
         )
 
@@ -712,7 +743,8 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
             }
             state = compute_statistical_state(
                 gene=gene, frames=frames,
-                counts=selection.counts, coverage=selection.coverage, sources=tuple(sources),
+                scan_counts_by_project=selection.scan_counts, coverage=selection.coverage,
+                sources=tuple(sources),
                 warnings=warnings,
                 scope_meta={
                     "gdc_release": inventory.release, "examined_case_frame": "ALL_CASES_PAGINATED",

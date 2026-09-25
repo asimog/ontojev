@@ -8,6 +8,7 @@ bytes are used by the parser tests in tests/contracts.
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 from uuid import uuid4
 
@@ -92,6 +93,40 @@ def genes_body(*, size: int = 10, offset: int = 0) -> bytes:
         "count": len(hits), "total": 2, "size": size, "from": offset, "pages": 1}}})
 
 
+def count_records(project_id: str) -> list[dict[str, Any]]:
+    """One released occurrence per (gene, case) pair implied by ``COUNTS``.
+
+    Distinct-case semantics are exactly the bucket values of the legacy fixture:
+    the corrected scan must derive the same counts without ever reading a bucket.
+    """
+    records: list[dict[str, Any]] = []
+    case_pool = case_ids(project_id, PROJECTS)
+    cursor = 0
+    for gene_id in sorted(COUNTS.get(project_id, {})):
+        for _ in range(COUNTS[project_id][gene_id]):
+            cursor += 1
+            records.append({
+                "ssm_occurrence_id": f"{project_id}-occ-{cursor:05d}",
+                "case": {"case_id": case_pool[(cursor - 1) % len(case_pool)],
+                         "project": {"project_id": project_id}},
+                "ssm": {"consequence": [{"transcript": {"gene": {"gene_id": gene_id}}}]},
+            })
+    return records
+
+
+def ssm_occurrence_body(project_id: str, *, offset: int, size: int, truncate: bool = False,
+                        duplicate_previous: bool = False) -> bytes:
+    records = count_records(project_id)
+    page = [dict(record) for record in records[offset:offset + size]]
+    if duplicate_previous and offset > 0 and page:
+        page[0]["ssm_occurrence_id"] = records[offset - 1]["ssm_occurrence_id"]
+    if truncate and page and offset + len(page) < len(records):
+        page = page[:-1]
+    return _json({"data": {"hits": page, "pagination": {
+        "total": len(records), "count": len(page), "size": size, "from": offset,
+        "pages": math.ceil(len(records) / size) if records else 0}}})
+
+
 def case_ids(project_id: str, projects: dict[str, int]) -> list[str]:
     return [f"{project_id}-case-{index:04d}" for index in range(projects[project_id])]
 
@@ -168,7 +203,9 @@ class ReplayTransport:
                   duplicate_case_across_pages: bool = False,
                   inconsistent_case_total_after_first: bool = False,
                   inconsistent_case_offset_after_first: bool = False,
-                  constant_expression_value: float | None = None) -> None:
+                  constant_expression_value: float | None = None,
+                  truncate_occurrence_page: bool = False,
+                  duplicate_occurrence_across_pages: bool = False) -> None:
         self.artifacts = artifacts
         self.run_id = run_id
         self.controlled_files = controlled_files
@@ -180,6 +217,8 @@ class ReplayTransport:
         self.inconsistent_case_total_after_first = inconsistent_case_total_after_first
         self.inconsistent_case_offset_after_first = inconsistent_case_offset_after_first
         self.constant_expression_value = constant_expression_value
+        self.truncate_occurrence_page = truncate_occurrence_page
+        self.duplicate_occurrence_across_pages = duplicate_occurrence_across_pages
         self.requests: list[GDCRequest] = []
         self.published: list[Any] = []
         self.repository = repository
@@ -202,6 +241,12 @@ class ReplayTransport:
             body = counts_body()
         elif name == "mutated_cases_count_by_project":
             body = coverage_body()
+        elif name == "ssm_occurrences":
+            params = dict(request.params)
+            body = ssm_occurrence_body(
+                _filter_project(request), offset=int(params["from"]), size=int(params["size"]),
+                truncate=self.truncate_occurrence_page,
+                duplicate_previous=self.duplicate_occurrence_across_pages)
         elif name == "genes":
             params = dict(request.params)
             body = genes_body(size=int(params["size"]), offset=int(params.get("from", 0)))

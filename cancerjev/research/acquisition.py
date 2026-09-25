@@ -181,8 +181,9 @@ def _acquire_count_batch(transport: AcquisitionTransport, gene_ids: list[str],
     return counts, response_operational_source(response, release=release)
 
 
-def _acquire_coverage(transport: AcquisitionTransport,
-                      release: str | None) -> tuple[ProjectCoverage, OperationalSource]:
+def acquire_project_coverage(transport: AcquisitionTransport,
+                             release: str | None) -> tuple[ProjectCoverage, OperationalSource]:
+    """One project-wide SSM coverage response; coverage is not an affected-case count."""
     response = transport.request(mutated_cases_count_request())
     coverage = parse_mutated_cases_count(response.body, response_meta(response, release))
     return coverage, response_operational_source(response, release=release)
@@ -190,9 +191,14 @@ def _acquire_coverage(transport: AcquisitionTransport,
 
 def acquire_mutation_counts(transport: AcquisitionTransport, gene_ids: list[str],
                             release: str | None) -> MutationAcquisition:
-    """Existing indexed count contracts, independent of candidate selection policy."""
+    """Legacy indexed bucket contracts, retained for their contract tests.
+
+    The live orchestrator derives affected-case counts from the corrected
+    complete occurrence scan (``acquire_project_mutation_occurrence_scan``);
+    no scientific lane admits a value produced by this bucket path.
+    """
     counts, count_source = _acquire_count_batch(transport, gene_ids, release)
-    coverage, coverage_source = _acquire_coverage(transport, release)
+    coverage, coverage_source = acquire_project_coverage(transport, release)
     return MutationAcquisition(counts, coverage, (count_source, coverage_source),
                                tuple(counts.warnings + coverage.warnings))
 
