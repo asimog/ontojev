@@ -1,4 +1,4 @@
-"""Live research dossier (Phase 5): deterministic JSON plus derived Markdown.
+"""Live research dossier: deterministic JSON plus derived Markdown.
 
 A dossier is presentation, never evidence: it assembles what the run already
 recorded for one candidate — the accepted state, every immutable evidence
@@ -20,6 +20,9 @@ from cancerjev.research.deep import stable_id
 from cancerjev.science.actions import ACTION_REGISTRY
 from cancerjev.storage.readers import (
     ScientificReadError,
+    StoredEvidence,
+    StoredHypothesis,
+    StoredState,
     read_candidate_state,
     read_evaluation_record,
     read_hypothesis_record,
@@ -34,47 +37,61 @@ LLM_NOTICE = (
     "REAL OPEN-ACCESS GDC EVIDENCE — INCLUDES LLM-GENERATED TEXT THAT IS NOT EVIDENCE — "
     "NOT CLINICAL OR DIAGNOSTIC USE"
 )
+SYNTHETIC_NOTICE = (
+    "SYNTHETIC DEMONSTRATION — NO REAL GDC DATA WAS ANALYZED — NO REAL JEV CALL WAS MADE — "
+    "NO REAL LLM CALL WAS MADE"
+)
 RESEARCH_ONLY_SECTION = "research_only_notice"
+LLM_GENERATOR_NAME = "openrouter-chat-v1"
 
 
 def _section(availability: str, *, narrative: str | None = None, reason: str | None = None) -> dict[str, Any]:
     return {"availability": availability, "reason": reason, "narrative": narrative}
 
 
-def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: dict[str, Any] | None,
-                       revisions: list[dict[str, Any]], executions: list[dict[str, Any]],
-                       decisions: list[dict[str, Any]], hypotheses: list[dict[str, Any]],
+def _uses_llm(hypotheses: list[StoredHypothesis]) -> bool:
+    return any(hypothesis.draft.generator == LLM_GENERATOR_NAME for hypothesis in hypotheses)
+
+
+def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: StoredState | None,
+                       revisions: list[StoredEvidence], executions: list[dict[str, Any]],
+                       decisions: list[dict[str, Any]], hypotheses: list[StoredHypothesis],
                        hypothesis_evaluations: list[dict[str, Any]],
                        wide_evaluation: dict[str, Any] | None,
-                       deep_evaluation: dict[str, Any] | None = None) -> dict[str, Any]:
+                       deep_evaluation: dict[str, Any] | None = None,
+                       mode: str = "LIVE") -> dict[str, Any]:
     """Assemble every declared dossier section from what the run already recorded."""
-    notice = LLM_NOTICE if any(item.get("generator") == "openrouter-chat-v1" for item in hypotheses) else LIVE_NOTICE
+    if mode == "LIVE":
+        notice = LLM_NOTICE if _uses_llm(hypotheses) else LIVE_NOTICE
+    else:
+        notice = SYNTHETIC_NOTICE
     entity = candidate.get("entity") or {}
     symbol = entity.get("gene_symbol") or candidate.get("candidate_id")
-    last_revision = revisions[-1] if revisions else {}
+    last_evidence = revisions[-1].evidence if revisions else None
     check_outcomes: list[str] = []
     for revision in revisions:
-        summary = revision.get("summary") or {}
+        summary = revision.evidence.summary
+        action_id = revision.evidence.action.action_id if revision.evidence.action else None
         check_outcomes.append(
-            f"E{revision.get('iteration')}: {summary.get('action_id')} — "
-            f"{summary.get('checks_verified')} verified, {summary.get('checks_contradicted')} contradicted, "
-            f"{summary.get('checks_not_observed')} not observed"
+            f"E{revision.iteration}: {action_id} — {summary.verified} verified, "
+            f"{summary.contradicted} contradicted, {summary.not_observed} not observed"
         )
     contradicted = [revision for revision in revisions
-                    if (revision.get("summary") or {}).get("checks_contradicted")]
+                    if revision.evidence.summary.contradicted]
     missing = [
-        {"needed_evidence": item.get("needed_evidence"), "availability": item.get("availability")}
+        {"needed_evidence": item.needed_evidence, "availability": item.availability.value}
         for revision in revisions
-        for item in (revision.get("revision") or {}).get("missing_evidence", [])
+        for item in revision.evidence.missing_evidence
     ]
     final_decision = decisions[-1] if decisions else {}
-    provenance = (last_revision.get("revision") or {}).get("provenance") or {}
-    methods = provenance.get("methods") or []
+    provenance = last_evidence.provenance if last_evidence is not None else None
+    methods = provenance.methods if provenance is not None else ()
     sections = {key: _section("NOT_ACQUIRED", reason="not required for this single-cohort deterministic arc")
                 for key in DOSSIER_SECTIONS}
     sections["research_puzzle"] = _section(
         "OBSERVED",
-        narrative=(last_revision.get("revision") or {}).get("research_puzzle", {}).get("question"),
+        narrative=last_evidence.puzzle.question if last_evidence is not None
+        and last_evidence.puzzle is not None else None,
     )
     sections["candidate_entity"] = _section(
         "OBSERVED", narrative=f"Candidate {candidate.get('candidate_id')} examines {symbol}.")
@@ -88,8 +105,8 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: dict[st
     sections["initial_broad_evidence"] = _section(
         "OBSERVED" if state is not None else "NOT_ACQUIRED",
         narrative=(
-            f"Accepted StatisticalState {state.get('state_hash', '')[:12]} with "
-            f"{len(state.get('provenance', {}).get('sources', []))} retained response source(s)."
+            f"Accepted StatisticalState {state.state_hash[:12]} with "
+            f"{len(state.state.sources)} retained response source(s)."
             if state is not None else None
         ),
         reason=None if state is not None else "the accepted state artifact was not read",
@@ -109,15 +126,15 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: dict[st
         reason=None if revisions else "no evidence revision was recorded",
     )
     sections["project_evidence"] = _section(
-        "OBSERVED" if last_revision else "NOT_ACQUIRED",
+        "OBSERVED" if last_evidence is not None else "NOT_ACQUIRED",
         narrative=(
             ", ".join(
-                f"{row.get('project_id')}: {row.get('affected_case_count', {}).get('value')} affected of "
-                f"{row.get('examined_cases', {}).get('value')} examined"
-                for row in (last_revision.get("revision") or {}).get("project_level_evidence", [])
+                f"{row.project_id}: {row.affected_case_count.value} affected of "
+                f"{row.examined_cases.value} examined"
+                for row in (last_evidence.project_evidence if last_evidence is not None else ())
             ) or None
         ),
-        reason=None if last_revision else "no project-level evidence was recorded",
+        reason=None if last_evidence is not None else "no project-level evidence was recorded",
     )
     sections["cross_project_evidence"] = _section(
         "NOT_ACQUIRED", reason="a single cohort is examined; LUAD is never pooled with another cohort")
@@ -126,15 +143,16 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: dict[st
     sections["contradictory_evidence"] = _section(
         "OBSERVED" if revisions else "NOT_ACQUIRED",
         narrative=(
-            "; ".join(f"E{revision.get('iteration')} contradicted "
-                      f"{(revision.get('summary') or {}).get('checks_contradicted')} check(s)"
+            "; ".join(f"E{revision.iteration} contradicted "
+                      f"{revision.evidence.summary.contradicted} check(s)"
                       for revision in contradicted) or "no contradicted check was recorded"
         ),
         reason=None if revisions else "no evidence revision was recorded",
     )
     sections["missing_unavailable_evidence"] = _section(
         "OBSERVED" if revisions else "NOT_ACQUIRED",
-        narrative=", ".join(sorted({item["needed_evidence"] for item in missing if item.get("needed_evidence")})) or None,
+        narrative=", ".join(sorted({item["needed_evidence"] for item in missing
+                                     if item.get("needed_evidence")})) or None,
         reason=None if revisions else "no evidence revision was recorded",
     )
     sections["jev_deep_judgments"] = _section(
@@ -149,7 +167,7 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: dict[st
     )
     sections["competing_hypotheses"] = _section(
         "OBSERVED" if hypotheses else "NOT_ACQUIRED",
-        narrative="; ".join(str(item.get("statement")) for item in hypotheses) or None,
+        narrative="; ".join(hypothesis.draft.statement for hypothesis in hypotheses) or None,
         reason=None if hypotheses else "hypothesis generation was not authorized or not reached",
     )
     sections["hypothesis_jev_reviews"] = _section(
@@ -196,31 +214,31 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: dict[st
     sections["predictions_by_hypothesis"] = _section(
         "OBSERVED" if hypotheses else "NOT_ACQUIRED",
         narrative=(
-            "; ".join(f"{item.get('hypothesis_id')}: {', '.join(item.get('predictions', []))}"
-                      for item in hypotheses) or None
+            "; ".join(f"{hypothesis.hypothesis_id}: {', '.join(hypothesis.draft.predictions)}"
+                      for hypothesis in hypotheses) or None
         ),
         reason=None if hypotheses else "no generated hypothesis exists",
     )
     sections["falsification_criteria"] = _section(
         "OBSERVED" if hypotheses else "NOT_ACQUIRED",
         narrative=(
-            "; ".join(f"{item.get('hypothesis_id')}: {', '.join(item.get('contradicted_if', []))}"
-                      for item in hypotheses) or None
+            "; ".join(f"{hypothesis.hypothesis_id}: {', '.join(hypothesis.draft.contradicted_if)}"
+                      for hypothesis in hypotheses) or None
         ),
         reason=None if hypotheses else "no generated hypothesis exists",
     )
     sections["gdc_provenance"] = _section(
-        "OBSERVED" if provenance else "NOT_ACQUIRED",
+        "OBSERVED" if provenance is not None else "NOT_ACQUIRED",
         narrative=(
-            f"release {provenance.get('gdc_release')} with {len(provenance.get('sources', []))} retained "
+            f"release {provenance.gdc_release} with {len(provenance.sources)} retained "
             "response source(s); every source names its acquisition attempt in the stored revision"
-            if provenance else None
+            if provenance is not None else None
         ),
-        reason=None if provenance else "no provenance was recorded",
+        reason=None if provenance is not None else "no provenance was recorded",
     )
     sections["method_versions"] = _section(
         "OBSERVED" if methods else "NOT_ACQUIRED",
-        narrative=", ".join(f"{item.get('method_id')} v{item.get('version')}" for item in methods) or None,
+        narrative=", ".join(f"{item.method_id} v{item.version}" for item in methods) or None,
         reason=None if methods else "no method reference was recorded",
     )
     sections["jev_model_question_versions"] = _section(
@@ -235,13 +253,14 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: dict[st
         ),
         reason=None if decisions else "no deep judgment was recorded",
     )
+    uses_llm = _uses_llm(hypotheses)
     sections["llm_provider_model_metadata"] = _section(
-        "OBSERVED" if any(item.get("generator") == "openrouter-chat-v1" for item in hypotheses) else "NOT_ACQUIRED",
+        "OBSERVED" if uses_llm else "NOT_ACQUIRED",
         narrative=(
             "hypotheses were generated by the configured LLM provider; the generator name is recorded on each"
-            if any(item.get("generator") == "openrouter-chat-v1" for item in hypotheses) else None
+            if uses_llm else None
         ),
-        reason=None if any(item.get("generator") == "openrouter-chat-v1" for item in hypotheses)
+        reason=None if uses_llm
         else "no LLM was configured for this run; hypothesis text is deterministic template output",
     )
     sections[RESEARCH_ONLY_SECTION] = _section("OBSERVED", narrative=notice)
@@ -251,12 +270,13 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: dict[st
         "dossier_id": dossier_id,
         "run_id": run_id,
         "candidate_id": candidate["candidate_id"],
-        "mode": "LIVE",
+        "mode": mode,
         "warning": notice,
         "entity": entity,
-        "evidence_state_ids": [revision.get("evidence_state_id") for revision in revisions],
-        "hypothesis_ids": [item.get("hypothesis_id") for item in hypotheses],
-        "next_moves": [{"move": item.get("move"), "reason_code": item.get("reason_code")} for item in decisions],
+        "evidence_state_ids": [revision.evidence_state_id for revision in revisions],
+        "hypothesis_ids": [hypothesis.hypothesis_id for hypothesis in hypotheses],
+        "next_moves": [{"move": item.get("move"), "reason_code": item.get("reason_code")}
+                       for item in decisions],
         "sections": sections,
         "created_at": utc_now(),
         "limitations": [
@@ -268,14 +288,14 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: dict[st
 
 
 def run_dossier_stage(*, run_id: str, candidate: dict[str, Any], repository: Any, artifacts: Any,
-                      state: dict[str, Any] | None, decisions: list[dict[str, Any]],
+                      decisions: list[dict[str, Any]],
                       publish_json: Callable[[str, str, Any, str], Any],
-                      emit: Callable[..., Any]) -> dict[str, Any]:
+                      emit: Callable[..., Any], mode: str = "LIVE") -> dict[str, Any]:
     """Persist the authoritative JSON dossier, its derived Markdown, and its record."""
     try:
         return _publish_dossier_stage(
             run_id=run_id, candidate=candidate, repository=repository, artifacts=artifacts,
-            decisions=decisions, publish_json=publish_json, emit=emit,
+            decisions=decisions, publish_json=publish_json, emit=emit, mode=mode,
         )
     except ScientificReadError as exc:
         summary = {"status": "UNAVAILABLE", "candidate_id": candidate["candidate_id"],
@@ -289,24 +309,19 @@ def run_dossier_stage(*, run_id: str, candidate: dict[str, Any], repository: Any
 def _publish_dossier_stage(*, run_id: str, candidate: dict[str, Any], repository: Any, artifacts: Any,
                            decisions: list[dict[str, Any]],
                            publish_json: Callable[[str, str, Any, str], Any],
-                           emit: Callable[..., Any]) -> dict[str, Any]:
+                           emit: Callable[..., Any], mode: str = "LIVE") -> dict[str, Any]:
     # Reload authoritative storage, not a stale caller copy or an earlier valid revision.
     stored_state = read_candidate_state(repository, artifacts, candidate["candidate_id"])
-    state = stored_state.artifact.boundary_representation()
     chain = read_revision_chain(repository, artifacts, candidate["candidate_id"])
     if not chain:
         raise ScientificReadError("EVIDENCE_STATE_MISSING", "dossier requires accepted evidence")
-    revisions: list[dict[str, Any]] = []
-    for revision in chain:
-        row = repository.get_evidence_state(revision.evidence_state_id)
-        revisions.append({**row, "revision": revision.artifact.boundary_representation()})
     executions = repository.followup_executions_for(candidate["candidate_id"])
     hypothesis_rows = repository.page_child("hypotheses", run_id, 100, None,
                                             {"candidate_id": candidate["candidate_id"]})["items"]
     hypotheses = [read_hypothesis_record(
         repository, artifacts, row["hypothesis_id"], candidate_id=candidate["candidate_id"],
         allowed_action_ids=frozenset(ACTION_REGISTRY),
-    ).artifact.boundary_representation() for row in hypothesis_rows]
+    ) for row in hypothesis_rows]
     hypothesis_ids = {row["hypothesis_id"] for row in hypothesis_rows}
     hypothesis_evaluations = [
         read_evaluation_record(repository, artifacts, row["evaluation_id"]).artifact.boundary_representation()
@@ -326,14 +341,16 @@ def _publish_dossier_stage(*, run_id: str, candidate: dict[str, Any], repository
     wide_evaluations = [
         read_evaluation_record(repository, artifacts, row["evaluation_id"]).artifact.boundary_representation()
         for row in repository.page_child("jev_evaluations", run_id, 100, None,
-                                                      {"purpose": "WIDE"})["items"]
+                                         {"purpose": "WIDE"})["items"]
         if row["input_ref_id"] == candidate.get("source_state_id")
     ]
     dossier = build_live_dossier(
-        run_id=run_id, candidate=candidate, state=state, revisions=revisions, executions=executions,
-        decisions=decisions, hypotheses=hypotheses, hypothesis_evaluations=hypothesis_evaluations,
+        run_id=run_id, candidate=candidate, state=stored_state, revisions=list(chain),
+        executions=executions, decisions=decisions, hypotheses=hypotheses,
+        hypothesis_evaluations=hypothesis_evaluations,
         wide_evaluation=wide_evaluations[0] if wide_evaluations else None,
         deep_evaluation=deep_evaluations[-1] if deep_evaluations else None,
+        mode=mode,
     )
     json_artifact = publish_json(run_id, f"runs/{run_id}/dossier/{dossier['dossier_id']}.json",
                                  dossier, "authoritative-dossier")
@@ -342,7 +359,7 @@ def _publish_dossier_stage(*, run_id: str, candidate: dict[str, Any], repository
                                     "text/markdown; charset=utf-8", "derived-dossier-markdown")
     summary = {
         "dossier_id": dossier["dossier_id"], "run_id": run_id,
-        "candidate_id": candidate["candidate_id"], "mode": "LIVE", "entity": dossier["entity"],
+        "candidate_id": candidate["candidate_id"], "mode": mode, "entity": dossier["entity"],
         "puzzle": dossier["sections"]["research_puzzle"]["narrative"], "warning": dossier["warning"],
         "evidence_state_ids": dossier["evidence_state_ids"], "hypothesis_ids": dossier["hypothesis_ids"],
         "next_moves": dossier["next_moves"],

@@ -1,11 +1,22 @@
-"""Typed, reproducible scientific scope for live research runs."""
+"""Typed, reproducible scientific scope for live research runs.
+
+One canonical ``ResearchSpec`` owns the reproducible configuration of a research
+run: the explicit single cohort, bounded acquisition sizes, the implemented
+composition (mutation counts plus the local expression summary), the registered
+deterministic actions, the policy identities and the scientific limits.
+
+Unsupported runtime configurations are not representable: indexed genome-wide
+discovery, an independent expression arm and CNV acquisition have no field in
+schema 3 and are rejected explicitly here and by the strict reader. JSON exists
+only as a boundary representation.
+"""
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from cancerjev.domain._json import boolean, integer, obj, string, string_tuple
+from cancerjev.domain._json import integer, obj, string, string_tuple
 from cancerjev.domain.measurements import count, require, strings, text
 from cancerjev.gdc.endpoints import (
     MAX_CASE_IDS,
@@ -14,6 +25,11 @@ from cancerjev.gdc.endpoints import (
     MAX_FILES_PAGE,
     MAX_GENE_IDS,
 )
+
+RESEARCH_SPEC_SCHEMA_VERSION = 3
+IMPLEMENTED_ACTIONS = frozenset({"CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1"})
+IMPLEMENTED_WIDE_POLICY = "wide-policy-v2"
+IMPLEMENTED_DEEP_POLICY = "deep-policy-v2"
 
 
 @dataclass(frozen=True)
@@ -61,17 +77,50 @@ class AcquisitionSpec:
 
 
 @dataclass(frozen=True)
-class ResearchSpec:
-    spec_id: str
-    cohort: CohortSpec
-    acquisition: AcquisitionSpec
+class ScientificLimits:
+    max_survivors: int = 10
+    max_promotions: int = 3
+    max_revisions: int = 2
 
     def __post_init__(self) -> None:
-        if not isinstance(self.spec_id, str) or not self.spec_id.strip() or len(self.spec_id) > 128:
-            raise ValueError("spec_id must be a non-empty string of at most 128 characters")
+        for value, ceiling in ((self.max_survivors, 10), (self.max_promotions, 3),
+                               (self.max_revisions, 2)):
+            count(value, "scientific limit")
+            require(1 <= value <= ceiling, "scientific limit outside supported bounds")
+        require(self.max_promotions <= self.max_survivors, "promotion limit exceeds survivors")
+
+
+@dataclass(frozen=True)
+class ResearchSpec:
+    """The sole canonical research configuration of the current architecture."""
+
+    spec_id: str
+    intent: str
+    cohort: CohortSpec
+    acquisition: AcquisitionSpec
+    limits: ScientificLimits
+    allowed_actions: tuple[str, ...]
+    wide_policy: str = IMPLEMENTED_WIDE_POLICY
+    deep_policy: str = IMPLEMENTED_DEEP_POLICY
+
+    def __post_init__(self) -> None:
+        text(self.spec_id, "spec_id")
+        text(self.intent, "research intent")
+        require(isinstance(self.cohort, CohortSpec), "invalid cohort spec")
+        require(isinstance(self.acquisition, AcquisitionSpec), "invalid acquisition spec")
+        require(isinstance(self.limits, ScientificLimits), "invalid scientific limits")
+        strings(self.allowed_actions, "allowed actions")
+        require(bool(self.allowed_actions), "a research spec requires at least one allowed action")
+        require(set(self.allowed_actions) <= IMPLEMENTED_ACTIONS,
+                "action requires a registered implementation")
+        require(self.wide_policy == IMPLEMENTED_WIDE_POLICY
+                and self.deep_policy == IMPLEMENTED_DEEP_POLICY,
+                "new policy semantics require a versioned task")
+        require(self.limits == ScientificLimits(), "unsupported scientific limits")
 
     def as_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        # JSON is a boundary representation, never the internal composition.
+        return {"schema_version": RESEARCH_SPEC_SCHEMA_VERSION, "kind": "RESEARCH_SPEC", **asdict(self)}
 
     def cohort_selection_rule(self) -> str:
         return (
@@ -89,8 +138,35 @@ class ResearchSpec:
         )
 
 
+def research_spec_from_dict(value: object) -> ResearchSpec:
+    """Strict schema-3 boundary. Never interpret a legacy spec as the current one."""
+    d = obj(value, "schema_version kind spec_id intent cohort acquisition limits allowed_actions "
+                   "wide_policy deep_policy")
+    require(integer(d["schema_version"]) == RESEARCH_SPEC_SCHEMA_VERSION
+            and d["kind"] == "RESEARCH_SPEC", "unsupported research spec version/kind")
+    c = obj(d["cohort"], "cohort_id domain project_id")
+    a = obj(d["acquisition"], "case_page_size case_batch_size max_cohort_cases discovery_gene_limit "
+                              "count_gene_limit candidate_gene_limit expression_file_sample_size")
+    limits = obj(d["limits"], "max_survivors max_promotions max_revisions")
+    return ResearchSpec(
+        string(d["spec_id"]), string(d["intent"]),
+        CohortSpec(string(c["cohort_id"]), string(c["domain"]), string(c["project_id"])),
+        AcquisitionSpec(integer(a["case_page_size"]), integer(a["case_batch_size"]),
+                        integer(a["max_cohort_cases"]), integer(a["discovery_gene_limit"]),
+                        integer(a["count_gene_limit"]), integer(a["candidate_gene_limit"]),
+                        integer(a["expression_file_sample_size"])),
+        ScientificLimits(integer(limits["max_survivors"]), integer(limits["max_promotions"]),
+                         integer(limits["max_revisions"])),
+        string_tuple(d["allowed_actions"]), string(d["wide_policy"]), string(d["deep_policy"]),
+    )
+
+
 LUAD_RESEARCH_V1 = ResearchSpec(
     spec_id="LUAD_RESEARCH_V1",
+    intent=(
+        "Bounded, deterministic-first examination of one explicit lung-adenocarcinoma cohort for a "
+        "provider-ranked gene set, with narrow Jev judgment and no cross-cohort pooling."
+    ),
     cohort=CohortSpec(
         cohort_id="TCGA-LUAD",
         domain="lung cancer",
@@ -105,133 +181,6 @@ LUAD_RESEARCH_V1 = ResearchSpec(
         candidate_gene_limit=10,
         expression_file_sample_size=5,
     ),
+    limits=ScientificLimits(),
+    allowed_actions=("CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1"),
 )
-
-
-@dataclass(frozen=True)
-class GeneUniverseSpec:
-    """A declared indexed slice, not a genome-wide or inferred universe."""
-
-    limit: int = 1000
-    offset: int = 0
-    biotype: str = "protein_coding"
-    order: str = "GENE_ID_ASC"
-
-    def __post_init__(self) -> None:
-        count(self.limit, "gene limit")
-        count(self.offset, "gene offset")
-        require(1 <= self.limit <= 1000 and self.offset == 0, "unsupported gene slice")
-        require(self.biotype == "protein_coding" and self.order == "GENE_ID_ASC", "unsupported universe policy")
-
-
-@dataclass(frozen=True)
-class MutationLaneSpec:
-    enabled: bool = True
-    method_version: str = "1"
-
-    def __post_init__(self) -> None:
-        require(type(self.enabled) is bool, "mutation enabled must be bool")
-        require(self.method_version == "1", "unsupported mutation method")
-
-
-@dataclass(frozen=True)
-class ExpressionLaneSpec:
-    enabled: bool = False
-    independent_arm: bool = False
-    independent_gene_limit: int = 100
-    summary_method_version: str = "1"
-
-    def __post_init__(self) -> None:
-        require(type(self.enabled) is bool and type(self.independent_arm) is bool, "invalid expression switch")
-        require(self.enabled or not self.independent_arm, "disabled lane cannot acquire an independent arm")
-        count(self.independent_gene_limit, "expression gene limit")
-        require(self.independent_gene_limit == 100, "independent arm is exactly a bounded 100-gene slice")
-        require(self.summary_method_version == "1", "unsupported summary version")
-
-
-@dataclass(frozen=True)
-class CnvLaneSpec:
-    enabled: bool = False
-    scope: str = "MUTATION_SURVIVORS"
-
-    def __post_init__(self) -> None:
-        require(type(self.enabled) is bool, "CNV enabled must be bool")
-        require(self.scope == "MUTATION_SURVIVORS", "unsupported CNV scope")
-
-
-@dataclass(frozen=True)
-class ScientificLimits:
-    max_cohort_cases: int = 1000
-    max_survivors: int = 10
-    max_promotions: int = 3
-    max_revisions: int = 2
-
-    def __post_init__(self) -> None:
-        for value, ceiling in ((self.max_cohort_cases, 1000), (self.max_survivors, 10),
-                               (self.max_promotions, 3), (self.max_revisions, 2)):
-            count(value, "scientific limit")
-            require(1 <= value <= ceiling, "scientific limit outside supported bounds")
-        require(self.max_promotions <= self.max_survivors, "promotion limit exceeds survivors")
-
-
-@dataclass(frozen=True)
-class ResearchSpecV2:
-    """Composition contract only; Stage 1 does not register a production profile."""
-
-    spec_id: str
-    intent: str
-    cohort: CohortSpec
-    universe: GeneUniverseSpec
-    mutation: MutationLaneSpec
-    expression: ExpressionLaneSpec
-    cnv: CnvLaneSpec
-    limits: ScientificLimits
-    allowed_actions: tuple[str, ...]
-    reduction_policy: str = "mutation-count-desc-gene-id-v1"
-    wide_policy: str = "wide-policy-v2"
-    deep_policy: str = "deep-policy-v2"
-    output_version: int = 3
-
-    def __post_init__(self) -> None:
-        text(self.spec_id, "spec_id")
-        text(self.intent, "research intent")
-        require(isinstance(self.cohort, CohortSpec) and isinstance(self.universe, GeneUniverseSpec)
-                and isinstance(self.limits, ScientificLimits), "invalid research composition")
-        require(isinstance(self.mutation, MutationLaneSpec) and isinstance(self.expression, ExpressionLaneSpec)
-                and isinstance(self.cnv, CnvLaneSpec), "invalid lane specification")
-        strings(self.allowed_actions, "allowed actions")
-        require(set(self.allowed_actions) <= {"CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1"},
-                "action requires a registered implementation")
-        require(self.wide_policy == "wide-policy-v2" and self.deep_policy == "deep-policy-v2",
-                "new policy semantics require a versioned task")
-        require(self.reduction_policy == "mutation-count-desc-gene-id-v1", "unsupported reduction policy")
-        require(type(self.output_version) is int and self.output_version == 3, "unsupported output version")
-        require(not self.cnv.enabled or self.mutation.enabled, "survivor CNV requires mutation lane")
-        require(self.limits.max_survivors <= self.universe.limit, "survivors exceed universe")
-
-    def as_dict(self) -> dict[str, Any]:
-        # JSON is a boundary representation, never the internal composition.
-        return {"schema_version": 2, "kind": "RESEARCH_SPEC", **asdict(self)}
-
-
-def research_spec_v2_from_dict(value: object) -> ResearchSpecV2:
-    """Strict composition boundary. Never interpret a legacy spec as version 2."""
-    d = obj(value, "schema_version kind spec_id intent cohort universe mutation expression cnv limits allowed_actions reduction_policy wide_policy deep_policy output_version")
-    require(integer(d["schema_version"]) == 2 and d["kind"] == "RESEARCH_SPEC", "unsupported research spec version/kind")
-    c = obj(d["cohort"], "cohort_id domain project_id")
-    u = obj(d["universe"], "limit offset biotype order")
-    m = obj(d["mutation"], "enabled method_version")
-    e = obj(d["expression"], "enabled independent_arm independent_gene_limit summary_method_version")
-    n = obj(d["cnv"], "enabled scope")
-    limits = obj(d["limits"], "max_cohort_cases max_survivors max_promotions max_revisions")
-    return ResearchSpecV2(
-        string(d["spec_id"]), string(d["intent"]),
-        CohortSpec(string(c["cohort_id"]), string(c["domain"]), string(c["project_id"])),
-        GeneUniverseSpec(integer(u["limit"]), integer(u["offset"]), string(u["biotype"]), string(u["order"])),
-        MutationLaneSpec(boolean(m["enabled"]), string(m["method_version"])),
-        ExpressionLaneSpec(boolean(e["enabled"]), boolean(e["independent_arm"]), integer(e["independent_gene_limit"]), string(e["summary_method_version"])),
-        CnvLaneSpec(boolean(n["enabled"]), string(n["scope"])),
-        ScientificLimits(integer(limits["max_cohort_cases"]), integer(limits["max_survivors"]),
-                         integer(limits["max_promotions"]), integer(limits["max_revisions"])),
-        string_tuple(d["allowed_actions"]), string(d["reduction_policy"]), string(d["wide_policy"]), string(d["deep_policy"]), integer(d["output_version"]),
-    )

@@ -16,7 +16,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from functools import partial
+from typing import Any, cast
 
 from cancerjev.jev.service import JevService
 from cancerjev.research.deep import (
@@ -87,7 +88,8 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
                                 stage: StageRunner,
                                 jev_service: JevService | None = None, requested_action_id: str | None = None,
                                 authorize_iteration: bool = False, hypotheses_requested: bool = False,
-                                llm_generator: HypothesisGenerator | None = None) -> CandidateInvestigation:
+                                llm_generator: HypothesisGenerator | None = None,
+                                mode: str = "LIVE") -> CandidateInvestigation:
     """Run the bounded arc for one explicitly selected candidate."""
     plan = stage("DEEP_ANALYSIS", lambda: plan_deep_slice(
         run_id=run_id, candidate=candidate, repository=repository, artifacts=artifacts,
@@ -115,10 +117,11 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
     dispatches = 0
     final_move: str | None = None
     stop_reason = "NOT_STOPPED"
-    current = result
+    current: FollowUpResult = result
     while True:
-        judgement = stage("JEV_DEEP", lambda run=current: judge_evidence_revision(
-            run_id=run_id, candidate=plan.candidate, result=run, jev_service=jev_service, emit=emit,
+        judgement: dict[str, Any] = stage("JEV_DEEP", partial(
+            judge_evidence_revision, run_id=run_id, candidate=plan.candidate, result=current,
+            jev_service=jev_service, emit=emit,
         )) if jev_service is not None else {"deep_evaluation_id": None, "deep_error_code": "JEV_DISABLED",
                                             "next_move": None}
         steps.append(_step_summary(current, judgement))
@@ -128,10 +131,10 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
             break
         decisions.append(decision)
         final_move = decision["move"]
-        dispatch = stage("FOLLOWUP", lambda run=current, recorded=decision: dispatch_recorded_move(
-            run_id=run_id, candidate=plan.candidate, result=run, decision=recorded,
-            repository=repository, emit=emit, publish_json=publish_json, read_artifact=read_artifact,
-            authorized=authorize_iteration,
+        dispatch = stage("FOLLOWUP", partial(
+            dispatch_recorded_move, run_id=run_id, candidate=plan.candidate, result=current,
+            decision=decision, repository=repository, emit=emit, publish_json=publish_json,
+            read_artifact=read_artifact, authorized=authorize_iteration,
         ))
         steps[-1]["dispatch"] = dispatch.summary()
         if not dispatch.dispatched:
@@ -141,7 +144,8 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
         if dispatches >= FOLLOWUP_LIMIT:
             stop_reason = "MAX_STEPS_REACHED"
             break
-        current = dispatch.result
+        # dispatch_recorded_move returns its FollowUpResult whenever dispatched is True.
+        current = cast(FollowUpResult, dispatch.result)
     if final_move == "COMPLETE":
         status = "COMPLETED"
     elif final_move == "FOLLOW_UP":
@@ -154,10 +158,10 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
     generate_hypotheses_now = final_move == "GENERATE_HYPOTHESES" or hypotheses_requested
     if generate_hypotheses_now and authorize_iteration and jev_service is not None \
             and current.revision is not None:
-        revision_eligibilities = eligible_actions(current.revision, "EVIDENCE_STATE")
+        revision = current.revision
+        revision_eligibilities = eligible_actions(revision.revision, "EVIDENCE_STATE")
         hypotheses = stage("HYPOTHESIS_GENERATION", lambda: run_hypothesis_stage(
-            run_id=run_id, candidate=candidate, revision=current.revision.boundary_representation(),
-            evidence_hash=current.evidence_hash,
+            run_id=run_id, candidate=candidate, revision=revision,
             eligible_action_ids=[item.action_id for item in revision_eligibilities if item.eligible],
             repository=repository, jev_service=jev_service, emit=emit, publish_json=publish_json,
             llm_generator=llm_generator,
@@ -171,7 +175,7 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
     if current.revision is not None:
         dossier = stage("DOSSIER", lambda: run_dossier_stage(
             run_id=run_id, candidate=candidate, repository=repository, artifacts=artifacts,
-            state=None, decisions=decisions, publish_json=publish_json, emit=emit,
+            decisions=decisions, publish_json=publish_json, emit=emit, mode=mode,
         ))
         if dossier.get("status") == "UNAVAILABLE":
             status, stop_reason = "ABSTAINED", "DOSSIER_UNAVAILABLE"

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Protocol
 
-from cancerjev.domain.events import canonical_json
+from cancerjev.domain.measurements import Acquisition, OperationalSource, ScientificSource, digest
 from cancerjev.gdc.endpoints import (
     GDCRequest,
     cases_request,
@@ -56,7 +55,7 @@ class LiveRunError(Exception):
 class CohortAcquisition:
     cases: tuple[CaseRecord, ...]
     frame_hash: str
-    sources: tuple[dict[str, Any], ...]
+    sources: tuple[OperationalSource, ...]
     warnings: tuple[str, ...]
 
 
@@ -68,7 +67,7 @@ class ExpressionAcquisition:
     workflows: tuple[str, ...]
     strategies: tuple[str, ...]
     provider_summary_unavailable_reason: str | None
-    sources: tuple[dict[str, Any], ...]
+    sources: tuple[OperationalSource, ...]
     warnings: tuple[str, ...]
 
 
@@ -76,7 +75,7 @@ class ExpressionAcquisition:
 class MutationAcquisition:
     counts: GeneCaseCounts
     coverage: ProjectCoverage
-    sources: tuple[dict[str, Any], ...]
+    sources: tuple[OperationalSource, ...]
     warnings: tuple[str, ...]
 
 
@@ -87,30 +86,41 @@ def response_meta(response: GDCResponse, release: str | None) -> ResponseMeta:
         retrieved_at=response.retrieved_at, source_release=release, completeness=response.completeness,
     )
 
-def response_source(response: GDCResponse, *, locator: str, release: str | None) -> dict[str, Any]:
-    """Scientific provenance for one response, linked to its GDC attempt.
 
-    ``normalized_request_hash`` is the logical request; ``request_id`` and
-    ``attempt_no`` identify the current cache/network attempt that supplied the
-    bytes; the artifact id and response hash identify the retained response; and
-    ``json_pointer_or_table_locator`` is the scientific locator inside it.
-    Operational fields stay out of scientific identity.
+def _acquisition_of(response: GDCResponse) -> Acquisition:
+    try:
+        return Acquisition(response.completeness)
+    except ValueError as exc:
+        raise LiveRunError(
+            "UNKNOWN_RESPONSE_COMPLETENESS",
+            f"{response.endpoint}: completeness {response.completeness!r} is not a known acquisition state",
+        ) from exc
+
+
+def response_operational_source(response: GDCResponse, *, release: str | None) -> OperationalSource:
+    """Typed provenance for one response, linked to its GDC attempt.
+
+    The scientific source carries the logical request, response hash, parser
+    version and acquisition state; the operational source carries the attempt,
+    artifact id and timestamps. Operational fields stay out of scientific identity.
     """
-    return {
-        "request_id": response.request_id,
-        "attempt_no": response.attempt_no,
-        "from_cache": response.from_cache,
-        "response_artifact_id": response.artifact.artifact_id,
-        "response_sha256": response.body_sha256,
-        "endpoint": response.endpoint,
-        "normalized_request_hash": response.request_hash,
-        "retrieved_at": response.retrieved_at,
-        "source_release": release,
-        "release_status": "KNOWN" if release else "UNVERIFIED",
-        "parser_version": PARSER_VERSION,
-        "json_pointer_or_table_locator": locator,
-        "completeness": response.completeness,
-    }
+    return OperationalSource(
+        source=ScientificSource(
+            endpoint=response.endpoint,
+            request_hash=response.request_hash,
+            response_hash=response.body_sha256,
+            parser_version=PARSER_VERSION,
+            release=release or "UNVERIFIED_RELEASE",
+            acquisition=_acquisition_of(response),
+        ),
+        attempt_id=f"{response.request_id or response.artifact.artifact_id}:{response.attempt_no}",
+        artifact_id=response.artifact.artifact_id,
+        retrieved_at=response.retrieved_at,
+        bytes_read=len(response.body),
+        latency_ms=response.latency_ms,
+        http_status=response.http_status,
+        cache_hit=response.from_cache,
+    )
 
 def _sum_if_complete(values: list[int | None]) -> int | None:
     return sum(value for value in values if value is not None) if all(value is not None for value in values) else None
@@ -121,10 +131,10 @@ def acquire_mutation_counts(transport: AcquisitionTransport, gene_ids: list[str]
     """Existing indexed count contracts, independent of candidate selection policy."""
     response = transport.request(gene_case_counts_request(gene_ids))
     counts = parse_gene_case_counts(response.body, response_meta(response, release))
-    count_source = response_source(response, locator="/analysis/top_cases_counts_by_genes", release=release)
+    count_source = response_operational_source(response, release=release)
     response = transport.request(mutated_cases_count_request())
     coverage = parse_mutated_cases_count(response.body, response_meta(response, release))
-    coverage_source = response_source(response, locator="/analysis/mutated_cases_count_by_project", release=release)
+    coverage_source = response_operational_source(response, release=release)
     return MutationAcquisition(counts, coverage, (count_source, coverage_source),
                                tuple(counts.warnings + coverage.warnings))
 
@@ -234,7 +244,7 @@ def _merge_expression_values(
 
 def acquire_cohort(transport: AcquisitionTransport, project: ProjectRecord,
                    acquisition: AcquisitionSpec, release: str | None) -> CohortAcquisition:
-    sources: list[dict[str, Any]] = []
+    sources: list[OperationalSource] = []
     warnings: list[str] = []
     cases: list[CaseRecord] = []
     seen_case_ids: set[str] = set()
@@ -295,10 +305,7 @@ def acquire_cohort(transport: AcquisitionTransport, project: ProjectRecord,
                 )
             seen_case_ids.add(case.case_id)
             cases.append(case)
-        sources.append(response_source(
-            cases_response, locator=f"/cases[{project.project_id}]/page/{page_number}",
-            release=release,
-        ))
+        sources.append(response_operational_source(cases_response, release=release))
         warnings += page.warnings
         offset += page.count
         page_number += 1
@@ -309,22 +316,21 @@ def acquire_cohort(transport: AcquisitionTransport, project: ProjectRecord,
         )
     cases = sorted(cases, key=lambda case: case.case_id)
     case_ids = [case.case_id for case in cases]
-    frame_hash = hashlib.sha256(canonical_json(sorted(case_ids))).hexdigest()
+    frame_hash = digest(sorted(case_ids))
     return CohortAcquisition(tuple(cases), frame_hash, tuple(sources), tuple(warnings))
 
 
 def acquire_expression(transport: AcquisitionTransport, project: ProjectRecord,
                        acquisition: AcquisitionSpec, release: str | None,
                        cohort: CohortAcquisition, gene_ids: list[str]) -> ExpressionAcquisition:
-    sources: list[dict[str, Any]] = []
+    sources: list[OperationalSource] = []
     warnings: list[str] = []
     case_ids = [case.case_id for case in cohort.cases]
     files_response = transport.request(
         files_expression_request(project.project_id, acquisition.expression_file_sample_size)
     )
     provenance = parse_files_provenance(files_response.body, response_meta(files_response, release))
-    sources.append(response_source(files_response, locator=f"/files[{project.project_id}]",
-                                release=release))
+    sources.append(response_operational_source(files_response, release=release))
     warnings += provenance.warnings
     if provenance.non_open_records:
         raise LiveRunError("CONTROLLED_RECORD_RETURNED",
@@ -338,7 +344,7 @@ def acquire_expression(transport: AcquisitionTransport, project: ProjectRecord,
                    for index in range(0, len(case_ids), acquisition.case_batch_size)]
         availability_parts: list[tuple[list[str], ExpressionAvailability]] = []
         value_parts: list[tuple[list[str], ExpressionValues | None]] = []
-        for batch_number, batch_case_ids in enumerate(batches, start=1):
+        for batch_case_ids in batches:
             availability_response = transport.request(
                 expression_availability_request(batch_case_ids, gene_ids)
             )
@@ -347,11 +353,7 @@ def acquire_expression(transport: AcquisitionTransport, project: ProjectRecord,
                 expected_cases=batch_case_ids, expected_genes=gene_ids,
             )
             availability_parts.append((batch_case_ids, batch_availability))
-            sources.append(response_source(
-                availability_response,
-                locator=f"/gene_expression/availability[{project.project_id}]/batch/{batch_number}",
-                release=release,
-            ))
+            sources.append(response_operational_source(availability_response, release=release))
             warnings += batch_availability.warnings
             cases_with_values = [
                 case_id for case_id in batch_case_ids
@@ -364,11 +366,7 @@ def acquire_expression(transport: AcquisitionTransport, project: ProjectRecord,
                     expected_cases=batch_case_ids, expected_genes=gene_ids,
                 )
                 value_parts.append((batch_case_ids, batch_values))
-                sources.append(response_source(
-                    values_response,
-                    locator=f"/gene_expression/values[{project.project_id}]/batch/{batch_number}",
-                    release=release,
-                ))
+                sources.append(response_operational_source(values_response, release=release))
                 warnings += batch_values.warnings
             else:
                 value_parts.append((batch_case_ids, None))
@@ -380,11 +378,7 @@ def acquire_expression(transport: AcquisitionTransport, project: ProjectRecord,
                 selection_response.body, response_meta(selection_response, release),
                 expected_genes=gene_ids,
             )
-            sources.append(response_source(
-                selection_response,
-                locator=f"/gene_expression/gene_selection[{project.project_id}]",
-                release=release,
-            ))
+            sources.append(response_operational_source(selection_response, release=release))
             warnings += provider.warnings
         elif len(batches) > 1:
             provider_summary_unavailable_reason = "BATCHED_PROVIDER_SUMMARY_NOT_COHORT_WIDE"
@@ -406,11 +400,11 @@ def acquire_expression(transport: AcquisitionTransport, project: ProjectRecord,
 def acquire_project_frame(transport: AcquisitionTransport, project: ProjectRecord,
                           acquisition: AcquisitionSpec, release: str | None,
                           gene_ids: list[str], discovery_hits: dict[str, DiscoveryHit],
-                          ) -> tuple[ProjectFrame, list[dict[str, Any]], list[str]]:
+                          ) -> tuple[ProjectFrame, tuple[OperationalSource, ...], list[str]]:
     cohort = acquire_cohort(transport, project, acquisition, release)
     expression = acquire_expression(transport, project, acquisition, release, cohort, gene_ids)
     frame = ProjectFrame(project.project_id, project, list(cohort.cases), cohort.frame_hash,
                          expression.availability, expression.provider, expression.values,
                          list(expression.workflows), list(expression.strategies), discovery_hits,
                          expression.provider_summary_unavailable_reason)
-    return frame, list(cohort.sources + expression.sources), list(cohort.warnings + expression.warnings)
+    return frame, tuple(cohort.sources + expression.sources), list(cohort.warnings + expression.warnings)

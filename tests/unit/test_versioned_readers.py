@@ -1,147 +1,325 @@
-"""Historical preservation and strict scientific boundary failures."""
+"""Schema-4 reader boundary and typed availability. No legacy reader fallthrough.
+
+An absent provider bucket, cell or column is never silently an observed zero: the
+readers accept only the current schema and the typed objects keep unavailability
+explicit through a round trip.
+"""
 
 import json
-from copy import deepcopy
 from dataclasses import replace
 
 import pytest
 
-from cancerjev.domain.codecs import read_evidence, read_state
-from cancerjev.domain.events import canonical_json
-from cancerjev.domain.identity import (
-    content_hash,
-    evidence_state_identity_payload,
-    statistical_state_identity_payload,
+from cancerjev.domain.codecs import (
+    evidence_identity,
+    read_evidence,
+    read_state,
+    state_identity,
+    write_evidence,
+    write_state,
 )
-from cancerjev.domain.legacy_codecs import LegacyArtifact, _metric
-from cancerjev.domain.measurements import ContractError
-from cancerjev.research.fixtures import evidence, statistical_states
-from tests.integration.test_deep_slice import _dispatched_slice
-from tests.science.test_methods import _build, _frame
+from cancerjev.domain.events import canonical_json
+from cancerjev.domain.evidence import (
+    EvidenceProvenance,
+    EvidenceState,
+    ResearchPuzzle,
+    SourceStateBinding,
+)
+from cancerjev.domain.measurements import (
+    Acquisition,
+    ContractError,
+    MissingGroup,
+    ObservedCount,
+    OperationalSource,
+    PopulationFrame,
+    PopulationUnit,
+    ScientificSource,
+    UnavailableMeasurement,
+    UnavailableStatus,
+    Unit,
+    canonical_bytes,
+    digest,
+)
+from cancerjev.domain.scientific import ExpressionSummaryResult, Lane, UnavailableLane
+from cancerjev.gdc.parsers import (
+    CaseRecord,
+    DiscoveryHit,
+    ExpressionAvailability,
+    ExpressionValues,
+    GeneCaseCounts,
+    GeneRecord,
+    ProjectCoverage,
+    ProjectRecord,
+    ProviderGene,
+    ProviderSelection,
+)
+from cancerjev.research.specs import LUAD_RESEARCH_V1
+from cancerjev.science.methods import ProjectFrame, compute_statistical_state
+
+GENE = GeneRecord(gene_id="ENSG00000141510", symbol="TP53", name="tumor protein p53",
+                  biotype="protein_coding", is_cancer_gene_census=True)
+GENE_ID = GENE.gene_id
+RELEASE = "Data Release 46.0"
+FRAME = PopulationFrame("TCGA-LUAD", "TCGA-LUAD", PopulationUnit.CASE, ("a", "b"), ("a", "b"),
+                        "declared synthetic frame")
+SOURCE_SET = (
+    OperationalSource(
+        ScientificSource("/analysis/top_cases_counts_by_genes", "b" * 64, "a" * 64, "gdc-parser-v1",
+                         RELEASE, Acquisition.COMPLETE),
+        "attempt-1", "artifact-1", "2026-09-25T00:00:00Z", 100, 5, 200, False),
+    OperationalSource(
+        ScientificSource("/analysis/mutated_cases_count_by_project", "b" * 64, "d" * 64, "gdc-parser-v1",
+                         RELEASE, Acquisition.COMPLETE),
+        "attempt-2", "artifact-2", "2026-09-25T00:00:00Z", 100, 5, 200, False),
+    OperationalSource(
+        ScientificSource("/gene_expression/values", "b" * 64, "e" * 64, "gdc-parser-v1",
+                         RELEASE, Acquisition.COMPLETE),
+        "attempt-3", "artifact-3", "2026-09-25T00:00:00Z", 100, 5, 200, False),
+)
 
 
-@pytest.mark.parametrize("index", range(12))
-def test_every_fixture_v1_remains_original_bytes_and_identity(index):
-    state = statistical_states("fixture", lambda name: name)[index]
-    state["state_hash"] = content_hash(statistical_state_identity_payload(state))
-    raw = json.dumps(state, indent=2).encode()
-    result = read_state(raw, expected_hash=state["state_hash"])
-    assert isinstance(result, LegacyArtifact)
-    assert result.schema_version == 1 and result.original_bytes == raw
-    assert result.boundary_representation() == state
-    presentation = result.boundary_representation()
-    presentation["entity"]["gene_id"] = "CHANGED"
-    assert result.boundary_representation() == state
-    for followup in (False, True):
-        revision = evidence("fixture", "candidate", state, lambda name: name, followup=followup)
-        content = canonical_json(revision)
-        parsed = read_evidence(content, expected_hash=content_hash(evidence_state_identity_payload(revision)))
-        assert parsed.original_bytes == content and parsed.schema_version == 1
+def scope_meta():
+    spec = LUAD_RESEARCH_V1
+    return {
+        "gdc_release": RELEASE,
+        "cohort": spec.cohort.cohort_id,
+        "project_id": spec.cohort.project_id,
+        "spec_id": spec.spec_id,
+        "domain": spec.cohort.domain,
+        "cohort_selection_rule": spec.cohort_selection_rule(),
+        "gene_selection_rule": spec.gene_selection_rule(),
+        "examined_case_frame": "ALL_CASES_PAGINATED",
+        "research_spec": {"acquisition": {
+            "case_page_size": spec.acquisition.case_page_size,
+            "case_batch_size": spec.acquisition.case_batch_size,
+            "max_cohort_cases": spec.acquisition.max_cohort_cases,
+            "discovery_gene_limit": spec.acquisition.discovery_gene_limit,
+            "count_gene_limit": spec.acquisition.count_gene_limit,
+            "candidate_gene_limit": spec.acquisition.candidate_gene_limit,
+            "expression_file_sample_size": spec.acquisition.expression_file_sample_size,
+        }},
+    }
 
 
-@pytest.mark.parametrize("expression", [False, True])
-def test_live_v2_retains_legacy_units_statuses_and_identity(expression):
-    frame = _frame("TCGA-LUAD")
-    if not expression:
-        frame = replace(frame, expression_values=None, provider_selection=None)
-    state = _build([frame])
-    result = read_state(canonical_json(state), expected_hash=state["state_hash"])
-    assert isinstance(result, LegacyArtifact)
-    assert result.schema_version == 2
-    assert result.boundary_representation() == state
-    assert any(m.availability == "NOT_APPLICABLE" for m in result.metrics)
-    assert any(m.unit == "cases" for m in result.metrics)
-    if not expression:
-        assert result.boundary_representation()["expression"]["project_results"][0]["availability"] == "NOT_ACQUIRED"
-        assert any(m.availability == "NOT_OBSERVED" and m.reason == "VALUES_NOT_ACQUIRED" for m in result.metrics)
+def discovery_meta():
+    return {
+        "selected_gene_ids": (GENE_ID,),
+        "examined_genes_hash": digest([GENE_ID]),
+        "examined_genes_n": 3,
+        "rank_in_lane": 1,
+        "observed_in_project_count": 1,
+        "ranking_rule": "provider top-mutated ranking for the single examined cohort",
+        "examined_genes_ref": "selection-artifact-1",
+    }
 
 
-def test_missing_availability_is_unavailable_and_false_zero_artifacts_still_fail():
-    # Stage 3 fixes the recorded Stage 1 composition failure, not the parser guard.
-    state = _build([_frame("TCGA-LUAD", expression=False)])
-    measurement = state["expression"]["coverage"]["cases_with_expression"]
-    assert measurement["availability"] == "NOT_OBSERVED"
-    assert measurement["value"] is None
-    assert read_state(canonical_json(state)).scientific_hash == state["state_hash"]
-    measurement["value"] = 0
-    state["state_hash"] = content_hash(statistical_state_identity_payload(state))
-    with pytest.raises(ContractError, match="unavailable metric has a value"):
-        read_state(canonical_json(state))
+def frame(project_id="TCGA-LUAD", *, cases=6, drop_columns=0, missing_cells=0, expression=True,
+          missing_gene=False):
+    case_records = [CaseRecord(case_id=f"{project_id}-case-{index:02d}", submitter_id=f"S-{index}",
+                               project_id=project_id, sample_types=["Primary Tumor"])
+                    for index in range(cases)]
+    if expression:
+        returned = case_records[: cases - drop_columns]
+        coverage = ExpressionAvailability(
+            cases={case.case_id: True for case in case_records},
+            genes={GENE_ID: not missing_gene}, with_count=len(returned), without_count=0,
+            missing_cases=[case.case_id for case in case_records[cases - drop_columns:]],
+            missing_genes=[GENE_ID] if missing_gene else [], warnings=[])
+        values = ExpressionValues(
+            values={} if missing_gene else {GENE_ID: {
+                case.case_id: (float(index + 1) if index >= missing_cells else None)
+                for index, case in enumerate(returned)}},
+            missing_case_ids=[case.case_id for case in case_records[cases - drop_columns:]],
+            missing_gene_ids=[GENE_ID] if missing_gene else [], nonfinite_values=0, warnings=[])
+        provider = ProviderSelection(
+            genes={} if missing_gene else {
+                GENE_ID: ProviderGene(gene_id=GENE_ID, symbol="TP53", median=2.5, stddev=0.3)},
+            missing_genes=[GENE_ID] if missing_gene else [], warnings=[])
+    else:
+        coverage = values = provider = None
+    hits = {GENE_ID: DiscoveryHit(gene_id=GENE_ID, symbol="TP53", rank=1, score=99.0)}
+    return ProjectFrame(
+        project_id=project_id,
+        project_record=ProjectRecord(project_id=project_id, name=project_id, program_name="TCGA",
+                                     primary_site=["Lung"], disease_type=["Adenocarcinoma"],
+                                     case_count=cases, file_count=cases * 5,
+                                     data_categories=["Transcriptome Profiling"]),
+        cases=case_records, frame_hash="f" * 64, expression_coverage=coverage,
+        provider_selection=provider, expression_values=values, workflows=["STAR - Counts"],
+        strategies=["RNA-Seq"], discovery_hits=hits)
 
 
-def test_legacy_reader_cannot_retain_a_mutable_input_buffer():
-    data = bytearray(canonical_json(_build([_frame("TCGA-LUAD")])))
+def build_state(*, frames=None, counts=None, coverage=None):
+    frames = frames or [frame()]
+    counts = counts if counts is not None else {f.project_id: {GENE_ID: 2} for f in frames}
+    coverage = coverage if coverage is not None else {f.project_id: len(f.cases) for f in frames}
+    return compute_statistical_state(
+        gene=GENE, frames=frames,
+        counts=GeneCaseCounts(projects=counts, hits_total=10, complete=True, partial_reasons=[],
+                              warnings=[]),
+        coverage=ProjectCoverage(case_with_ssm=coverage, complete=True, partial_reasons=[],
+                                 warnings=[]),
+        sources=SOURCE_SET, warnings=[], scope_meta=scope_meta(),
+        discovery_meta=discovery_meta())
+
+
+def minimal_evidence(state):
+    accepted = state_identity(state)
+    return EvidenceState(
+        entity=state.entity, accepted_state_hash=accepted,
+        source_state=SourceStateBinding("state-1", accepted, "artifact-1", "c" * 64),
+        parent_evidence_hash=None, revision_index=0, action=None,
+        puzzle=ResearchPuzzle("STATISTICAL_STATE_BASELINE", "What is supported?",
+                              "The baseline is accepted evidence, not a judgment.", ()),
+        checks=(), baseline_observations=(), project_evidence=(), missing_evidence=(),
+        quality=state.quality, warnings=(),
+        provenance=EvidenceProvenance(state.entity.release, state.sources, state.methods,
+                                      state.environment_hash, "2",
+                                      state.tested_context.examined_genes_hash, ()))
+
+
+# ------------------------------------------------------- schema-4 strictness
+
+
+@pytest.mark.parametrize("reader", [read_state, read_evidence])
+@pytest.mark.parametrize("schema", [1, 2, 3, 5, 99, None, True, "4", 4.0, -1])
+def test_every_other_schema_version_fails_closed(reader, schema):
+    with pytest.raises(ContractError) as error:
+        reader(canonical_bytes({"schema_version": schema}))
+    assert error.value.code == "UNSUPPORTED_SCHEMA_VERSION"
+
+
+def test_swapped_artifact_kind_fails_closed():
+    state = build_state()
+    payload = json.loads(write_state(state))
+    payload["kind"] = "EVIDENCE_STATE"
+    with pytest.raises(ContractError) as error:
+        read_state(canonical_json(payload))
+    assert error.value.code == "UNSUPPORTED_SCHEMA_VERSION"
+    payload = json.loads(write_evidence(minimal_evidence(state)))
+    payload["kind"] = "STATISTICAL_STATE"
+    with pytest.raises(ContractError) as error:
+        read_evidence(canonical_json(payload))
+    assert error.value.code == "UNSUPPORTED_SCHEMA_VERSION"
+
+
+def test_corrupted_stored_identity_fails_closed():
+    state = build_state()
+    payload = json.loads(write_state(state))
+    payload["state_hash"] = "0" * 64
+    with pytest.raises(ContractError):
+        read_state(canonical_json(payload))
+    evidence = minimal_evidence(state)
+    payload = json.loads(write_evidence(evidence))
+    payload["evidence_hash"] = "0" * 64
+    with pytest.raises(ContractError):
+        read_evidence(canonical_json(payload))
+
+
+def test_tampered_measurement_with_stale_identity_fails_closed():
+    state = build_state()
+    payload = json.loads(write_state(state))
+    payload["projects"][0]["mutation"]["affected_cases"]["value"] = 3
+    with pytest.raises(ContractError):
+        read_state(canonical_json(payload))
+    evidence = minimal_evidence(state)
+    payload = json.loads(write_evidence(evidence))
+    payload["warnings"] = ["tampered after writing"]
+    with pytest.raises(ContractError):
+        read_evidence(canonical_json(payload), expected_hash=evidence_identity(evidence))
+
+
+def test_readers_require_immutable_bytes():
+    state = build_state()
     with pytest.raises(ContractError, match="immutable bytes"):
+        read_state(bytearray(write_state(state)))
+    with pytest.raises(ContractError, match="immutable bytes"):
+        read_evidence(bytearray(write_evidence(minimal_evidence(state))))
+
+
+@pytest.mark.parametrize("data", [b"{", b"[]", b"\xff", b'{"schema_version":4,"x":NaN}',
+                                  b'{"schema_version":4,"x":1e9999}',
+                                  b'{"schema_version":4,"schema_version":4}'])
+def test_invalid_documents_fail_closed(data):
+    with pytest.raises(ContractError):
         read_state(data)
 
 
-def test_legacy_count_parser_preserves_integer_precision():
-    value = 2 ** 53 + 1
-    parsed = _metric({"availability": "OBSERVED", "value": value, "unit": "count"}, "count")
-    assert parsed.value == value
+# --------------------------------------------------------- typed availability
 
 
-@pytest.mark.parametrize("mutation", ["null", "bool", "unavailable_value", "count", "schema", "population", "deleted", "identity"])
-def test_malformed_historical_state_rejected_without_rewriting(mutation):
-    state = _build([_frame("TCGA-LUAD")])
-    metric = state["mutation"]["project_results"][0]["affected_case_count"]
-    if mutation == "null":
-        metric["value"] = None
-    elif mutation == "bool":
-        metric["value"] = True
-    elif mutation == "unavailable_value":
-        metric["availability"] = "NOT_OBSERVED"
-    elif mutation == "count":
-        metric["value"] = -1
-    elif mutation == "schema":
-        state["schema_version"] = 1
-    elif mutation == "population":
-        state["populations"][0]["examined_n"] = 61
-    elif mutation == "deleted":
-        del state["expression"]["project_results"][0]["coverage"]
-    else:
-        state["state_hash"] = "0" * 64
-    raw = canonical_json(state)
+def test_absent_provider_bucket_is_unavailable_never_zero():
+    state = build_state(frames=[frame("P1"), frame("P2")], counts={"P1": {GENE_ID: 2}})
+    affected = state.projects[1].mutation.affected_cases
+    assert isinstance(affected, UnavailableMeasurement)
+    assert affected.status == UnavailableStatus.NOT_OBSERVED
+    assert affected.reason == "PROJECT_NOT_IN_AGGREGATION"
+    assert not isinstance(affected, ObservedCount)
+    roundtrip = read_state(write_state(state), expected_hash=state_identity(state))
+    assert roundtrip == state
+    assert isinstance(roundtrip.projects[1].mutation.affected_cases, UnavailableMeasurement)
+
+
+def test_explicit_observed_zero_round_trips_and_is_not_absence():
+    state = build_state(counts={"TCGA-LUAD": {GENE_ID: 0}})
+    affected = state.projects[0].mutation.affected_cases
+    assert isinstance(affected, ObservedCount)
+    assert affected.value == 0
+    assert state.cross_project.affected_case_total.value == 0
+    assert read_state(write_state(state), expected_hash=state_identity(state)) == state
+
+
+def test_missing_gene_maps_to_an_unavailable_expression_lane():
+    state = build_state(frames=[frame(missing_gene=True)])
+    expression = state.projects[0].expression
+    assert isinstance(expression, UnavailableLane)
+    assert expression.lane == Lane.EXPRESSION and expression.enabled
+    assert expression.status == UnavailableStatus.NOT_OBSERVED
+    assert expression.reason == "GENE_ABSENT_FROM_VALUES"
+    assert read_state(write_state(state)) == state
+
+
+def test_missing_value_cells_are_counted_and_never_imputed_as_zero():
+    state = build_state(frames=[frame(missing_cells=2)])
+    expression = state.projects[0].expression
+    assert isinstance(expression, ExpressionSummaryResult)
+    coverage = expression.coverage
+    assert coverage.missing == (MissingGroup("VALUE_MISSING_OR_NONFINITE",
+                                             ("TCGA-LUAD-case-00", "TCGA-LUAD-case-01")),)
+    assert len(coverage.valid_ids) == 4
+    assert tuple(value.case_id for value in expression.values) == coverage.valid_ids
+    assert read_state(write_state(state)) == state
+
+
+def test_unreturned_case_column_is_missing_not_zero():
+    state = build_state(frames=[frame(drop_columns=1)])
+    coverage = state.projects[0].expression.coverage
+    assert coverage.missing == (MissingGroup("CASE_COLUMN_NOT_RETURNED", ("TCGA-LUAD-case-05",)),)
+    assert coverage.valid_ids == coverage.returned_ids
+    assert "TCGA-LUAD-case-05" not in coverage.returned_ids
+
+
+def test_unacquired_lane_stays_explicitly_unavailable():
+    state = build_state(frames=[frame(expression=False)])
+    expression = state.projects[0].expression
+    assert isinstance(expression, UnavailableLane)
+    assert expression.status == UnavailableStatus.NOT_ACQUIRED
+    assert read_state(write_state(state)) == state
+
+
+def test_partial_acquisition_cannot_claim_an_observed_zero():
+    state = build_state(counts={"TCGA-LUAD": {GENE_ID: 0}})
+    affected = state.projects[0].mutation.affected_cases
+    partial = replace(affected.sources[0], acquisition=Acquisition.PARTIAL)
     with pytest.raises(ContractError):
-        read_state(raw)
-    assert raw == canonical_json(state)
+        replace(affected, value=0, sources=(partial,))
+    failed = replace(affected.sources[0], acquisition=Acquisition.FAILED)
+    with pytest.raises(ContractError):
+        replace(affected, value=1, sources=(failed,))
 
 
-@pytest.mark.parametrize("identity_function", [statistical_state_identity_payload, evidence_state_identity_payload])
-@pytest.mark.parametrize("schema", [None, True, "2", 2.0, 3, 99])
-def test_legacy_identity_does_not_fall_through_unknown_versions(identity_function, schema):
-    with pytest.raises(ContractError, match="UNSUPPORTED_SCHEMA_VERSION"):
-        identity_function({"schema_version": schema})
-
-
-def test_v2_deep_replay_readers_and_existing_event_order(runtime, monkeypatch):
-    run_id, _, repository = _dispatched_slice(runtime, monkeypatch, authorized=True)
-    artifacts = runtime[2]
-    for row in repository.list_table("statistical_states", run_id):
-        raw = artifacts.read(repository.artifact(row["artifact_id"])["relative_path"])
-        parsed = read_state(raw, expected_hash=row["state_hash"])
-        assert parsed.original_bytes == raw
-    candidate = next(c for c in repository.list_table("candidates", run_id) if c["entity"]["gene_symbol"] == "GENEONE")
-    revisions = repository.evidence_revisions(candidate["candidate_id"])
-    assert [r["iteration"] for r in revisions] == [0, 1, 2]
-    for row in revisions:
-        raw = artifacts.read(repository.artifact(row["artifact_id"])["relative_path"])
-        result = read_evidence(raw, expected_hash=row["evidence_hash"])
-        assert result.original_bytes == raw and result.schema_version == 2
-        assert result.check_summary.total == (0, 5, 4)[row["iteration"]]
-        if row["iteration"]:
-            broken = deepcopy(result.boundary_representation())
-            broken["quality_and_fragility"]["checks_verified"] -= 1
-            with pytest.raises(ContractError):
-                read_evidence(canonical_json(broken))
-    event_types = [e["type"] for e in repository.events(run_id, 0, 700)["items"]]
-    selected = [e for e in event_types if e in {
-        "EVIDENCE_STATE_CREATED", "FOLLOWUP_STARTED", "FOLLOWUP_COMPLETED", "NEXT_MOVE_SELECTED",
-        "NEXT_MOVE_DISPATCHED", "JEV_DEEP_EVIDENCE_JUDGED", "DOSSIER_CREATED", "RUN_COMPLETED",
-    }]
-    assert selected == [
-        "EVIDENCE_STATE_CREATED", "FOLLOWUP_STARTED", "EVIDENCE_STATE_CREATED", "FOLLOWUP_COMPLETED",
-        "JEV_DEEP_EVIDENCE_JUDGED", "NEXT_MOVE_SELECTED", "FOLLOWUP_STARTED", "EVIDENCE_STATE_CREATED",
-        "FOLLOWUP_COMPLETED", "NEXT_MOVE_DISPATCHED", "JEV_DEEP_EVIDENCE_JUDGED", "NEXT_MOVE_SELECTED",
-        "NEXT_MOVE_DISPATCHED", "DOSSIER_CREATED", "RUN_COMPLETED",
-    ]
+def test_unavailable_measurement_is_typed_without_a_zero_value():
+    result = UnavailableMeasurement(UnavailableStatus.NOT_OBSERVED, "bucket absent", Unit.CASES,
+                                    FRAME)
+    assert not hasattr(result, "value")
+    assert result.status == UnavailableStatus.NOT_OBSERVED

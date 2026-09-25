@@ -62,6 +62,19 @@ class Unit(StrEnum):
     OBSERVATIONS = "OBSERVATIONS"
     UQFPKM = "UQFPKM"
     LOG2_UQFPKM_PLUS_ONE = "LOG2_UQFPKM_PLUS_ONE"
+    SHARE = "SHARE"
+
+
+class MetricAvailability(StrEnum):
+    """Explicit availability of a descriptive value; absent is never zero."""
+
+    OBSERVED = "OBSERVED"
+    NOT_OBSERVED = "NOT_OBSERVED"
+    NOT_ACQUIRED = "NOT_ACQUIRED"
+    PARTIAL = "PARTIAL"
+    UNAVAILABLE = "UNAVAILABLE"
+    INSUFFICIENT = "INSUFFICIENT"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
 
 
 class PopulationUnit(StrEnum):
@@ -142,6 +155,13 @@ class PopulationFrame:
 
 @dataclass(frozen=True)
 class TestedUniverse:
+    """The actual bounded universe a run examined, in its declared order.
+
+    ``GENE_ID_ASC`` describes an indexed ascending slice; ``PROVIDER_RANK_ASC``
+    describes the bounded provider-ranked selection a discovery lane returned.
+    The order string is part of the declared tested context, never inferred.
+    """
+
     ordered_ids: tuple[str, ...]
     source: str
     release: str
@@ -158,8 +178,9 @@ class TestedUniverse:
             EntityRef(value, None, self.release)
         for name in ("source", "release", "filter_description", "order"):
             text(getattr(self, name), name)
-        require(self.order == "GENE_ID_ASC", "unsupported universe ordering")
-        require(tuple(sorted(self.ordered_ids)) == self.ordered_ids, "universe is not ordered")
+        require(self.order in {"GENE_ID_ASC", "PROVIDER_RANK_ASC"}, "unsupported universe ordering")
+        if self.order == "GENE_ID_ASC":
+            require(tuple(sorted(self.ordered_ids)) == self.ordered_ids, "universe is not ordered")
         count(self.offset, "offset")
         count(self.requested_limit, "requested_limit")
         count(self.reported_total, "reported_total")
@@ -210,6 +231,20 @@ class MethodRef:
         require(isinstance(self.unit, Unit), "invalid method unit")
         require(isinstance(self.parameters, MethodParameters), "parameters must have a declared contract")
         strings(self.limitations, "limitations")
+
+
+@dataclass(frozen=True)
+class MethodIdentityRef:
+    """Recorded method identity; parameters hash binds the exact admitted parameters."""
+
+    method_id: str
+    version: str
+    parameters_hash: str
+
+    def __post_init__(self) -> None:
+        text(self.method_id, "method_id")
+        text(self.version, "method version")
+        sha256(self.parameters_hash, "method parameters hash")
 
 
 @dataclass(frozen=True)
@@ -370,6 +405,49 @@ class UnavailableMeasurement:
         text(self.reason, "unavailable reason")
         require(isinstance(self.expected_unit, Unit), "invalid expected unit")
         require(isinstance(self.population, PopulationFrame), "invalid unavailable population")
+
+
+@dataclass(frozen=True)
+class MetricRecord:
+    """A descriptive value with explicit availability; a missing value is never zero.
+
+    This is the typed form of the retained per-field availability records (unit,
+    availability, reason). It is a presentation/evidence restatement, not a
+    substitute for the lane measurement contracts.
+    """
+
+    value: int | float | None
+    unit: str | None
+    availability: MetricAvailability
+    reason_code: str | None = None
+
+    def __post_init__(self) -> None:
+        require(isinstance(self.availability, MetricAvailability), "invalid metric availability")
+        if self.availability == MetricAvailability.OBSERVED:
+            metric_value = self.value
+            if metric_value is None:
+                raise ContractError("observed metric must be numeric, not bool/null")
+            finite(metric_value, "observed metric")
+            require(self.unit is not None and bool(self.unit.strip()), "observed metric requires a unit")
+            if self.unit in {"cases", "count"}:
+                require(type(self.value) is int and self.value >= 0, "count metric must be a nonnegative integer")
+        else:
+            require(self.value is None, "unavailable metric cannot carry a value")
+            if self.reason_code is not None:
+                text(self.reason_code, "metric reason code")
+
+    @property
+    def observed(self) -> bool:
+        return self.availability == MetricAvailability.OBSERVED
+
+    @classmethod
+    def observed_value(cls, value: int | float, unit: str) -> MetricRecord:
+        return cls(value, unit, MetricAvailability.OBSERVED)
+
+    @classmethod
+    def unavailable(cls, unit: str | None, availability: MetricAvailability,
+                    reason_code: str | None = None) -> MetricRecord:
+        return cls(None, unit, availability, reason_code)
 
 
 type CountMeasurement = ObservedCount | UnavailableMeasurement

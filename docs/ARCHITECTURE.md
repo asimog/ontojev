@@ -1,44 +1,54 @@
 # OntoJev architecture
 
-Reviewed 2026-09-24 at `42b05d40e6edafec0b8613e7dd154a60a46e4fee`.
-That architecture review changed documentation only. Stage 1 (2026-09-25) subsequently added
-standalone frozen scientific contracts/versioned codecs and a strict ResearchSpecV2 composition
-reader. These are not wired into the production flow below; current writers, questions, policies,
-transport and database schema are unchanged. [Implementation status](IMPLEMENTATION_STATUS.md) owns current
-facts; [the roadmap](DISCOVERY_ROADMAP.md) separates implementation gates from design.
+Current architecture after the Stage 3 hard cutover (2026-09-25). Facts are labeled
+IMPLEMENTED, PLANNED or UNVERIFIED. [Implementation status](IMPLEMENTATION_STATUS.md) owns
+current facts; [the roadmap](DISCOVERY_ROADMAP.md) separates the next Stage 4 work from design.
 
-Stage 2 connects validated legacy readers to Deep acceptance and scientific API reads. Dossier
-assembly accepts only verified authoritative revisions/hypotheses/evaluations; corruption refuses
-publication. Cache hydration validates its original artifacts and contracts before policy can use
-answers. Stage 3 separates common cohort/mutation/expression acquisition and typed lane computation;
-immutable v2-compatible state summaries feed Wide, while typed checks/revisions and validated answers
-feed Deep policy. This is not a new v3 runtime; see [Stage 3](STAGE_03_HANDOFF.md).
-
-## IMPLEMENTED: bounded deterministic-first research
-
-The fixture slice remains offline. Production has one frozen LUAD_RESEARCH_V1, never LUAD/LUSC pooling.
+## IMPLEMENTED: one typed runtime chain
 
 ```text
-ResearchSpec + operational Settings
- -> bounded anonymous GDC -> strict provider parsers -> typed deterministic lane results
- -> typed summary + StatisticalState v2 artifact -> projection v2 -> Wide wide-v3
- -> Python wide-policy-v2 -> zero to three admitted candidates
- -> explicit operator selection (also supports a successfully wide-evaluated state)
- -> accept E0 -> integrity action -> E1 -> Deep deep-v1
- -> Python deep-policy-v2 -> separately authorized dispatch -> at most E2
- -> optional bounded hypotheses -> hypothesis-v2 review -> dossier JSON/Markdown
+GDC open-access API
+  -> strict provider parsers
+  -> typed acquisition / lane records
+  -> typed StatisticalState (schema 4)
+  -> jev-state-projection-v3 -> wide-v3 questions -> validated typed answers
+  -> Python admission (wide-policy-v2) -> Candidate
+  -> immutable typed EvidenceState E0 (schema 4)
+  -> registered deterministic action -> immutable revision E1/E2
+  -> jev-evidence-projection-v2 -> deep-v1 questions
+  -> Python next-move policy (deep-policy-v2)
+  -> optional bounded hypothesis generation
+       (deterministic template by default; injected OpenRouter adapter on an
+        explicitly authorized CLI path)
+  -> jev-hypothesis-projection-v2 -> hypothesis-v2 critique
+  -> dossier (schema 2), JSON + derived Markdown
 ```
 
-next_move() records COMPLETE, FOLLOW_UP, GENERATE_HYPOTHESES or ABSTAIN, never executes.
-run_candidate_investigation() owns dispatch and stopping. Repeated --deep-candidate selections share
-three promotion slots. --deep-followup authorizes iteration; --deep-hypotheses requests hypotheses
-without rewriting the recorded move. Early ineligible/failed paths can end without a dossier.
-
-The two registered actions are CHECK_EVIDENCE_INTEGRITY_V1 and CHECK_REVISION_FAITHFULNESS_V1.
-They check held evidence, acquire nothing and measure no new biology. Hypotheses default to templates.
-The CLI can inject the implemented llm/openrouter.py adapter when configured with a model and
-OPENROUTER_API_KEY. Model use is conditional, not absent. Generated text is never evidence.
-No paid model was called in this architecture pass.
+- `research/live.py` runs the shared `LiveOrchestrator`; `research/orchestrator.py` runs the
+  fixture demonstration through the same orchestrator with `FixtureTransport` and
+  `FixtureJevAdapter` (mode `FIXTURE`). There is no second execution engine and no
+  independently implemented Phase-1 engine.
+- Domain records are unsuffixed (`StatisticalState`, `EvidenceState`, `ResearchSpec`,
+  `Candidate`, `HypothesisDraft`). Operational ids and hashes travel in `StateRecord` /
+  `EvidenceRecord` / `HypothesisRecord` envelopes and never enter scientific identity.
+- Serialized schemas are StatisticalState 4, EvidenceState 4 and ResearchSpec 3; SQLite is
+  schema 5. Older/unknown schemas are rejected fail-closed. There are no migrations and no
+  legacy readers; historical databases and artifacts are retained, not rewritten.
+- Question sets remain `wide-v3`, `deep-v1` and `hypothesis-v2`; they were not redefined by the
+  cutover. Projections are `jev-state-projection-v3`, `jev-evidence-projection-v2` and
+  `jev-hypothesis-projection-v2`.
+- `next_move()` records exactly one typed move (`COMPLETE`, `FOLLOW_UP`, `GENERATE_HYPOTHESES`
+  or `ABSTAIN`) and never dispatches it. `run_candidate_investigation()` owns dispatch and
+  stopping; repeated `--deep-candidate` selections share the three promotion slots;
+  `--deep-followup` authorizes iteration and `--deep-hypotheses` requests bounded generation
+  without rewriting the recorded move. Early ineligible/failed paths can end without a dossier.
+- The two registered actions are `CHECK_EVIDENCE_INTEGRITY_V1` and
+  `CHECK_REVISION_FAITHFULNESS_V1` (registry version 2). They check held evidence, acquire
+  nothing, call no model and measure no new biology. `FOLLOWUP_LIMIT = 3` and
+  `EVIDENCE_ITERATION_LIMIT = 2` bound one candidate arc.
+- Hypotheses default to deterministic templates. The CLI can inject the implemented
+  `cancerjev/llm/openrouter.py` adapter when a model and `OPENROUTER_API_KEY` are configured;
+  model use is conditional on that authorization, and generated text is never evidence.
 
 ## Ownership
 
@@ -46,17 +56,47 @@ No paid model was called in this architecture pass.
 |---|---|---|
 | Domain | Scientific records, units, populations, identity and invariants | HTTP, SDK, SQLite, side effects |
 | GDC | Fixed endpoints, bounded transport, provider schemas/parsing | LUAD biology, ranking, Jev routing |
-| Science | Deterministic measurements, descriptors and method contracts | Provider calls or generated facts |
+| Science | Deterministic measurements, descriptors, registered action implementations and method contracts | Provider calls or generated facts |
 | Jev | Projections, questions, validated answers, adapter and evaluation coordination | Measurements, authorization or loop execution |
 | Research | Intent, composition, acquisition scheduling, selection, dispatch, budgets and stopping | Raw SQL or provider envelope interpretation |
 | Storage | SQL, artifact publication/read integrity, persisted representation | Scientific meaning or silent schema inference |
 | API/renderer | Read and present committed records | Research initiation or independent status authority |
 
-These are responsibilities, not new services. Domain ownership is incomplete today: scientific
-states remain dictionary builders in science/research. [Domain models](DOMAIN_MODELS.md) specifies
-the transition.
+These are responsibilities, not new services. JSON remains a boundary representation for
+events, storage, API/dossier presentation, generated-text requests and artifact provenance
+envelopes; scientific consumers exchange typed records.
 
-## PLANNED: smallest discovery composition
+## Operation ownership and admission
+
+| Operation | Owner | Admission |
+|---|---|---|
+| IDs, counts, joins, missingness, integrity, eligibility | Deterministic Python | Current |
+| Distribution summaries and within-gene descriptive extremes | Deterministic classical statistics | Current where a declared method exists; new descriptors need a declared reference frame |
+| Recurrence rates, association tests, survival effects | Classical statistics plus scientific review | Deferred: denominator/matching/censoring gaps |
+| Contextual uncertainty relevance, investigation value, overclaim critique | Jev, composed by Python policy | Current retained versions; new uses experimental |
+| Hypothesis wording | Template or injected generative model | Current, bounded, validated, never observed facts |
+| Calibration labels, interpretation, replication, wet-lab validation | Human/external validation | Required for scientific/value claims |
+
+Jev cannot establish assay comparability, repair missing sample IDs, select a denominator, turn
+absence into zero, authorize acquisition or confer causality.
+
+## IMPLEMENTED responsibility map
+
+- `research/acquisition.py` owns concrete common-frame and lane acquisition;
+  `research/live.py` retains research selection and sequencing.
+- `science/mutation.py` and `science/expression.py` own lane computations;
+  `science/methods.py` composes typed results and canonical serialization.
+- `research/deep.py` uses verified hydration and immutable typed check revisions;
+  `research/investigation.py` owns the bounded arc.
+- `science/actions.py` holds the fixed registry; concrete implementations stay in that module
+  until a split has a concrete invariant to follow.
+- `jev/service.py` retains validated typed answers through the shared evaluation lifecycle and
+  policy consumers; versions remain unchanged.
+- Large provider parsers and the single `Repository` remain coherent; length alone warrants no
+  split. No ORM, DI framework, planner/director, workflow graph, microservices, distributed
+  queue, arbitrary GDC query DSL or universal science framework is approved.
+
+## PLANNED: smallest discovery composition (Stage 4)
 
 ```text
 bounded enumerated gene universe -> cheap indexed evidence -> deterministic reduction
@@ -65,48 +105,26 @@ bounded enumerated gene universe -> cheap indexed evidence -> deterministic redu
  -> bounded Python admission -> existing investigation loop
 ```
 
-Begin with a 1,000-gene protein-coding index slice ordered by Ensembl ID and recorded offset/release,
-not provider mutation rank. This is a reproducible subset of the 19,843 indexed protein-coding genes
-observed in the campaign, not genome-wide coverage or an unbiased random sample. Mutation-conditioned
-reduction cannot claim expression-only/CNV-only sensitivity. An independent expression arm requires
-explicit enablement, workload reservation and evaluation. See [GDC strategy](GDC_STRATEGY.md).
+Stage 4 begins with a 1,000-gene protein-coding index slice ordered by Ensembl ID and recorded
+offset/release, not provider mutation rank. This is a reproducible subset of the 19,843 indexed
+protein-coding genes observed in the campaign, not genome-wide coverage or an unbiased random
+sample. Mutation-conditioned reduction cannot claim expression-only/CNV-only sensitivity. An
+independent expression arm requires explicit enablement, workload reservation and evaluation.
+Proposed lane and action contracts are design, not current runtime behavior; see
+[GDC strategy](GDC_STRATEGY.md) and [the roadmap](DISCOVERY_ROADMAP.md).
 
-Use ordinary functions: acquire common cohort frame, acquire one lane, compute typed lane result,
-compose state, serialize. Add a module for a concrete independent lane, not a plugin system.
-Do not extend ProjectFrame with more lane-specific optionals or the monolithic state builder with
-more endpoint branches. Preserve transport, one Repository, event transactions and investigation loop.
+`ResearchSpec` composes intent, cohort, universe selection, enabled lane specifications,
+versioned policies, allowed actions, scientific work limits and the output contract. `Settings`
+retains paths, credentials, timeouts, providers/models and operational caps. Effective limits
+are the stricter scientific and operational/absolute limits. Endpoint/field allowlists and
+absolute safety caps stay in code.
 
-ResearchSpec composes intent, cohort, universe selection, enabled lane specs, versioned policies,
-allowed actions, scientific work limits and output contract. Settings retains paths, credentials,
-timeouts, providers/models and operational caps. Effective limits are the stricter scientific and
-operational/absolute limits. Endpoint/field allowlists and absolute safety caps stay in code.
+## Verification status (2026-09-25)
 
-## Operation ownership and admission
-
-| Operation | Owner | Admission |
-|---|---|---|
-| IDs, counts, joins, missingness, integrity, eligibility | Deterministic Python | Current or typed transition |
-| Distribution summaries and within-gene descriptive extremes | Deterministic classical statistics | Proposed with declared reference frame |
-| Recurrence rates, association tests, survival effects | Classical statistics plus scientific review | Deferred: denominator/matching/censoring gaps |
-| Contextual uncertainty relevance, eligible-action value, overclaim critique | Jev, composed by Python policy | Current retained; new uses experimental |
-| Hypothesis wording | Template or injected generative model | Current, bounded, never observed facts |
-| Calibration labels, interpretation, replication, wet-lab validation | Human/external validation | Required for scientific/value claims |
-
-Jev cannot establish assay comparability, repair missing sample IDs, select a denominator, turn absence
-into zero, authorize acquisition or confer causality.
-
-## Responsibility stabilization
-
-- IMPLEMENTED Stage 3: science/mutation.py and expression.py own existing lane computations;
-  science/methods.py composes typed results and the compatible v2 serialization.
-- IMPLEMENTED Stage 3: research/acquisition.py owns concrete common-frame and lane acquisition;
-  research/live.py retains research selection and sequencing.
-- IMPLEMENTED Stages 2–3: research/deep.py uses verified hydration and immutable typed check revisions;
-  existing v2 artifact assembly/inspection remains a serialization boundary, not a v3 cutover.
-- science/actions.py: retain fixed registry; separate concrete implementations only when necessary.
-- IMPLEMENTED Stage 3: jev/service.py retains typed validated answers through its existing shared
-  evaluation lifecycle and policy consumers; versions remain unchanged.
-
-Large provider parsers and the single Repository are coherent; length alone warrants no split.
-No ORM, DI framework, planner/director, workflow graph, microservices, distributed queue, arbitrary GDC
-query DSL or universal science framework is approved. The historical cancerjev/ namespace stays.
+- IMPLEMENTED and offline-verified: 652 offline pytest tests pass; `ruff check cancerjev apps
+  tests` is clean; scoped strict `mypy` (the explicit file list in `pyproject.toml`) passes.
+- UNVERIFIED in this environment: browser acceptance at `tests/browser/` (own Playwright
+  config/package; CI runs it as a separate job); live GDC, TypeSafe/Jev and OpenRouter
+  acceptance (no credentials).
+- No scientific readiness, incremental Jev value or production use is claimed. See
+  [testing](TESTING.md) and [implementation status](IMPLEMENTATION_STATUS.md).

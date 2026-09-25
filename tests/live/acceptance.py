@@ -12,20 +12,19 @@ from uuid import uuid4
 
 from cancerjev.config import Settings
 from cancerjev.domain.events import canonical_json
-from cancerjev.domain.hypotheses import DRAFT_FIELDS, read_hypothesis_draft
 from cancerjev.jev.contracts import read_answers
 from cancerjev.jev.projection import build_hypothesis_projection, projection_hash
 from cancerjev.jev.questions import (
     HYPOTHESIS_QUESTION_SET_VERSION,
     HYPOTHESIS_QUESTIONS,
-    question_set_hash,
+    hypothesis_question_set_hash,
 )
 from cancerjev.jev.typesafe_adapter import JevProviderError, TypeSafeAdapter
 from cancerjev.llm.openrouter import OpenRouterGenerator
 from cancerjev.research.hypotheses import (
     LLM_HYPOTHESIS_LABEL,
-    MAX_HYPOTHESES,
     generation_request,
+    validate_generated_drafts,
 )
 from cancerjev.science.actions import ACTION_REGISTRY, eligible_actions
 from cancerjev.storage.artifacts import ArtifactStore
@@ -79,26 +78,25 @@ def check_generated_text(
     }
     report_id = str(uuid4())
     try:
-        state = read_candidate_state(repository, artifacts, candidate_id)
-        run = repository.get_run(state.run_id)
+        stored_state = read_candidate_state(repository, artifacts, candidate_id)
+        run = repository.get_run(stored_state.run_id)
         if run is None or run["mode"] != "LIVE":
             raise ValueError("live acceptance requires retained live GDC evidence")
         revisions = read_revision_chain(repository, artifacts, candidate_id)
         if not revisions or revisions[-1].iteration < 1:
             raise ValueError("an accepted action revision is required")
         stored = revisions[-1]
-        revision = stored.artifact.boundary_representation()
-        evidence_hash = repository.get_evidence_state(stored.evidence_state_id)["evidence_hash"]
+        evidence = stored.evidence
         report.update({
-            "source_run_id": state.run_id, "source_state_hash": state.scientific_hash,
-            "source_state_artifact_sha256": state.artifact.sha256,
+            "source_run_id": stored_state.run_id, "source_state_hash": stored_state.state_hash,
+            "source_state_artifact_sha256": stored_state.artifact.sha256,
             "evidence_state_id": stored.evidence_state_id,
             "evidence_artifact_sha256": stored.artifact.sha256,
-            "evidence_hash": evidence_hash,
+            "evidence_hash": stored.record.evidence_hash,
         })
-        actions = [item.action_id for item in eligible_actions(stored.evidence, "EVIDENCE_STATE")
+        actions = [item.action_id for item in eligible_actions(evidence, "EVIDENCE_STATE")
                    if item.eligible]
-        request = generation_request(revision, eligible_action_ids=actions)
+        request = generation_request(evidence, eligible_action_ids=actions)
         report["generation_request"] = request
         llm = generator if generator is not None else OpenRouterGenerator(
             model=settings.llm_model, timeout=settings.llm_timeout_seconds,
@@ -107,26 +105,23 @@ def check_generated_text(
         budget.reserve_llm()
         entries, usage = llm(request)
         report["llm_usage"] = usage
-        if not isinstance(entries, list) or not 1 <= len(entries) <= MAX_HYPOTHESES:
-            raise ValueError("generator response exceeds the hypothesis contract")
-        drafts = tuple(read_hypothesis_draft(entry, allowed_action_ids=frozenset(actions))
-                       for entry in entries)
+        drafts, _ = validate_generated_drafts(
+            entries, eligible_action_ids=actions,
+            generator=str(getattr(llm, "name", "injected-test-generator")),
+            generator_model=settings.llm_model, label=LLM_HYPOTHESIS_LABEL,
+        )
         for draft in drafts:
-            hypothesis = {**asdict(draft), "label": LLM_HYPOTHESIS_LABEL,
-                          "generator": getattr(llm, "name", "injected-test-generator"),
-                          "generator_model": settings.llm_model}
             projection = build_hypothesis_projection(
-                hypothesis, revision,
+                draft, stored.record,
                 eligible_actions=[ACTION_REGISTRY[action].payload() for action in actions],
-                evidence_hash=evidence_hash,
             )
             result = judge.evaluate(projection, HYPOTHESIS_QUESTIONS)
             answers = read_answers(HYPOTHESIS_QUESTIONS, result.answers)
             report["reviews"].append({
-                "hypothesis": {key: hypothesis[key] for key in DRAFT_FIELDS},
+                "hypothesis": asdict(draft),
                 "projection": projection, "projection_hash": projection_hash(projection),
                 "question_set_version": HYPOTHESIS_QUESTION_SET_VERSION,
-                "question_hash": question_set_hash(HYPOTHESIS_QUESTIONS, HYPOTHESIS_QUESTION_SET_VERSION),
+                "question_hash": hypothesis_question_set_hash(),
                 "requested_model": result.requested_model, "resolved_model": result.resolved_model,
                 "answers": answers.boundary_representation(), "usage": result.usage,
                 "latency_ms": result.latency_ms, "request_id": result.request_id,

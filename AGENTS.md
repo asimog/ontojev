@@ -4,37 +4,49 @@ OntoJev is a bounded, deterministic-first research tool for public open-access G
 evidence with narrow Jev semantic judgment. Work from `main`. The user's current
 instructions override implementation steps embedded in reference documents.
 
-## Current state (do not rebuild)
+## Current architecture (do not rebuild)
 
-- Phase 1 offline synthetic fixture slice exists (`run --fixture demo`).
-- Phase 2 real open-access GDC evidence and deterministic StatisticalStates exist.
-- Phase 3 single-cohort Wide Jev integration exists: `jev-state-projection-v2`, `wide-v3`,
-  deterministic admission/abstention, baseline/Jev rankings, and bounded candidate promotion.
-- The Phase 4 first deterministic slice exists: `CHECK_EVIDENCE_INTEGRITY_V1` on a promoted
-  candidate's accepted StatisticalState E0 produces an immutable EvidenceState revision E1. It is
-  reachable only through an explicit operator selection (`run --live --jev --deep-candidate
-  <gene|gene:SYM|state:ID|slot:N>`); wide admission never dispatches a follow-up, and the slice
-  acquires no evidence and calls no model.
-- One Deep Jev fan-out over E1 exists (`deep-v1`, `jev-evidence-projection-v1`), followed by the
-  deterministic Python next-move policy (`deep-policy-v2`) which records exactly one typed move
-  (`COMPLETE`/`FOLLOW_UP`/`GENERATE_HYPOTHESES`/`ABSTAIN`) and never dispatches it. Jev judges; Python decides.
-- A recorded `FOLLOW_UP` can be dispatched as at most one further immutable revision (`E2`), and only
-  when the operator authorizes it explicitly (`run --live --jev --deep-candidate <sel> --deep-followup`);
-  a second registered action (`CHECK_REVISION_FAITHFULNESS_V1`, input kind `EVIDENCE_STATE`) makes that
-  dispatch possible, the existing follow-up/revision caps still apply, and the new revision is judged
-  again by the same deep fan-out.
-- A bounded investigation arc exists: after E1 the same run may dispatch further distinct eligible
-  revision actions while an operator authorization is in force and the follow-up/revision caps allow,
-  judging each new revision exactly once. Generated hypotheses follow the same rule: deterministic by
-  default, bounded, labelled, judged under `hypothesis-v2`, and produced by an injected generator only;
-  the CLI can inject the implemented OpenRouter adapter on an explicitly authorized path. Successful
-  investigation arcs with a current revision produce a live dossier; early failures may not.
-- Still absent: Phase 7 offline autoresearch (needs a labelled historical corpus and human review), a
-  systematic multi-lane discovery architecture, and any incremental-value result.
-- `LUAD_RESEARCH_V1` (`domain=lung cancer`, `cohort_id=TCGA-LUAD`, `project_id=TCGA-LUAD`)
-  is the only production `ResearchSpec`. TCGA-LUAD and TCGA-LUSC are never pooled.
-- `wide-v2` is retained only for historical evaluations. Do not silently change `wide-v3` semantics;
-  a new question set requires a separate versioned task and validation.
+- One typed runtime chain: GDC open-access API → strict parsers → typed acquisition/lane
+  records → canonical typed `StatisticalState` → deterministic Wide Jev projection
+  (`jev-state-projection-v3`) → validated typed answers → Python admission (`wide-policy-v2`)
+  → `Candidate` → immutable typed `EvidenceState` E0 → registered deterministic action →
+  immutable revision E1/E2 → Deep Jev (`jev-evidence-projection-v2`, question set `deep-v1`)
+  → Python next-move policy (`deep-policy-v2`) → optional bounded hypothesis generation
+  (deterministic template by default; injected OpenRouter adapter on an explicitly authorized
+  path) → Jev hypothesis critique (`jev-hypothesis-projection-v2`, question set `hypothesis-v2`)
+  → dossier (schema 2).
+- Python domain names are unsuffixed: `StatisticalState`, `EvidenceState`, `ResearchSpec`,
+  `Candidate`, `HypothesisDraft`. Operational ids/hashes travel in `StateRecord` /
+  `EvidenceRecord` / `HypothesisRecord` envelopes and never enter scientific identity.
+- Serialized schema versions: StatisticalState 4; EvidenceState 4; ResearchSpec 3; SQLite
+  schema 5. Older/unknown schemas are rejected fail-closed; there are no migrations and no
+  legacy readers.
+- Question sets remain `wide-v3`, `deep-v1` and `hypothesis-v2`. Do not silently change their
+  semantics; a new question set requires a separate versioned task and validation.
+- Registered actions are exactly `CHECK_EVIDENCE_INTEGRITY_V1` (input `STATISTICAL_STATE`) and
+  `CHECK_REVISION_FAITHFULNESS_V1` (input `EVIDENCE_STATE`), registry version 2. They acquire
+  no data, call no model and compute no new biological quantity. `FOLLOWUP_LIMIT = 3` and
+  `EVIDENCE_ITERATION_LIMIT = 2` bound one candidate arc; deep policy records exactly one typed
+  move (`COMPLETE` / `FOLLOW_UP` / `GENERATE_HYPOTHESES` / `ABSTAIN`) and never dispatches it.
+  Dispatch is a separate Python step requiring explicit operator authorization.
+- `run --fixture demo` runs the same shared `LiveOrchestrator` offline with `FixtureTransport`
+  and `FixtureJevAdapter` (mode `FIXTURE`, synthetic notice in the dossier). There is no second
+  execution engine and no independent Phase-1 engine.
+- One canonical `ResearchSpec`, `LUAD_RESEARCH_V1` (`domain=lung cancer`, `cohort_id=TCGA-LUAD`,
+  `project_id=TCGA-LUAD`): single explicit TCGA-LUAD cohort, bounded acquisition, implemented
+  composition (provider-ranked mutation discovery plus local `log2(UQFPKM+1)` expression
+  summary). TCGA-LUAD and TCGA-LUSC are never pooled. Unsupported configurations are rejected
+  or not representable: indexed genome-wide universe, independent expression arm and CNV
+  acquisition are not implemented.
+- Deleted architecture (git history is the archive): `legacy_codecs.py`, dictionary scientific
+  identity payloads, `state_summary.py` / `ComputedStatisticalState` / `StateSummary`,
+  `LegacyArtifact` / `LegacyMetric` / `LegacyPopulation`, `build_statistical_state`,
+  schema-1/2/3 readers, the `DemoOrchestrator` independent engine and fake actions
+  (`DROP_INFLUENTIAL_FIXTURE_POINTS_V1`), `ResearchSpecV2`/lane/universe composition contracts,
+  and the retired handoff/plan/audit documents. Do not reintroduce them.
+- Still absent: offline autoresearch (needs a labelled historical corpus and human review), a
+  systematic multi-lane discovery architecture, and any incremental-value result. Indexed
+  systematic discovery is the next Stage 4 task in [the roadmap](docs/DISCOVERY_ROADMAP.md).
 
 ## Ownership boundaries
 
@@ -63,6 +75,9 @@ instructions override implementation steps embedded in reference documents.
   contain raw SQL or touch `repository.database`. No ORM, DAO hierarchy or second repository.
 - Jev cache reuse requires a pinned/versioned model identity whose provider resolution equals
   it; a mutable model alias is always evaluated and never treated as already resolved.
+- TypeSafe SDK retries are explicitly disabled (`RetryPolicy(max_retries=0)`), so application
+  evaluation counters correspond to at most one HTTP attempt per logical evaluation. A total
+  paid-model spend gate is still absent.
 
 ## Safety and evidence
 
@@ -72,7 +87,8 @@ instructions override implementation steps embedded in reference documents.
   provider authorization header for generated hypothesis text: the credential is environment-only,
   never persisted or logged, and its output is bounded, validated and never evidence. Pinned model
   identity is the policy requirement; current OpenRouter construction checks only non-blank identity,
-  not immutability. Tightening that check is planned, not an implemented guarantee. Any other module adding an authorization header fails the guard test.
+  not immutability. Tightening that check is planned, not an implemented guarantee. Any other module
+  adding an authorization header fails the guard test.
 - Respect the caps in `docs/GDC_BUDGETS.md`. Never enlarge a limit to finish work.
 - Missing is not negative; unavailable mutation evidence is not wild type; a missing
   expression column is not zero. Never hide partial retrieval.
@@ -97,7 +113,8 @@ instructions override implementation steps embedded in reference documents.
 - Generated hypothesis text is never evidence and never writes a measured field. The generator seam
   defaults to deterministic behavior; the CLI may inject `OpenRouterHypothesisGenerator` using its
   environment-only credential. Provider failure or invalid required output is a typed `UNAVAILABLE`
-  outcome. Unknown-field rejection and all nested text bounds are not yet enforced; see the review.
+  outcome. Unknown-field rejection and nested text/list bounds are IMPLEMENTED for hypothesis
+  drafts.
 
 ## Development skills
 
@@ -121,10 +138,10 @@ instructions override implementation steps embedded in reference documents.
 ## Documentation
 
 - `docs/IMPLEMENTATION_STATUS.md` is the factual source of truth. Keep it accurate.
-- `docs/DISCOVERY_ROADMAP.md` indexes the proposed architecture and evidence gates. Proposed lane,
-  typed-state and acquisition-capable action contracts are not current runtime behavior. Historical
-  plans are evidence only, not active implementation instructions. Do not import prior-project
-  architecture into OntoJev.
+- `docs/DISCOVERY_ROADMAP.md` indexes the next Stage 4 discovery work and evidence gates. Proposed
+  lane, typed-state and acquisition-capable action contracts are not current runtime behavior.
+  Historical plans are evidence only, not active implementation instructions. Do not import
+  prior-project architecture into OntoJev.
 - Label claims IMPLEMENTED, PLANNED or UNVERIFIED. Do not publish unverified live claims or
   claim scientific readiness from a demonstration. Changed ranking is not evidence that Jev
   improved a research decision.

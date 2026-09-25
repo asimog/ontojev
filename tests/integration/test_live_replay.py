@@ -1,23 +1,78 @@
+"""Live replay integration: the real typed sweep over provider-shaped synthetic responses.
+
+``ReplayTransport`` publishes real artifacts and returns provider-shaped bodies, so the
+strict parsers, deterministic methods, schema-4 typed states, wide Jev admission and
+bounded promotion exercised here are production code paths. Every scientific assertion
+reads a typed artifact through the validated readers or the presentation API; no legacy
+dictionary shape is assumed.
+"""
+
 from __future__ import annotations
 
+import dataclasses
 import json
+import math
 
 import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
-from cancerjev.domain.events import canonical_json
+from cancerjev.domain.codecs import read_state, state_identity
+from cancerjev.domain.measurements import OperationalSource, ScientificSource
 from cancerjev.gdc.parsers import ResponseMeta, parse_expression_availability
 from cancerjev.jev.service import JevService
 from cancerjev.jev.typesafe_adapter import JevProviderError
 from cancerjev.research.live import LiveOrchestrator, _merge_expression_availability
-from cancerjev.research.specs import LUAD_RESEARCH_V1, AcquisitionSpec, CohortSpec, ResearchSpec
+from cancerjev.research.specs import (
+    LUAD_RESEARCH_V1,
+    AcquisitionSpec,
+    CohortSpec,
+    ResearchSpec,
+    ScientificLimits,
+)
 from cancerjev.research.wide import run_wide_evaluation
-from cancerjev.science.methods import METHODS
+from cancerjev.storage.readers import read_state_record
 from tests.integration.replay import GENES, ReplayTransport, availability_body
 from tests.jev.stub_adapter import StubAdapter
-from tests.jev.test_service import _register_state
-from tests.science.test_methods import _build, _frame
+
+GENE_ONE, GENE_TWO = GENES
+LUAD_CASES = 100
+LUAD_AFFECTED = {GENE_ONE: 20, GENE_TWO: 5}
+LUAD_MEDIAN = {GENE_ONE: math.log2(5.5), GENE_TWO: math.log2(6.5)}
+WIDE_ANSWERS = {
+    "evidence_quality_adequate", "mutation_evidence_coherent", "expression_evidence_coherent",
+    "signal_explained_by_coverage", "unresolved_uncertainty_material",
+    "warrants_deeper_investigation", "dominant_limitation",
+}
+WIDE_PHASE_EVENTS = {
+    "JEV_WIDE_STARTED", "JEV_PROJECTION_CREATED", "JEV_WIDE_STATE_EVALUATED",
+    "JEV_EVALUATION_FAILED", "JEV_WIDE_STATE_CAP_ENFORCED", "WIDE_RANKING_COMPLETED",
+    "CANDIDATE_PROMOTED", "JEV_WIDE_COMPLETED",
+}
+WIDE_EVENT_ORDER = [
+    "JEV_WIDE_STARTED", "JEV_PROJECTION_CREATED", "JEV_WIDE_STATE_EVALUATED",
+    "JEV_PROJECTION_CREATED", "JEV_WIDE_STATE_EVALUATED", "WIDE_RANKING_COMPLETED",
+    "CANDIDATE_PROMOTED", "CANDIDATE_PROMOTED", "JEV_WIDE_COMPLETED",
+]
+
+
+# --------------------------------------------------------------------------- helpers
+
+
+def _test_spec(project_id: str = "TCGA-LUAD", *, page_size: int = 200, batch_size: int = 200,
+               max_cases: int = 600) -> ResearchSpec:
+    return ResearchSpec(
+        spec_id=f"TEST_{project_id}_V1",
+        intent="bounded offline replay of one explicit cohort",
+        cohort=CohortSpec(cohort_id=project_id, domain="test lung cancer", project_id=project_id),
+        acquisition=AcquisitionSpec(
+            case_page_size=page_size, case_batch_size=batch_size, max_cohort_cases=max_cases,
+            discovery_gene_limit=2, count_gene_limit=2, candidate_gene_limit=2,
+            expression_file_sample_size=3,
+        ),
+        limits=ScientificLimits(),
+        allowed_actions=("CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1"),
+    )
 
 
 def _orchestrator(runtime, monkeypatch, *, jev_adapter=None, research_spec=None,
@@ -26,612 +81,727 @@ def _orchestrator(runtime, monkeypatch, *, jev_adapter=None, research_spec=None,
                   llm_generator=None, **replay_options):
     settings, repository, artifacts = runtime
     monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))
-    holder: dict[str, ReplayTransport] = {}
+    holder: dict = {}
 
-    def factory(repo, artifact_store, budget, run_id, emit):
+    def transport_factory(repo, artifact_store, budget, run_id, emit):
         transport = ReplayTransport(artifact_store, run_id, repository=repo, **replay_options)
         holder["transport"] = transport
         return transport
 
-    service = None
+    jev_service = None
     if jev_adapter is not None:
-        service = JevService(settings, repository, artifacts, adapter_factory=lambda: jev_adapter)
-    orchestrator = LiveOrchestrator(settings, repository, artifacts, lambda event: None,
-                                    jev_service=service, transport_factory=factory,
-                                    research_spec=research_spec or LUAD_RESEARCH_V1,
-                                    deep_selection=deep_selection, deep_selections=tuple(deep_selections),
-                                    deep_action_id=deep_action_id,
-                                    deep_followup_authorized=deep_followup_authorized,
-                                    deep_hypotheses_requested=deep_hypotheses_requested,
-                                    llm_generator=llm_generator)
+        jev_service = JevService(settings, repository, artifacts,
+                                 adapter_factory=lambda: jev_adapter)
+    orchestrator = LiveOrchestrator(
+        settings, repository, artifacts, lambda event: None, jev_service=jev_service,
+        transport_factory=transport_factory, research_spec=research_spec or LUAD_RESEARCH_V1,
+        deep_selection=deep_selection, deep_selections=tuple(deep_selections),
+        deep_action_id=deep_action_id, deep_followup_authorized=deep_followup_authorized,
+        deep_hypotheses_requested=deep_hypotheses_requested, llm_generator=llm_generator,
+    )
     return orchestrator, holder, repository
 
 
-def _test_spec(project_id="TCGA-LUAD", *, page_size=200, batch_size=200, max_cases=600):
-    return ResearchSpec(
-        spec_id=f"TEST_{project_id}_V1",
-        cohort=CohortSpec(cohort_id=project_id, domain="test lung cancer", project_id=project_id),
-        acquisition=AcquisitionSpec(
-            case_page_size=page_size, case_batch_size=batch_size, max_cohort_cases=max_cases,
-            discovery_gene_limit=2, count_gene_limit=2, candidate_gene_limit=2,
-            expression_file_sample_size=3,
-        ),
-    )
+def _api_client(runtime, monkeypatch) -> TestClient:
+    settings = runtime[0]
+    monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))
+    monkeypatch.setenv("CANCERJEV_NO_DOTENV", "1")
+    return TestClient(create_app())
 
 
-def test_default_live_research_spec_is_luad(runtime):
-    settings, repository, artifacts = runtime
-    orchestrator = LiveOrchestrator(settings, repository, artifacts)
-    assert orchestrator.research_spec is LUAD_RESEARCH_V1
-    assert orchestrator.research_spec.cohort.project_id == "TCGA-LUAD"
+def _state_row(repository, run_id, gene_id):
+    return next(row for row in repository.list_table("statistical_states", run_id)
+                if row["summary"]["entity"]["gene_id"] == gene_id)
+
+
+def _typed_state(runtime, repository, run_id, gene_id):
+    row = _state_row(repository, run_id, gene_id)
+    return row, read_state_record(repository, runtime[2], row["state_id"])
+
+
+def _events(repository, run_id, limit=800):
+    return repository.events(run_id, 0, limit)["items"]
+
+
+def _wide_phase_events(repository, run_id):
+    return [event["type"] for event in _events(repository, run_id)
+            if event["type"] in WIDE_PHASE_EVENTS]
+
+
+def _source_meta(endpoint: str, index: int) -> ResponseMeta:
+    return ResponseMeta(endpoint=endpoint, method="GET", request_hash=f"request-{index}",
+                        response_sha256=f"response-{index}", artifact_id=f"artifact-{index}",
+                        retrieved_at="2026-01-01T00:00:00+00:00", source_release="TEST-RELEASE",
+                        completeness="COMPLETE")
+
+
+def _live_state_records(runtime, monkeypatch, **replay_options):
+    orchestrator, _, repository = _orchestrator(runtime, monkeypatch, **replay_options)
+    run_id = orchestrator.run()
+    records = [read_state_record(repository, runtime[2], row["state_id"]).record
+               for row in repository.list_table("statistical_states", run_id)]
+    return run_id, repository, records
+
+
+def _wide_summary(repository, artifacts, run_id):
+    rows = repository.list_table("jev_evaluations", run_id)
+    ranking = {}
+    for name in ("baseline_ranking.json", "jev_ranking.json"):
+        artifact = next(item for item in repository.ranking_artifacts(run_id)
+                        if item["relative_path"].endswith(name))
+        payload = json.loads(artifacts.read(artifact["relative_path"]))
+        entries = []
+        for entry in payload["entries"]:
+            dimensions = {key: value for key, value in entry["dimensions"].items()
+                          if key != "cache_source_evaluation_id"}
+            entries.append((entry["rank"], entry["state_hash"], entry["gene_symbol"], dimensions))
+        ranking[name] = entries
+    return {
+        "evaluation_count": len(rows),
+        "evaluated_hashes": sorted(row["vector"]["source_state_hash"] for row in rows),
+        "candidate_count": len(repository.list_table("candidates", run_id)),
+        "candidate_modes": sorted(row["summary"]["policy_version"]
+                                  for row in repository.list_table("candidates", run_id)),
+        "baseline": ranking["baseline_ranking.json"],
+        "jev": ranking["jev_ranking.json"],
+        "admitted": repository.get_run(run_id)["counts"]["candidates_promoted"],
+    }
+
+
+# ------------------------------------------------------------------ scope and identity
+
+
+def test_default_live_research_spec_is_luad(runtime, monkeypatch):
+    orchestrator, _, _ = _orchestrator(runtime, monkeypatch)
+    spec = orchestrator.research_spec
+    assert spec is LUAD_RESEARCH_V1
+    assert spec.cohort.project_id == "TCGA-LUAD"
+    assert spec.cohort.cohort_id == "TCGA-LUAD"
+    assert spec.cohort.domain == "lung cancer"
+    assert spec.allowed_actions == ("CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1")
+    assert spec.limits.max_revisions == 2
 
 
 def test_alternate_research_spec_selects_only_its_project(runtime, monkeypatch):
-    artifacts = runtime[2]
     spec = _test_spec("TCGA-LUSC", page_size=80, batch_size=80, max_cases=100)
-    orchestrator, holder, repository = _orchestrator(runtime, monkeypatch, research_spec=spec)
+    orchestrator, holder, repository = _orchestrator(
+        runtime, monkeypatch, research_spec=spec)
     run_id = orchestrator.run()
     run = repository.get_run(run_id)
     assert run["status"] == "COMPLETED"
     assert run["spec_id"] == spec.spec_id
     assert run["selected_project_ids"] == ["TCGA-LUSC"]
     assert run["project_id"] == "TCGA-LUSC"
-    assert run["acquisition"] == spec.as_dict()["acquisition"]
+    assert run["acquisition"]["case_page_size"] == 80
+
     states = repository.list_table("statistical_states", run_id)
+    assert len(states) == 2
     for row in states:
-        state = json.loads(artifacts.read(repository.artifact(row["artifact_id"])["relative_path"]))
-        assert state["scope"]["projects"] == ["TCGA-LUSC"]
-        assert state["scope"]["research_spec"] == spec.as_dict()
-        assert "TCGA-LUAD" not in state["scope"]["projects"]
-    scientific_requests = [
-        request for request in holder["transport"].requests
-        if request.endpoint.name in {"top_mutated_genes_by_project", "cases", "files"}
-    ]
-    assert scientific_requests
-    assert all("TCGA-LUSC" in str(request.params) for request in scientific_requests)
+        body = json.loads(runtime[2].read(repository.artifact(row["artifact_id"])["relative_path"]))
+        assert body["research"]["projects"] == ["TCGA-LUSC"]
+        assert body["research"]["spec_id"] == spec.spec_id
+    scientific = [request for request in holder["transport"].requests
+                  if request.endpoint.name != "status"]
+    assert scientific
+    project_scoped = {"projects", "top_mutated_genes_by_project", "cases", "files",
+                      "gene_expression_availability", "gene_expression_values"}
+    for request in scientific:
+        rendered = json.dumps(dict(request.params)) + json.dumps(dict(request.body or {})) + request.path
+        assert "TCGA-LUAD" not in rendered, "another cohort is never touched"
+        if request.endpoint.name in project_scoped:
+            assert "TCGA-LUSC" in rendered
 
 
-def test_large_cohort_is_paged_batched_and_merged_deterministically(runtime, monkeypatch):
-    artifacts = runtime[2]
-    spec = _test_spec()
-    replay_options = {"project_case_counts": {"TCGA-LUAD": 520}, "drop_value_columns": 1}
-    first, first_holder, repository = _orchestrator(
-        runtime, monkeypatch, research_spec=spec, **replay_options,
-    )
-    first_run = first.run()
-    second, _, _ = _orchestrator(runtime, monkeypatch, research_spec=spec, **replay_options)
-    second_run = second.run()
-    assert repository.get_run(first_run)["status"] == "COMPLETED"
-    requests = first_holder["transport"].requests
-    case_requests = [request for request in requests if request.endpoint.name == "cases"]
-    assert [dict(request.params)["from"] for request in case_requests] == ["0", "200", "400"]
-    expression_requests = [
-        request for request in requests
-        if request.endpoint.name in {"gene_expression_availability", "gene_expression_values"}
-    ]
-    assert len(expression_requests) == 6
-    assert all(len(request.body["case_ids"]) <= 200 for request in expression_requests)
-    assert not any(request.endpoint.name == "gene_expression_gene_selection" for request in requests)
-
-    first_states = repository.list_table("statistical_states", first_run)
-    second_states = repository.list_table("statistical_states", second_run)
-    assert sorted(row["state_hash"] for row in first_states) == sorted(row["state_hash"] for row in second_states)
-    state = json.loads(artifacts.read(repository.artifact(first_states[0]["artifact_id"])["relative_path"]))
-    expression = state["expression"]["project_results"][0]
-    assert expression["local"]["n_returned"]["value"] == 517
-    assert expression["local"]["n_missing"]["value"] == 3
-    assert expression["coverage"]["examined_cases"]["value"] == 520
-    assert expression["provider"] is None
-    assert expression["provider_unavailable_reason"] == "BATCHED_PROVIDER_SUMMARY_NOT_COHORT_WIDE"
+# ------------------------------------------------------------------- live shaped sweep
 
 
-@pytest.mark.parametrize(
-    ("spec", "replay_options", "reason"),
-    [
-        (_test_spec(max_cases=300), {}, "COHORT_CASE_LIMIT_EXCEEDED"),
-        (_test_spec(), {"duplicate_case_across_pages": True}, "DUPLICATE_CASE_ID"),
-        (_test_spec(), {"inconsistent_case_total_after_first": True}, "CASE_TOTAL_INCONSISTENT"),
-        (_test_spec(), {"inconsistent_case_offset_after_first": True}, "CASE_PAGE_OFFSET_INCONSISTENT"),
-    ],
-)
-def test_invalid_case_pagination_fails_closed(runtime, monkeypatch, spec, replay_options, reason):
-    orchestrator, _, repository = _orchestrator(
-        runtime, monkeypatch, research_spec=spec,
-        project_case_counts={"TCGA-LUAD": 520}, **replay_options,
-    )
-    run_id = orchestrator.run()
-    assert repository.get_run(run_id)["outcome_reason"] == reason
-
-
-def test_live_replay_with_jev_wide_evaluation(runtime, monkeypatch):
-    adapter = StubAdapter()
-    orchestrator, holder, repository = _orchestrator(runtime, monkeypatch, jev_adapter=adapter)
-    run_id = orchestrator.run()
-    run = repository.get_run(run_id)
-    assert run["status"] == "COMPLETED"
-    assert run["counts"]["states_generated"] == 2
-    assert run["counts"]["states_evaluated"] == 2
-    assert run["counts"]["candidates_promoted"] == 2
-    assert run["counts"]["jev_evaluations"] == 2
-    assert run["provider_usage"]["jev_calls"] == 2
-    assert run["provider_usage"]["jev_input_tokens"] == 2400
-    assert run["provider_usage"]["jev_output_tokens"] == 120
-    assert run["provider_usage"]["llm_calls"] == 0
-    assert adapter.calls == 2
-
-    client = TestClient(create_app())
-    projections = client.get(f"/api/runs/{run_id}/projections").json()["items"]
-    assert len(projections) == 2
-    assert all(row["projection_version"] == "jev-state-projection-v2" for row in projections)
-    assert all(row["source_state_hash"] and row["projection_hash"] for row in projections)
-
-    evaluations = client.get(f"/api/runs/{run_id}/evaluations?purpose=WIDE").json()["items"]
-    assert len(evaluations) == 2
-    for row in evaluations:
-        assert row["input_ref_kind"] == "STATISTICAL_STATE"
-        vector = row["vector"]
-        assert vector["error"] is None
-        assert vector["resolved_model"] == "jev-1.13.0"
-        assert vector["cache_source_evaluation_id"] is None
-        assert set(vector["answers"]) == {
-            "evidence_quality_adequate", "mutation_evidence_coherent", "expression_evidence_coherent",
-            "signal_explained_by_coverage", "unresolved_uncertainty_material",
-            "warrants_deeper_investigation", "dominant_limitation",
-        }
-        assert vector["applicability"]["dominant_limitation"]["applicable"] is True
-
-    rankings = client.get(f"/api/runs/{run_id}/rankings").json()
-    assert rankings["baseline"]["policy_version"] == "baseline-wide-v2"
-    assert rankings["jev"]["policy_version"] == "wide-policy-v2"
-    assert len(rankings["baseline"]["entries"]) == 2
-    assert len(rankings["jev"]["entries"]) == 2
-    assert rankings["jev"]["admitted_state_ids"]
-    assert rankings["jev"]["admission"]["decision"] == "ADMIT"
-    assert rankings["baseline"]["admitted_state_ids"] == []
-
-    candidates = client.get(f"/api/runs/{run_id}/candidates").json()["items"]
-    assert len(candidates) == 2
-    assert all(candidate["status"] == "WIDE_EVALUATED" for candidate in candidates)
-    assert all(candidate["summary"]["wide_evaluation_id"] for candidate in candidates)
-
-    events = [event["type"] for event in repository.events(run_id, 0, 500)["items"]]
-    for event_type in ("JEV_PROJECTION_CREATED", "JEV_WIDE_STARTED", "JEV_WIDE_STATE_EVALUATED",
-                       "WIDE_RANKING_COMPLETED", "JEV_WIDE_COMPLETED", "CANDIDATE_PROMOTED"):
-        assert event_type in events
-    ranking_event = next(
-        event for event in repository.events(run_id, 0, 500)["items"]
-        if event["type"] == "WIDE_RANKING_COMPLETED"
-    )
-    assert ranking_event["data"]["admission_decision"] == "ADMIT"
-    assert not any(event_type.startswith("HYPOTHESES") or event_type.startswith("FOLLOWUP") for event_type in events)
-
-
-def test_jev_cache_reuses_judgments_across_runs(runtime, monkeypatch):
-    adapter = StubAdapter()
-    first, _, repository = _orchestrator(runtime, monkeypatch, jev_adapter=adapter)
-    first_run = first.run()
-    second, _, _ = _orchestrator(runtime, monkeypatch, jev_adapter=adapter)
-    second_run = second.run()
-    assert adapter.calls == 2, "the second run must be served entirely from cache"
-    second_usage = repository.get_run(second_run)["provider_usage"]
-    assert second_usage["jev_calls"] == 0
-    evaluations = repository.page_child("jev_evaluations", second_run, 10, None, {"purpose": "WIDE"})["items"]
-    assert len(evaluations) == 2
-    assert all(row["vector"]["cache_source_evaluation_id"] for row in evaluations)
-    assert repository.get_run(first_run)["provider_usage"]["jev_calls"] == 2
-
-
-def test_live_replay_produces_real_states_without_jev(runtime, monkeypatch):
+def test_live_replay_produces_typed_states_without_jev(runtime, monkeypatch):
     orchestrator, holder, repository = _orchestrator(runtime, monkeypatch)
     run_id = orchestrator.run()
     run = repository.get_run(run_id)
     assert run["status"] == "COMPLETED"
     assert run["mode"] == "LIVE"
     assert run["coverage"] == "COMPLETE_FOR_SCOPE"
-    assert run["selected_project_ids"] == ["TCGA-LUAD"], "only the explicit LUAD cohort may be selected"
-    assert "TCGA-LUSC" not in run["selected_project_ids"], "LUAD and LUSC are never pooled"
+    assert run["selected_project_ids"] == ["TCGA-LUAD"]
     assert run["counts"]["states_generated"] == 2
+    assert run["counts"]["states_evaluated"] == 0
+    assert run["counts"]["candidates_promoted"] == 0
     assert run["provider_usage"]["jev_calls"] == 0
     assert run["provider_usage"]["llm_calls"] == 0
 
-    states = repository.list_table("statistical_states", run_id)
-    assert len(states) == 2
-    assert all(row["disposition"] == "GENERATED" for row in states)
-    summaries = {row["summary"]["entity"]["gene_id"]: row["summary"] for row in states}
-    gene_one = summaries[GENES[0]]
-    assert gene_one["affected_case_total"]["value"] == 20
-    assert gene_one["top_project_share"]["availability"] == "NOT_APPLICABLE"
-    assert gene_one["top_project_share"]["value"] is None
-    assert gene_one["projects_with_mutation_observation"] == 1
-    gene_two = summaries[GENES[1]]
-    assert gene_two["affected_case_total"]["value"] == 5
-    assert gene_two["projects_with_mutation_observation"] == 1
+    summaries = {row["summary"]["entity"]["gene_id"]: row["summary"]
+                 for row in repository.list_table("statistical_states", run_id)}
+    assert set(summaries) == set(GENES)
+    for gene_id, summary in summaries.items():
+        assert summary["affected_case_total"]["value"] == LUAD_AFFECTED[gene_id]
+        assert summary["mutation_availability"] == "OBSERVED"
+        assert summary["projects_with_mutation_observation"] == 1
+        assert summary["expression_availability"] == "OBSERVED"
+        assert summary["completeness"] == "COMPLETE"
+        assert summary["top_project_share"]["availability"] == "NOT_APPLICABLE"
+        assert summary["top_project_share"]["reason_code"] == "INSUFFICIENT_OBSERVED_PROJECTS"
 
-    client = TestClient(create_app())
-    listed = client.get(f"/api/runs/{run_id}/states").json()["items"]
-    assert len(listed) == 2
-    state_id = listed[0]["state_id"]
-    detail = client.get(f"/api/states/{state_id}")
-    assert detail.status_code == 200
-    body = detail.json()
-    assert body["schema_version"] == 2
-    assert body["mode"] == "LIVE"
-    assert body["scope"]["domain"] == "lung cancer"
-    assert body["scope"]["cohort"] == "TCGA-LUAD"
-    assert body["scope"]["projects"] == ["TCGA-LUAD"]
-    assert body["scope"]["comparability"]["within_cohort"]["status"] == "UNVERIFIED"
-    assert body["scope"]["comparability"]["cross_project"]["status"] == "NOT_APPLICABLE"
-    assert body["cross_project"]["direction"] == "NOT_EXAMINED"
-    assert body["cross_project"]["comparability_status"] == "NOT_APPLICABLE"
-    assert body["provenance"]["gdc_release"] == "Data Release TEST - 2026-01-01"
-    assert len(body["provenance"]["methods"]) == len(METHODS)
-    assert body["quality"]["duplicate_checks"] == "PASS"
-    assert body["quality"]["acquisition_completeness"] == "COMPLETE"
-    assert body["quality"]["scientific_sufficiency"] in {"PARTIAL", "SUFFICIENT"}
-    rankings = client.get(f"/api/runs/{run_id}/rankings").json()
-    assert rankings == {"baseline": None, "jev": None}
-    projections = client.get(f"/api/runs/{run_id}/projections").json()["items"]
-    assert projections == []
+    assert repository.list_table("candidates", run_id) == []
+    assert repository.list_table("evidence_states", run_id) == []
+    assert repository.list_table("hypotheses", run_id) == []
 
-    events = repository.events(run_id, 0, 500)["items"]
-    types = [event["type"] for event in events]
-    assert "PROJECT_SCOPE_SELECTED" in types
-    assert "STATISTICAL_STATE_CREATED" in types
-    assert not any(event_type.startswith("JEV") for event_type in types), "Phase 2 must not emit Jev events"
-    assert all(event["level"] != "error" for event in events)
+    for gene_id in GENES:
+        row, stored = _typed_state(runtime, repository, run_id, gene_id)
+        assert stored.state_hash == row["state_hash"]
+        assert state_identity(stored.state) == row["state_hash"]
+        assert read_state(stored.artifact.content, expected_hash=row["state_hash"]) == stored.state
+        boundary = json.loads(stored.artifact.content)
+        assert boundary["schema_version"] == 4
+        assert boundary["kind"] == "STATISTICAL_STATE"
 
-    transport = holder["transport"]
-    names = [request.endpoint.name for request in transport.requests]
+        state = stored.state
+        assert state.entity.symbol == ("GENEONE" if gene_id == GENE_ONE else "GENETWO")
+        assert state.research.domain == "lung cancer"
+        assert state.research.cohort == "TCGA-LUAD"
+        assert state.research.projects == ("TCGA-LUAD",)
+        assert state.quality.acquisition.value == "COMPLETE"
+        assert state.quality.sufficiency.value == "SUFFICIENT"
+        project = state.projects[0]
+        assert len(project.population.frame.examined_ids) == LUAD_CASES
+        assert project.mutation.affected_cases.value == LUAD_AFFECTED[gene_id]
+        assert project.mutation.ssm_coverage_cases.value == 95
+        assert project.mutation.coverage_complete is True
+        assert len(project.expression.values) == LUAD_CASES
+        assert project.expression.coverage.missing == ()
+        assert len(project.expression.coverage.valid_ids) == LUAD_CASES
+        assert project.expression.median.value == pytest.approx(LUAD_MEDIAN[gene_id])
+        assert project.expression.sample_sd.value > 0
+        assert state.cross_project.direction == "NOT_EXAMINED"
+        assert state.cross_project.comparability_status == "NOT_APPLICABLE"
+        assert state.cross_project.coverage_imbalance is False
+        assert state.cross_project.affected_case_total.value == LUAD_AFFECTED[gene_id]
+        assert "NOT OBSERVED" not in " ".join(state.warnings + state.missingness).upper()
+
+    types = [event["type"] for event in _events(repository, run_id)]
+    assert types[0] == "RUN_STARTED"
+    assert types[-1] == "RUN_COMPLETED"
+    assert types.count("STATISTICAL_STATE_CREATED") == 2
+    assert types.index("PROJECT_SCOPE_SELECTED") < types.index("INVENTORY_COMPLETED")
+    assert types.index("INVENTORY_COMPLETED") < types.index("STATISTICAL_STATE_CREATED")
+    assert not any(event_type.startswith("JEV") for event_type in types)
+
+    names = [request.endpoint.name if hasattr(request.endpoint, "name") else str(request.endpoint)
+             for request in holder["transport"].requests]
     assert names.count("cases") == 1
     assert names.count("gene_expression_values") == 1
-    assert len(names) <= 20, "replay sweep must stay bounded"
+    assert len(names) <= 20
+
+    client = _api_client(runtime, monkeypatch)
+    listing = client.get(f"/api/runs/{run_id}/states")
+    assert listing.status_code == 200
+    assert len(listing.json()["items"]) == 2
+    state_id = _state_row(repository, run_id, GENE_ONE)["state_id"]
+    detail = client.get(f"/api/states/{state_id}")
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["schema_version"] == 4
+    assert payload["kind"] == "STATISTICAL_STATE_PRESENTATION"
+    assert payload["state_hash"] == repository.get_state(state_id)["state_hash"]
+    assert payload["research"]["domain"] == "lung cancer"
+    assert payload["research"]["projects"] == ["TCGA-LUAD"]
+    assert payload["quality"]["acquisition"] == "COMPLETE"
+    assert payload["quality"]["sufficiency"] == "SUFFICIENT"
+    assert payload["projects"][0]["affected_cases"]["value"] == LUAD_AFFECTED[GENE_ONE]
+    assert payload["projects"][0]["expression"]["median"]["value"] == pytest.approx(
+        LUAD_MEDIAN[GENE_ONE], abs=1e-6)
+    assert payload["projects"][0]["expression"]["n_missing"] == 0
+    detail_state = repository.get_state(state_id)
+    assert detail.headers["x-artifact-sha256"] == repository.artifact(detail_state["artifact_id"])["sha256"]
+    assert client.get(f"/api/runs/{run_id}/rankings").json() == {"baseline": None, "jev": None}
+    assert client.get(f"/api/runs/{run_id}/projections").json()["items"] == []
 
 
-def test_missing_value_columns_stay_visible_in_state(runtime, monkeypatch):
-    orchestrator, _, repository = _orchestrator(runtime, monkeypatch, drop_value_columns=2)
+def test_live_replay_links_scientific_sources_to_the_responses_that_supplied_them(
+        runtime, monkeypatch):
+    orchestrator, holder, repository = _orchestrator(runtime, monkeypatch)
     run_id = orchestrator.run()
-    assert repository.get_run(run_id)["status"] == "COMPLETED"
-    states = repository.list_table("statistical_states", run_id)
-    summaries = {row["summary"]["entity"]["gene_id"]: row["summary"] for row in states}
-    assert summaries[GENES[0]]["expression_availability"] == "OBSERVED"
+    issued = {request.request_hash() for request in holder["transport"].requests}
+    received = {published.sha256 for published in holder["transport"].published}
+    assert issued and received
 
-    client = TestClient(create_app())
-    state = client.get(f"/api/states/{states[0]['state_id']}").json()
-    expression = {row["project_id"]: row for row in state["expression"]["project_results"]}["TCGA-LUAD"]
-    assert expression["availability"] == "PARTIAL", "two missing case columns must keep the lane PARTIAL"
-    assert expression["local"]["n_missing"]["value"] == 2
-    assert expression["local"]["n_returned"]["value"] == 98
-    assert expression["coverage"]["returned_case_columns"]["value"] == 98
-    assert expression["coverage"]["valid_measurements"]["value"] == 98
-    assert expression["coverage"]["missing_measurements"]["value"] == 2
-    assert len(expression["local"]["missing_case_ids"]) == 2
-    assert state["quality"]["acquisition_completeness"] == "COMPLETE"
-    assert state["quality"]["scientific_sufficiency"] == "PARTIAL"
-    assert any("not returned" in entry for entry in state["quality"]["missingness"])
+    for row in repository.list_table("statistical_states", run_id):
+        stored = read_state_record(repository, runtime[2], row["state_id"])
+        state = stored.state
+        assert len(state.sources) == len(state.operational_sources)
+        assert all(isinstance(source, ScientificSource) for source in state.sources)
+        assert all(isinstance(source, OperationalSource) for source in state.operational_sources)
+        assert {field.name for field in dataclasses.fields(ScientificSource)} == {
+            "endpoint", "request_hash", "response_hash", "parser_version", "release", "acquisition"}
+        for source in state.sources:
+            assert source.request_hash in issued, "every scientific source names a request that started"
+            assert source.response_hash in received, "every scientific source names the response that supplied it"
+        for source in state.operational_sources:
+            assert source.attempt_id and source.artifact_id and source.retrieved_at
+            assert source.source.request_hash in issued
+            assert source.source.response_hash in received
+            metadata = repository.artifact(source.artifact_id)
+            assert metadata is not None
+            assert metadata["sha256"] == source.source.response_hash
 
 
-def test_project_without_expression_values_skips_expression_calls(runtime, monkeypatch):
-    orchestrator, holder, repository = _orchestrator(runtime, monkeypatch,
-                                                     empty_expression_projects={"TCGA-LUAD"})
+def test_state_identity_excludes_operational_ids_and_tracks_measurements(runtime, monkeypatch):
+    run_id, repository, _ = _live_state_records(runtime, monkeypatch)
+    row = _state_row(repository, run_id, GENE_ONE)
+    stored = read_state_record(repository, runtime[2], row["state_id"])
+    original = state_identity(stored.state)
+
+    measured = dataclasses.replace(
+        stored.state,
+        projects=(dataclasses.replace(
+            stored.state.projects[0],
+            mutation=dataclasses.replace(
+                stored.state.projects[0].mutation,
+                affected_cases=dataclasses.replace(
+                    stored.state.projects[0].mutation.affected_cases, value=21),
+            ),
+        ),),
+    )
+    assert state_identity(measured) != original, "a changed measured count is a different state"
+
+    operational = dataclasses.replace(
+        stored.state,
+        operational_sources=(),
+        tested_context=dataclasses.replace(stored.state.tested_context,
+                                           selection_artifact_id="other-selection-artifact"),
+        projects=(dataclasses.replace(
+            stored.state.projects[0],
+            discovery=dataclasses.replace(stored.state.projects[0].discovery, rank=99, score=1.0),
+        ),),
+    )
+    assert state_identity(operational) == original, "operational ids never enter scientific identity"
+
+
+# ------------------------------------------------------------------- wide Jev admission
+
+
+def test_live_replay_with_jev_wide_evaluation(runtime, monkeypatch):
+    adapter = StubAdapter()
+    orchestrator, _, repository = _orchestrator(runtime, monkeypatch, jev_adapter=adapter)
     run_id = orchestrator.run()
     run = repository.get_run(run_id)
     assert run["status"] == "COMPLETED"
-    assert run["coverage"] == "COMPLETE_FOR_SCOPE", "an observed absence of expression data is not a partial retrieval"
-    states = repository.list_table("statistical_states", run_id)
-    summaries = {row["summary"]["entity"]["gene_id"]: row["summary"] for row in states}
-    assert summaries[GENES[0]]["expression_availability"] == "INSUFFICIENT"
-    assert summaries[GENES[0]]["coverage_imbalance"] is True, "zero expression values for the cohort is flagged"
-    names = [request.endpoint.name for request in holder["transport"].requests]
-    assert names.count("gene_expression_availability") == 1
-    assert names.count("gene_expression_gene_selection") == 0
-    assert names.count("gene_expression_values") == 0
+    assert run["counts"]["states_generated"] == 2
+    assert run["counts"]["states_evaluated"] == 2
+    assert run["counts"]["candidates_promoted"] == 2
+    assert run["provider_usage"]["jev_calls"] == 2
+    assert run["provider_usage"]["jev_input_tokens"] == 2400
+    assert run["provider_usage"]["jev_output_tokens"] == 120
+    assert run["provider_usage"]["llm_calls"] == 0
+    assert adapter.calls == 2
+
+    state_hashes = {row["summary"]["entity"]["gene_id"]: row["state_hash"]
+                    for row in repository.list_table("statistical_states", run_id)}
+    projections = repository.page_child("jev_projections", run_id, 50, None, {})["items"]
+    assert len(projections) == 2
+    for projection in projections:
+        assert projection["projection_version"] == "jev-state-projection-v3"
+        assert projection["source_state_hash"] in state_hashes.values()
+        assert len(projection["projection_hash"]) == 64
+
+    evaluations = repository.page_child("jev_evaluations", run_id, 20, None,
+                                        {"purpose": "WIDE"})["items"]
+    assert len(evaluations) == 2
+    for evaluation in evaluations:
+        vector = evaluation["vector"]
+        assert vector["input_ref_kind"] == "STATISTICAL_STATE"
+        assert vector["question_set_version"] == "wide-v3"
+        assert vector["projection_version"] == "jev-state-projection-v3"
+        assert vector["resolved_model"] == "jev-1.13.0"
+        assert vector["cache_source_evaluation_id"] is None
+        assert vector["error"] is None
+        assert set(vector["answers"]) == WIDE_ANSWERS
+        assert all(answer["kind"] in {"noul", "choice"} for answer in vector["answers"].values())
+        assert vector["applicability"]["dominant_limitation"]["applicable"] is True
+        assert vector["source_state_hash"] in state_hashes.values()
+
+    candidates = repository.list_table("candidates", run_id)
+    assert len(candidates) == 2
+    assert sorted(row["promotion_slot"] for row in candidates) == [1, 2]
+    for candidate in candidates:
+        assert candidate["status"] == "WIDE_EVALUATED"
+        assert candidate["summary"]["policy_version"] == "wide-policy-v2"
+        assert candidate["summary"]["wide_evaluation_id"]
+        assert candidate["source_state_id"] in {row["state_id"]
+                                                for row in repository.list_table("statistical_states", run_id)}
+
+    types = [event["type"] for event in _events(repository, run_id)]
+    assert _wide_phase_events(repository, run_id) == WIDE_EVENT_ORDER
+    assert types[-1] == "RUN_COMPLETED"
+    sequences = [event["sequence"] for event in _events(repository, run_id)]
+    assert sequences == sorted(set(sequences)), "the canonical event stream is monotonic"
+
+    client = _api_client(runtime, monkeypatch)
+    rankings = client.get(f"/api/runs/{run_id}/rankings").json()
+    assert rankings["baseline"]["policy_version"] == "baseline-wide-v2"
+    assert rankings["jev"]["policy_version"] == "wide-policy-v2"
+    assert rankings["baseline"]["admitted_state_ids"] == []
+    assert len(rankings["baseline"]["entries"]) == 2
+    assert len(rankings["jev"]["entries"]) == 2
+    assert len(rankings["jev"]["admitted_state_ids"]) == 2
+    assert rankings["jev"]["admission"]["decision"] == "ADMIT"
+    assert rankings["jev"]["admission"]["promotion_limit"] == 3
+    listing = client.get(f"/api/runs/{run_id}/projections").json()["items"]
+    assert len(listing) == 2
+    assert {item["projection_version"] for item in listing} == {"jev-state-projection-v3"}
+
+
+def test_jev_evaluations_are_cacheable_by_pinned_model_identity(runtime, monkeypatch):
+    adapter = StubAdapter()
+    first_orchestrator, _, repository = _orchestrator(runtime, monkeypatch, jev_adapter=adapter)
+    first = first_orchestrator.run()
+    first_run = repository.get_run(first)
+    assert first_run["provider_usage"]["jev_calls"] == 2
+    calls_after_first = adapter.calls
+
+    second_orchestrator, _, _ = _orchestrator(runtime, monkeypatch, jev_adapter=adapter)
+    second = second_orchestrator.run()
+    second_run = repository.get_run(second)
+    assert second_run["provider_usage"]["jev_calls"] == 0, "an identical pinned evaluation is reused"
+    assert adapter.calls == calls_after_first
+
+    evaluations = repository.page_child("jev_evaluations", second, 20, None,
+                                        {"purpose": "WIDE"})["items"]
+    assert len(evaluations) == 2
+    assert all(row["vector"]["cache_source_evaluation_id"] for row in evaluations)
+    first_hashes = sorted(row["vector"]["source_state_hash"] for row in
+                          repository.page_child("jev_evaluations", first, 20, None,
+                                                {"purpose": "WIDE"})["items"])
+    assert sorted(row["vector"]["source_state_hash"] for row in evaluations) == first_hashes
+    assert repository.get_run(second)["counts"]["states_evaluated"] == 2
+
+
+def test_wide_phase_rankings_promotions_and_events_are_stable(runtime, monkeypatch):
+    adapter = StubAdapter()
+    orchestrator, _, repository = _orchestrator(runtime, monkeypatch, jev_adapter=adapter)
+    first = orchestrator.run()
+    second_orchestrator, _, _ = _orchestrator(runtime, monkeypatch, jev_adapter=adapter)
+    second = second_orchestrator.run()
+
+    assert _wide_summary(repository, runtime[2], first) == _wide_summary(repository, runtime[2], second)
+    for run_id in (first, second):
+        assert _wide_phase_events(repository, run_id) == WIDE_EVENT_ORDER
+        admitted = [event for event in _events(repository, run_id)
+                    if event["type"] == "CANDIDATE_PROMOTED"]
+        assert len(admitted) == 2
+        assert all(event["data"]["policy_version"] == "wide-policy-v2" for event in admitted)
+
+
+# --------------------------------------------------------------- bounded acquisition
+
+
+def test_large_cohort_is_paged_batched_and_merged_deterministically(runtime, monkeypatch):
+    spec = _test_spec(page_size=200, batch_size=200, max_cases=600)
+    def build():
+        orchestrator, holder, _ = _orchestrator(
+            runtime, monkeypatch, research_spec=spec, project_case_counts={"TCGA-LUAD": 520},
+            drop_value_columns=1)
+        return orchestrator.run(), holder
+    first, first_holder = build()
+    second, _ = build()
+    repository = runtime[1]
+    for run_id in (first, second):
+        assert repository.get_run(run_id)["status"] == "COMPLETED"
+
+    case_offsets = [dict(request.params)["from"] for request in first_holder["transport"].requests
+                    if request.endpoint.name == "cases"]
+    assert case_offsets == ["0", "200", "400"]
+    names = [request.endpoint.name for request in first_holder["transport"].requests]
+    assert names.count("gene_expression_availability") == 3
+    assert names.count("gene_expression_values") == 3
+    assert "gene_expression_gene_selection" not in names
+    for request in first_holder["transport"].requests:
+        if request.endpoint.name == "gene_expression_values":
+            assert len(request.body["case_ids"]) <= 200
+
+    hashes = {row["summary"]["entity"]["gene_id"]: row["state_hash"]
+              for row in repository.list_table("statistical_states", first)}
+    second_hashes = {row["summary"]["entity"]["gene_id"]: row["state_hash"]
+                     for row in repository.list_table("statistical_states", second)}
+    assert hashes == second_hashes, "batching order never changes the scientific identity"
+
+    for gene_id in GENES:
+        stored = _typed_state(runtime, repository, first, gene_id)[1]
+        project = stored.state.projects[0]
+        assert len(project.population.frame.examined_ids) == 520
+        assert len(project.expression.values) == 517
+        assert len(project.expression.coverage.valid_ids) == 517
+        missing = {group.reason: group.ids for group in project.expression.coverage.missing}
+        assert len(missing["CASE_COLUMN_NOT_RETURNED"]) == 3
+        assert stored.state.quality.acquisition.value == "COMPLETE"
+        assert stored.state.quality.sufficiency.value == "PARTIAL"
+        assert project.provider_expression.median is None
+        assert project.provider_expression.stddev is None
+        assert project.provider_expression.unavailable_reason == "BATCHED_PROVIDER_SUMMARY_NOT_COHORT_WIDE"
+        assert any("not returned" in item for item in stored.state.missingness)
+
+
+@pytest.mark.parametrize(("replay_options", "code"), [
+    ({"duplicate_case_across_pages": True}, "DUPLICATE_CASE_ID"),
+    ({"inconsistent_case_total_after_first": True}, "CASE_TOTAL_INCONSISTENT"),
+    ({"inconsistent_case_offset_after_first": True}, "CASE_PAGE_OFFSET_INCONSISTENT"),
+])
+def test_invalid_case_pagination_fails_closed(runtime, monkeypatch, replay_options, code):
+    spec = _test_spec(page_size=200, max_cases=600)
+    orchestrator, _, repository = _orchestrator(
+        runtime, monkeypatch, research_spec=spec,
+        project_case_counts={"TCGA-LUAD": 520}, **replay_options)
+    run_id = orchestrator.run()
+    assert repository.get_run(run_id)["status"] == "FAILED"
+    failed = [event for event in _events(repository, run_id) if event["type"] == "RUN_FAILED"]
+    assert failed and failed[-1]["data"]["reason_code"] == code
+    assert repository.list_table("statistical_states", run_id) == []
+    assert repository.get_run(run_id)["coverage"] == "PARTIAL"
+
+
+def test_cohort_ceiling_exceeded_fails_closed(runtime, monkeypatch):
+    spec = _test_spec(page_size=200, max_cases=300)
+    orchestrator, _, repository = _orchestrator(
+        runtime, monkeypatch, research_spec=spec,
+        project_case_counts={"TCGA-LUAD": 520})
+    run_id = orchestrator.run()
+    assert repository.get_run(run_id)["status"] == "FAILED"
+    failed = [event for event in _events(repository, run_id) if event["type"] == "RUN_FAILED"]
+    assert failed[-1]["data"]["reason_code"] == "COHORT_CASE_LIMIT_EXCEEDED"
+    assert repository.list_table("statistical_states", run_id) == []
 
 
 def test_controlled_file_record_fails_closed(runtime, monkeypatch):
     orchestrator, _, repository = _orchestrator(runtime, monkeypatch, controlled_files=True)
     run_id = orchestrator.run()
-    run = repository.get_run(run_id)
-    assert run["status"] == "FAILED"
-    assert run["outcome_reason"] == "CONTROLLED_RECORD_RETURNED"
+    assert repository.get_run(run_id)["status"] == "FAILED"
+    failed = [event for event in _events(repository, run_id) if event["type"] == "RUN_FAILED"]
+    assert failed[-1]["data"]["reason_code"] == "CONTROLLED_RECORD_RETURNED"
     assert repository.list_table("statistical_states", run_id) == []
 
 
 def test_incomplete_case_frame_fails_closed(runtime, monkeypatch):
     orchestrator, _, repository = _orchestrator(runtime, monkeypatch, incomplete_frame=True)
     run_id = orchestrator.run()
-    run = repository.get_run(run_id)
-    assert run["status"] == "FAILED"
-    assert run["outcome_reason"] == "CASE_TOTAL_INCONSISTENT"
+    assert repository.get_run(run_id)["status"] == "FAILED"
+    failed = [event for event in _events(repository, run_id) if event["type"] == "RUN_FAILED"]
+    assert failed[-1]["data"]["reason_code"] == "CASE_TOTAL_INCONSISTENT"
     assert repository.list_table("statistical_states", run_id) == []
 
 
-def test_live_replay_is_deterministic_for_same_inputs(runtime, monkeypatch):
-    first_orchestrator, _, repository = _orchestrator(runtime, monkeypatch)
-    first_run = first_orchestrator.run()
-    second_orchestrator, _, _ = _orchestrator(runtime, monkeypatch)
-    second_run = second_orchestrator.run()
-    hashes = []
-    for run_id in (first_run, second_run):
-        states = repository.list_table("statistical_states", run_id)
-        hashes.append(sorted(row["state_hash"] for row in states))
-    assert hashes[0] == hashes[1], "identical scientific inputs must produce identical state hashes"
+def test_missing_value_columns_stay_visible_in_state(runtime, monkeypatch):
+    orchestrator, _, repository = _orchestrator(runtime, monkeypatch, drop_value_columns=2)
+    run_id = orchestrator.run()
+    run = repository.get_run(run_id)
+    assert run["status"] == "COMPLETED"
+
+    for gene_id in GENES:
+        row, stored = _typed_state(runtime, repository, run_id, gene_id)
+        state = stored.state
+        assert row["summary"]["expression_availability"] == "OBSERVED"
+        assert state.quality.acquisition.value == "COMPLETE"
+        assert state.quality.sufficiency.value == "PARTIAL"
+        project = state.projects[0]
+        assert len(project.expression.values) == 98
+        assert len(project.expression.coverage.valid_ids) == 98
+        missing = {group.reason: group.ids for group in project.expression.coverage.missing}
+        assert len(missing["CASE_COLUMN_NOT_RETURNED"]) == 2
+        assert 0 < project.expression.median.value
+        assert any("not returned" in item for item in state.missingness)
+
+    state_id = _state_row(repository, run_id, GENE_ONE)["state_id"]
+    payload = _api_client(runtime, monkeypatch).get(f"/api/states/{state_id}").json()
+    expression = payload["projects"][0]["expression"]
+    assert expression["status"] == "OBSERVED"
+    assert expression["n_finite"] == 98
+    assert expression["n_examined"] == 100
+    assert expression["n_missing"] == 2
 
 
-WIDE_LIFECYCLE_EVENTS = {
-    "JEV_WIDE_STARTED", "JEV_PROJECTION_CREATED", "JEV_WIDE_STATE_EVALUATED",
-    "WIDE_RANKING_COMPLETED", "CANDIDATE_PROMOTED", "JEV_WIDE_COMPLETED",
-}
+def test_project_without_expression_values_skips_expression_calls(runtime, monkeypatch):
+    orchestrator, holder, repository = _orchestrator(
+        runtime, monkeypatch, empty_expression_projects={"TCGA-LUAD"})
+    run_id = orchestrator.run()
+    assert repository.get_run(run_id)["status"] == "COMPLETED"
+
+    names = [request.endpoint.name for request in holder["transport"].requests]
+    assert names.count("gene_expression_availability") == 1
+    assert names.count("gene_expression_gene_selection") == 0
+    assert names.count("gene_expression_values") == 0
+
+    for gene_id in GENES:
+        row, stored = _typed_state(runtime, repository, run_id, gene_id)
+        assert row["summary"]["expression_availability"] == "INSUFFICIENT"
+        assert row["summary"]["coverage_imbalance"] is True
+        project = stored.state.projects[0]
+        assert project.expression.status.value == "NOT_ACQUIRED"
+        assert project.expression.reason == "EXPRESSION_VALUES_NOT_ACQUIRED"
+        assert project.provider_expression is None
 
 
-def _wide_summary(client: TestClient, repository, run_id: str) -> dict:
-    states = repository.list_table("statistical_states", run_id)
-    state_hashes = {row["state_id"]: row["state_hash"] for row in states}
-    evaluations = repository.page_child("jev_evaluations", run_id, 10, None, {"purpose": "WIDE"})["items"]
-    rankings = client.get(f"/api/runs/{run_id}/rankings").json()
-    candidates = repository.list_table("candidates", run_id)
-    events = repository.events(run_id, 0, 500)["items"]
-    return {
-        "evaluated_state_hashes": sorted(state_hashes[row["input_ref_id"]] for row in evaluations),
-        "baseline": [
-            (entry["rank"], entry["state_hash"], entry["gene_symbol"],
-             {key: value for key, value in entry["dimensions"].items()
-              if key != "cache_source_evaluation_id"})
-            for entry in rankings["baseline"]["entries"]
-        ],
-        "jev": [
-            (entry["rank"], entry["state_hash"], entry["gene_symbol"],
-             {key: value for key, value in entry["dimensions"].items()
-              if key != "cache_source_evaluation_id"})
-            for entry in rankings["jev"]["entries"]
-        ],
-        "admitted_state_hashes": sorted(
-            state_hashes[state_id] for state_id in rankings["jev"]["admitted_state_ids"]
-        ),
-        "promoted": [
-            (row["promotion_slot"], state_hashes[row["source_state_id"]], row["status"],
-             row["summary"]["policy_version"], row["summary"]["promotion_reason"])
-            for row in sorted(candidates, key=lambda row: row["promotion_slot"])
-        ],
-        "wide_events": [
-            event["type"] for event in events if event["type"] in WIDE_LIFECYCLE_EVENTS
-        ],
-    }
+def test_expression_availability_merge_keeps_observed_and_missing_genes_disjoint():
+    observed = parse_expression_availability(
+        availability_body(["P1-case-0"], [GENE_ONE]),
+        _source_meta("gene_expression_availability", 1),
+        expected_cases=["P1-case-0"], expected_genes=[GENE_ONE],
+    )
+    missing = parse_expression_availability(
+        availability_body(["P1-case-1"], [GENE_ONE], empty=True),
+        _source_meta("gene_expression_availability", 2),
+        expected_cases=["P1-case-1"], expected_genes=[GENE_ONE],
+    )
+    merged = _merge_expression_availability(
+        ["P1-case-0", "P1-case-1"], [GENE_ONE],
+        [(["P1-case-0"], observed), (["P1-case-1"], missing)],
+    )
+    assert merged.cases == {"P1-case-0": True, "P1-case-1": False}
+    observed_ids = {case_id for case_id, has_values in merged.cases.items() if has_values}
+    missing_ids = {case_id for case_id, has_values in merged.cases.items() if not has_values}
+    assert observed_ids == {"P1-case-0"}
+    assert missing_ids == {"P1-case-1"}
+    assert observed_ids.isdisjoint(missing_ids)
+    assert merged.genes == {GENE_ONE: True}
+    assert GENE_ONE not in merged.missing_genes
+    assert observed.genes[GENE_ONE] is True
+    assert missing.genes[GENE_ONE] is False
 
 
-def test_wide_phase_evaluations_rankings_promotions_and_events_are_stable(runtime, monkeypatch):
-    adapter = StubAdapter()
-    first_orchestrator, _, repository = _orchestrator(runtime, monkeypatch, jev_adapter=adapter)
-    first_run = first_orchestrator.run()
-    second_orchestrator, _, _ = _orchestrator(runtime, monkeypatch, jev_adapter=adapter)
-    second_run = second_orchestrator.run()
-
-    client = TestClient(create_app())
-    first = _wide_summary(client, repository, first_run)
-    second = _wide_summary(client, repository, second_run)
-
-    assert len(first["evaluated_state_hashes"]) == 2, "every generated state is evaluated"
-    assert first["evaluated_state_hashes"] == second["evaluated_state_hashes"]
-    assert first["baseline"] == second["baseline"], "baseline rankings must be stable for identical inputs"
-    assert first["jev"] == second["jev"], "Jev rankings must be stable for identical inputs"
-    assert first["admitted_state_hashes"] == second["admitted_state_hashes"]
-    assert first["promoted"] == second["promoted"], "identical inputs must promote the same candidates"
-    assert len(first["promoted"]) == 2
-    assert first["wide_events"] == second["wide_events"]
-    assert first["wide_events"] == [
-        "JEV_WIDE_STARTED", "JEV_PROJECTION_CREATED", "JEV_WIDE_STATE_EVALUATED",
-        "JEV_PROJECTION_CREATED", "JEV_WIDE_STATE_EVALUATED",
-        "WIDE_RANKING_COMPLETED", "CANDIDATE_PROMOTED", "CANDIDATE_PROMOTED", "JEV_WIDE_COMPLETED",
-    ]
+# --------------------------------------------------- wide phase as explicit collaborators
 
 
-def test_run_wide_evaluation_takes_explicit_collaborators(runtime):
-    settings, repository, artifacts = runtime
-    adapter = StubAdapter()
-    service = JevService(settings, repository, artifacts, adapter_factory=lambda: adapter)
-    run_id = repository.create_run("wide-decoupled", mode="LIVE", fixture_id=None, fixture_version=None)
-    states = [_build([_frame("TCGA-LUAD")], typed=True)]
-    _register_state(artifacts, repository, run_id, states[0].boundary_representation())
+def _second_run(repository, label="wide-decoupled"):
+    return repository.create_run(label, mode="LIVE", fixture_id=None, fixture_version=None)
+
+
+def _recording_writer(repository, artifacts):
     emitted: list[str] = []
     published: list[str] = []
 
-    def emit(event_run_id, event_type, key, message, **kwargs):
+    def emit(run_id, event_type, key, message, **kwargs):
         emitted.append(event_type)
-        return repository.append_event(event_run_id, event_type=event_type, idempotency_key=key,
+        return repository.append_event(run_id, event_type=event_type, idempotency_key=key,
                                        message=message, **kwargs)
 
-    def publish_json(pub_run_id, relative_path, payload, purpose):
-        published.append(relative_path)
-        return artifacts.publish(relative_path, canonical_json(payload), "application/json", purpose)
+    def publish_json(run_id, path, payload, purpose):
+        published.append(path)
+        return artifacts.publish(path, json.dumps(payload).encode(), "application/json", purpose)
 
-    result = run_wide_evaluation(
-        run_id=run_id, states=states, coverage="COMPLETE_FOR_SCOPE",
-        repository=repository, jev_service=service, emit=emit, publish_json=publish_json,
-    )
-    assert adapter.calls == 1
-    assert [promotion["state_id"] for promotion in result["promoted"]] == [states[0].summary.state_id]
-    assert result["jev"]["admitted_state_ids"] == [states[0].summary.state_id]
-    assert published == [
-        f"runs/{run_id}/wide/baseline_ranking.json",
-        f"runs/{run_id}/wide/jev_ranking.json",
-    ]
-    assert emitted == [
-        "JEV_WIDE_STARTED", "JEV_PROJECTION_CREATED", "JEV_WIDE_STATE_EVALUATED",
-        "WIDE_RANKING_COMPLETED", "CANDIDATE_PROMOTED", "JEV_WIDE_COMPLETED",
-    ]
+    return emit, publish_json, emitted, published
 
 
-def test_run_wide_evaluation_enforces_configured_state_cap(runtime):
-    settings, repository, artifacts = runtime
+def test_run_wide_evaluation_takes_explicit_collaborators(runtime, monkeypatch):
+    _, repository, states = _live_state_records(runtime, monkeypatch)
     adapter = StubAdapter()
-    service = JevService(settings, repository, artifacts, adapter_factory=lambda: adapter)
-    run_id = repository.create_run("wide-state-cap", mode="LIVE", fixture_id=None, fixture_version=None)
-    states = [_build([_frame("TCGA-LUAD")], state_id="state-a", typed=True),
-              _build([_frame("TCGA-LUAD")], state_id="state-b", typed=True)]
-    for state in states:
-        _register_state(artifacts, repository, run_id, state.boundary_representation())
-    emitted: list[str] = []
-
-    def emit(event_run_id, event_type, key, message, **kwargs):
-        emitted.append(event_type)
-        return repository.append_event(event_run_id, event_type=event_type, idempotency_key=key,
-                                       message=message, **kwargs)
-
-    def publish_json(pub_run_id, relative_path, payload, purpose):
-        return artifacts.publish(relative_path, canonical_json(payload), "application/json", purpose)
-
+    service = JevService(runtime[0], repository, runtime[2], adapter_factory=lambda: adapter)
+    run_id = _second_run(repository)
+    emit, publish_json, emitted, published = _recording_writer(repository, runtime[2])
     result = run_wide_evaluation(
-        run_id=run_id, states=states, coverage="COMPLETE_FOR_SCOPE",
-        repository=repository, jev_service=service, emit=emit, publish_json=publish_json,
-        max_states=1,
-    )
-    assert adapter.calls == 1, "the configured Jev state cap must bound provider work"
+        run_id=run_id, states=states, coverage="COMPLETE_FOR_SCOPE", repository=repository,
+        jev_service=service, emit=emit, publish_json=publish_json)
+    assert adapter.calls == 2
+    assert len(result["baseline"]["entries"]) == 2
+    assert len(result["jev"]["entries"]) == 2
+    assert result["jev"]["admission"]["decision"] == "ADMIT"
+    assert len(result["promoted"]) == 2
+    assert [promotion["slot"] for promotion in result["promoted"]] == [1, 2]
+    assert all(promotion["state_id"] in {state.state_id for state in states}
+               for promotion in result["promoted"])
+    assert emitted == WIDE_EVENT_ORDER
+    assert published == [f"runs/{run_id}/wide/baseline_ranking.json",
+                         f"runs/{run_id}/wide/jev_ranking.json"]
+    for path in published:
+        assert repository.artifact_at_path(path) is not None
+    candidates = repository.list_table("candidates", run_id)
+    assert {row["status"] for row in candidates} == {"WIDE_EVALUATED"}
+    assert {row["summary"]["policy_version"] for row in candidates} == {"wide-policy-v2"}
+    assert repository.get_run(run_id)["status"] == "PENDING"
+
+
+def test_run_wide_evaluation_enforces_configured_state_cap(runtime, monkeypatch):
+    _, repository, states = _live_state_records(runtime, monkeypatch)
+    adapter = StubAdapter()
+    service = JevService(runtime[0], repository, runtime[2], adapter_factory=lambda: adapter)
+    run_id = _second_run(repository, "wide-capped")
+    emit, publish_json, emitted, _ = _recording_writer(repository, runtime[2])
+    result = run_wide_evaluation(
+        run_id=run_id, states=states, coverage="COMPLETE_FOR_SCOPE", repository=repository,
+        jev_service=service, emit=emit, publish_json=publish_json, max_states=1)
+    assert adapter.calls == 1
     assert "JEV_WIDE_STATE_CAP_ENFORCED" in emitted
-    cap_event = next(
-        event for event in repository.events(run_id, 0, 100)["items"]
-        if event["type"] == "JEV_WIDE_STATE_CAP_ENFORCED"
-    )
+    cap_event = next(event for event in repository.events(run_id, 0, 50)["items"]
+                     if event["type"] == "JEV_WIDE_STATE_CAP_ENFORCED")
     assert cap_event["data"]["cap"] == 1
-    assert cap_event["data"]["skipped_state_ids"] == ["state-b"]
-    skipped_entry = next(entry for entry in result["jev"]["entries"] if entry["state_id"] == "state-b")
-    assert skipped_entry["excluded_reason"] == "EVALUATION_MISSING"
+    assert cap_event["data"]["requested_states"] == 2
+    assert cap_event["data"]["evaluated_states"] == 1
+    skipped = cap_event["data"]["skipped_state_ids"]
+    assert skipped == [state.state_id for state in states[1:]]
+    excluded = {entry["state_id"]: entry["excluded_reason"] for entry in result["jev"]["entries"]}
+    assert excluded[skipped[0]] and "EVALUATION_MISSING" in excluded[skipped[0]]
+    assert len(result["promoted"]) == 1
 
 
-def test_run_wide_evaluation_abstains_and_defers_provider_failures(runtime):
-    settings, repository, artifacts = runtime
-    service = JevService(settings, repository, artifacts, adapter_factory=lambda: StubAdapter(fail=True))
-    run_id = repository.create_run("wide-provider-failure", mode="LIVE", fixture_id=None, fixture_version=None)
-    state = _build([_frame("TCGA-LUAD")], typed=True)
-    states = [state]
-    _register_state(artifacts, repository, run_id, state.boundary_representation())
-
-    def emit(event_run_id, event_type, key, message, **kwargs):
-        return repository.append_event(event_run_id, event_type=event_type, idempotency_key=key,
-                                       message=message, **kwargs)
-
-    def publish_json(pub_run_id, relative_path, payload, purpose):
-        return artifacts.publish(relative_path, canonical_json(payload), "application/json", purpose)
-
+def test_run_wide_evaluation_abstains_and_defers_provider_failures(runtime, monkeypatch):
+    _, repository, states = _live_state_records(runtime, monkeypatch)
+    adapter = StubAdapter(fail=True)
+    service = JevService(runtime[0], repository, runtime[2], adapter_factory=lambda: adapter)
+    run_id = _second_run(repository, "wide-provider-failed")
+    emit, publish_json, emitted, _ = _recording_writer(repository, runtime[2])
     result = run_wide_evaluation(
-        run_id=run_id, states=states, coverage="COMPLETE_FOR_SCOPE",
-        repository=repository, jev_service=service, emit=emit, publish_json=publish_json,
-    )
+        run_id=run_id, states=states, coverage="COMPLETE_FOR_SCOPE", repository=repository,
+        jev_service=service, emit=emit, publish_json=publish_json)
+    assert adapter.calls == 2
     assert result["jev"]["admission"]["decision"] == "ABSTAIN"
-    assert result["jev"]["entries"][0]["excluded_reason"] == "EVALUATION_FAILED"
+    assert result["jev"]["admitted_state_ids"] == []
     assert result["promoted"] == []
-    ranking_event = next(
-        event for event in repository.events(run_id, 0, 100)["items"]
-        if event["type"] == "WIDE_RANKING_COMPLETED"
-    )
-    assert ranking_event["data"]["deferred_state_ids"] == [state.summary.state_id]
-    assert ranking_event["data"]["admission_decision"] == "ABSTAIN"
+    assert repository.list_table("candidates", run_id) == []
+    assert all(entry["excluded_reason"] and "EVALUATION_FAILED" in entry["excluded_reason"]
+               for entry in result["jev"]["entries"])
+    evaluations = repository.page_child("jev_evaluations", run_id, 20, None,
+                                        {"purpose": "WIDE"})["items"]
+    assert len(evaluations) == 2
+    assert all(row["vector"]["error"]["code"] == "PROVIDER_ERROR" for row in evaluations)
+    ranking = next(event for event in repository.events(run_id, 0, 50)["items"]
+                   if event["type"] == "WIDE_RANKING_COMPLETED")
+    assert len(ranking["data"]["deferred_state_ids"]) == 2
+    assert ranking["data"]["admission_decision"] == "ABSTAIN"
 
 
 class _MalformedFirstStateAdapter(StubAdapter):
-    """One state gets a malformed provider response; the rest evaluate normally."""
+    """First judged state is malformed; the sweep must continue and record it."""
 
     def evaluate(self, state, definitions):
         if self.calls == 0:
             self.calls += 1
-            raise JevProviderError("PROVIDER_RESPONSE_MALFORMED",
-                                   "provider response could not be converted to owned answers")
+            self.last_state = state
+            raise JevProviderError("PROVIDER_RESPONSE_MALFORMED", "first response is malformed")
         return super().evaluate(state, definitions)
 
 
-def test_one_malformed_provider_response_does_not_abort_the_run(runtime):
-    settings, repository, artifacts = runtime
+def test_one_malformed_provider_response_does_not_abort_the_run(runtime, monkeypatch):
+    _, repository, states = _live_state_records(runtime, monkeypatch)
     adapter = _MalformedFirstStateAdapter()
-    service = JevService(settings, repository, artifacts, adapter_factory=lambda: adapter)
-    run_id = repository.create_run("wide-malformed", mode="LIVE", fixture_id=None, fixture_version=None)
-    states = [_build([_frame("TCGA-LUAD")], state_id="state-a", typed=True),
-              _build([_frame("TCGA-LUAD")], state_id="state-b", typed=True)]
-    for state in states:
-        _register_state(artifacts, repository, run_id, state.boundary_representation())
-
-    def emit(event_run_id, event_type, key, message, **kwargs):
-        return repository.append_event(event_run_id, event_type=event_type, idempotency_key=key,
-                                       message=message, **kwargs)
-
-    def publish_json(pub_run_id, relative_path, payload, purpose):
-        return artifacts.publish(relative_path, canonical_json(payload), "application/json", purpose)
-
+    service = JevService(runtime[0], repository, runtime[2], adapter_factory=lambda: adapter)
+    run_id = _second_run(repository, "wide-one-malformed")
+    emit, publish_json, _, _ = _recording_writer(repository, runtime[2])
     result = run_wide_evaluation(
-        run_id=run_id, states=states, coverage="COMPLETE_FOR_SCOPE",
-        repository=repository, jev_service=service, emit=emit, publish_json=publish_json,
-    )
-    evaluations = repository.page_child("jev_evaluations", run_id, 10, None, {"purpose": "WIDE"})["items"]
-    by_state = {row["input_ref_id"]: row["vector"] for row in evaluations}
-    assert sorted(by_state) == ["state-a", "state-b"], "both states must be evaluated"
-    failed_state = "state-a" if by_state["state-a"]["error"] else "state-b"
-    healthy_state = "state-b" if failed_state == "state-a" else "state-a"
-    assert by_state[failed_state]["error"]["code"] == "PROVIDER_RESPONSE_MALFORMED"
-    assert by_state[healthy_state]["error"] is None
-    assert len(by_state[healthy_state]["answers"]) == 7
+        run_id=run_id, states=states, coverage="COMPLETE_FOR_SCOPE", repository=repository,
+        jev_service=service, emit=emit, publish_json=publish_json)
+    assert adapter.calls == 2, "a failed state still consumes exactly one provider attempt"
+    assert len(result["jev"]["entries"]) == 2
+    failed = [entry for entry in result["jev"]["entries"]
+              if entry["excluded_reason"] and "EVALUATION_FAILED" in entry["excluded_reason"]]
+    healthy = [entry for entry in result["jev"]["entries"] if entry["qualified"]]
+    assert len(failed) == 1
+    assert len(healthy) == 1
+    assert len(result["promoted"]) == 1
+    assert result["promoted"][0]["state_id"] == healthy[0]["state_id"]
 
-    types = [event["type"] for event in repository.events(run_id, 0, 200)["items"]]
+    types = [event["type"] for event in _events(repository, run_id)]
     assert types.count("JEV_EVALUATION_FAILED") == 1
     assert types.count("JEV_WIDE_STATE_EVALUATED") == 1
-    assert "WIDE_RANKING_COMPLETED" in types and "JEV_WIDE_COMPLETED" in types
-    assert result["jev"]["admission"]["decision"] == "ADMIT"
-    assert [promotion["state_id"] for promotion in result["promoted"]] == [healthy_state]
-    run = repository.get_run(run_id)
-    assert run["status"] != "FAILED", "the run must continue after one deferred state"
-    assert run["provider_usage"]["jev_calls"] == 2, "a failed provider attempt is still a provider call"
-
-
-def test_live_replay_links_scientific_sources_to_the_responses_that_supplied_them(runtime, monkeypatch):
-    artifacts = runtime[2]
-    orchestrator, holder, repository = _orchestrator(runtime, monkeypatch)
-    run_id = orchestrator.run()
-    assert repository.get_run(run_id)["status"] == "COMPLETED"
-    issued = {request.request_hash() for request in holder["transport"].requests}
-    received = {artifact.sha256 for artifact in holder["transport"].published}
-    assert issued and received
-
-    checked = 0
-    for row in repository.list_table("statistical_states", run_id):
-        state = json.loads(artifacts.read(repository.artifact(row["artifact_id"])["relative_path"]))
-        for source in state["provenance"]["sources"]:
-            assert source["request_id"], "every scientific source must link to its acquisition attempt"
-            assert source["attempt_no"] >= 1
-            assert source["from_cache"] is False
-            assert source["normalized_request_hash"] in issued, "the logical request must be a request the run issued"
-            assert source["response_sha256"] in received, "the source must name a response the run received"
-            checked += 1
-    assert checked >= len(repository.list_table("statistical_states", run_id))
-
-
-def _response_meta(endpoint: str) -> ResponseMeta:
-    return ResponseMeta(endpoint=endpoint, method="POST", request_hash="h", response_sha256="s",
-                        artifact_id=None, retrieved_at="2026-09-23T00:00:00Z", source_release=None,
-                        completeness="COMPLETE")
-
-
-def test_expression_availability_merge_keeps_observed_and_missing_genes_disjoint():
-    case_ids = ["P1-case-1", "P1-case-2"]
-    gene_ids = list(GENES)
-    first = parse_expression_availability(
-        availability_body(case_ids[:1], gene_ids), _response_meta("/gene_expression/availability"),
-        expected_cases=case_ids[:1], expected_genes=gene_ids,
-    )
-    second = parse_expression_availability(
-        availability_body(case_ids[1:], gene_ids, omit_genes=True),
-        _response_meta("/gene_expression/availability"),
-        expected_cases=case_ids[1:], expected_genes=gene_ids,
-    )
-    assert second.missing_genes == gene_ids, "the second batch omitted every gene detail"
-
-    merged = _merge_expression_availability(case_ids, gene_ids,
-                                            [(case_ids[:1], first), (case_ids[1:], second)])
-    assert merged.genes == {gene_id: True for gene_id in gene_ids}
-    assert merged.missing_genes == [], "a gene observed by any batch is not a missing gene"
-    assert set(merged.genes) & set(merged.missing_genes) == set()
-    assert merged.missing_cases == []
-
-    absent = parse_expression_availability(
-        availability_body(case_ids, gene_ids, omit_genes=True),
-        _response_meta("/gene_expression/availability"),
-        expected_cases=case_ids, expected_genes=gene_ids,
-    )
-    merged_absent = _merge_expression_availability(case_ids, gene_ids, [(case_ids, absent)])
-    assert merged_absent.genes == {}
-    assert merged_absent.missing_genes == gene_ids, "a gene absent from every batch stays missing"
+    assert types.count("CANDIDATE_PROMOTED") == 1
+    evaluations = repository.page_child("jev_evaluations", run_id, 20, None,
+                                        {"purpose": "WIDE"})["items"]
+    errors = [row for row in evaluations if row["vector"]["error"] is not None]
+    assert len(errors) == 1
+    assert errors[0]["vector"]["error"]["code"] == "PROVIDER_RESPONSE_MALFORMED"
+    assert errors[0]["vector"]["answers"] == {}

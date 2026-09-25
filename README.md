@@ -2,9 +2,9 @@
 
 OntoJev retrieves public, open-access GDC data through one bounded anonymous transport,
 measures it with deterministic scientific methods, and asks Jev narrow semantic questions
-about the resulting compact state. Python policy decides what happens next. Operator-selected
-candidates can enter a bounded deep investigation, with optional generated hypotheses and live
-dossiers. There is no GDC authentication or GDC file download.
+about the resulting typed state. Python policy decides what happens next. Operator-selected
+candidates can enter a bounded deep investigation, with optional generated hypotheses and
+live dossiers. There is no GDC authentication or GDC file download.
 
 ```text
 ResearchSpec (reproducible scope)
@@ -15,26 +15,44 @@ strict parsing / normalized observations
         ↓
 deterministic science (counts, coverage, log2 summaries)
         ↓
-immutable StatisticalState (per gene)
+immutable typed StatisticalState (per gene)
         ↓
-optional Wide Jev (compact projection → atomic semantic judgment)
+Wide Jev projection (jev-state-projection-v3) + questions (wide-v3)
         ↓
-Python ranking / admission policy → bounded candidate admission
+validated typed answers → Python admission (wide-policy-v2) → Candidate
+        ↓
+immutable typed EvidenceState E0
+        ↓
+registered deterministic action → immutable revision E1/E2
+        ↓
+Deep Jev projection (jev-evidence-projection-v2) + questions (deep-v1)
+        ↓
+Python next-move policy (deep-policy-v2): COMPLETE / FOLLOW_UP /
+GENERATE_HYPOTHESES / ABSTAIN
+        ↓
+optional bounded hypothesis generation → Jev critique (hypothesis-v2) → dossier (schema 2)
 ```
 
-`ResearchSpec` owns reproducible research configuration; `Settings` owns operational
+`ResearchSpec` owns reproducible research configuration (domain, cohort, project, bounded
+page/batch sizes, cohort ceiling, discovery/candidate limits); `Settings` owns operational
 configuration (paths, timeouts, budgets, cache, provider/model). The current production
 research specification is `LUAD_RESEARCH_V1` (`domain=lung cancer`, `cohort_id=TCGA-LUAD`,
-`project_id=TCGA-LUAD`). TCGA-LUAD and TCGA-LUSC are never pooled. Acquisition uses bounded,
-validated case pagination (`size ≤250`, `sort=case_id`, ≤10 pages) and deterministic
-expression batching (each request ≤250 cases × ≤10 genes), merging returned values by
-identifier before cohort-wide deterministic summaries.
+`project_id=TCGA-LUAD`); `ResearchSpec` payloads are schema 3. TCGA-LUAD and TCGA-LUSC are
+never pooled. Acquisition uses bounded, validated case pagination (`size ≤250`, `sort=case_id`,
+≤10 pages) and deterministic expression batching (each request ≤250 cases × ≤10 genes),
+merging returned values by identifier before cohort-wide deterministic summaries.
 
-The Python package is named `cancerjev`; the product is OntoJev. Phase 1 remains available as
-an offline synthetic vertical slice (`run --fixture demo`) and is never mixed with live
-records. Deep evidence revisions, two registered integrity actions, Deep Jev, bounded hypothesis
-generation/review and live dossiers are implemented. Offline autoresearch and systematic multi-lane
-discovery are not. See the [current status](docs/IMPLEMENTATION_STATUS.md).
+The Python package is named `cancerjev`; the product is OntoJev. Domain records are named
+without legacy suffixes (`StatisticalState`, `EvidenceState`, `ResearchSpec`, `Candidate`,
+`HypothesisDraft`); operational ids and hashes travel in `StateRecord` / `EvidenceRecord` /
+`HypothesisRecord` envelopes and never enter scientific identity. Serialized scientific
+schemas are StatisticalState 4 and EvidenceState 4; unknown or older schemas are rejected
+fail-closed, with no migrations and no legacy readers. Question sets are `wide-v3`, `deep-v1`
+and `hypothesis-v2`.
+
+`run --fixture demo` runs the same shared `LiveOrchestrator` offline with `FixtureTransport`
+and `FixtureJevAdapter` (run mode `FIXTURE`, synthetic notice in the dossier); there is no
+second execution engine. See the [current status](docs/IMPLEMENTATION_STATUS.md).
 
 ## Run locally
 
@@ -45,7 +63,7 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
 
-# Terminal 1 — read API
+# Terminal 1 — read API (version 3.0.0, SQLite schema 5)
 $env:CANCERJEV_DATA_DIR="$PWD\data"
 python -m uvicorn apps.api.main:create_app --factory --host 127.0.0.1 --port 8000
 
@@ -58,15 +76,21 @@ npm run dev
 $env:CANCERJEV_DATA_DIR="$PWD\data"
 python -m cancerjev run --live
 
-# Optional: Phase 3 wide Jev evaluation (server-side key only)
+# Optional: Wide Jev evaluation (server-side TYPESAFE_API_KEY only)
 $env:TYPESAFE_API_KEY="<your TypeSafe key>"
 python -m cancerjev run --live --jev
 
-# Fixture demonstration (offline, synthetic)
+# Optional: one explicitly selected candidate investigation, authorized iteration
+python -m cancerjev run --live --jev --deep-candidate TP53 --deep-followup
+
+# Fixture demonstration (offline, synthetic, same engine)
 python -m cancerjev run --fixture demo
 
 # Bounded anonymous contract capture
 python -m cancerjev probe
+
+# Offline baseline-vs-Jev comparison against operator-supplied labels
+python -m cancerjev evaluate --run <run-id> --labels <labels.json>
 ```
 
 Open `http://localhost:3000/runs`. The UI shows deterministic measurements and Jev judgments
@@ -87,13 +111,17 @@ for optional explicitly authorized OpenRouter hypothesis generation), the operat
 - `CANCERJEV_WEB_ORIGIN` — local CORS origin; defaults to `http://localhost:3000`.
 - `CANCERJEV_GDC_MAX_REQUESTS` / `CANCERJEV_GDC_MAX_BYTES` / `CANCERJEV_GDC_PER_RESPONSE_BYTES` — application caps; defaults `150`, `64 MiB`, `5 MiB`.
 - `CANCERJEV_GDC_CACHE` — set `0` to disable the normalized response cache.
-- `CANCERJEV_JEV_MODEL` — pinned model; defaults to `jev-1.13.0`.
+- `CANCERJEV_JEV_MODEL` — pinned model identity; defaults to `jev-1.13.0`.
 - `TYPESAFE_API_KEY` — required only for `--jev`; read at call time and never persisted or logged.
+- `OPENROUTER_API_KEY` — optional, environment-only; used only by the explicitly authorized CLI hypothesis path.
 - `NEXT_PUBLIC_CANCERJEV_API_URL` — browser API URL; defaults to `http://127.0.0.1:8000`.
 
-`--jev` requires `--live`; the fixture path never constructs a live provider. Persistence
-schema is version 4; earlier schemas are explicitly rejected, not automatically migrated or
-reset. Retain historical databases and artifacts; use a separate compatible data directory.
+`--jev` requires `--live`; the fixture path never constructs a live provider. `--deep-candidate`
+accepts `gene`, `gene:<SYMBOL>`, `state:<STATE_ID>` or `slot:N` and requires `--live --jev`;
+`--deep-followup` authorizes bounded iteration; `--deep-hypotheses` requests bounded generation
+without rewriting the recorded next move. Persistence schema is version 5; earlier databases are
+explicitly rejected, not automatically migrated or reset. Retain historical databases and
+artifacts; use a separate compatible data directory.
 
 ## Open-access guarantees
 
@@ -106,42 +134,56 @@ reset. Retain historical databases and artifacts; use a separate compatible data
 - 401/403 become `UNAVAILABLE_ACCESS` with no retry and no credential lookup.
 - Adversarial tests enforce all of the above; live captures record `authentication_headers_sent: []`.
 
+Exactly one allow-listed module (`cancerjev/llm/openrouter.py`) may carry a provider
+authorization header for generated hypothesis text; that credential is environment-only, never
+persisted or logged, and its output is bounded, validated and never evidence.
+
 ## Verification
+
+Verified in this environment (2026-09-25):
+
+- `python -m pytest` — **652 passed** offline (live opt-in markers excluded; `tests/live` is
+  deselected by default).
+- `python -m ruff check cancerjev apps tests` — clean.
+- scoped strict `mypy` (the explicit file list in `pyproject.toml`) — clean.
 
 ```powershell
 python -m ruff check cancerjev apps tests
 python -m pytest                      # offline suite; live markers excluded by default
-python -m pytest -m live_gdc          # opt-in bounded live contract probe
+python -m pytest -m live_gdc          # opt-in bounded live GDC contract probe
 python -m pytest -m live_jev          # opt-in live Jev evaluation (needs TYPESAFE_API_KEY)
-
-cd apps/web
-npm run typecheck
-npm run build
-npm run test:e2e                      # requires the API and web dev servers above
+python -m mypy                        # scoped strict check; not whole-repository typing
 ```
+
+Browser acceptance lives in `tests/browser/` with its own Playwright config and package, and CI
+runs it as a separate job. It was **not executed in this environment**: UNVERIFIED here.
+Live GDC, TypeSafe/Jev and OpenRouter acceptance was **not run** (no credentials):
+LIVE ACCEPTANCE PENDING / UNVERIFIED. No scientific readiness, incremental Jev value or
+production use is claimed.
 
 The default Python suite blocks outbound network connections except loopback test servers. No
 default test needs Docker, PostgreSQL, Redis, GDC, TypeSafe/Jev, OpenRouter, or secrets. The
-current factual verification record, including any live runs, is in
-[implementation status](docs/IMPLEMENTATION_STATUS.md); this README does not assert test
-counts or live results of its own.
+current factual verification record is in [implementation status](docs/IMPLEMENTATION_STATUS.md).
 
 ## Scope boundary
 
-The deep actions currently check retained evidence integrity; they acquire no new data and compute
-no new biological measurement. The default hypothesis generator is deterministic; the optional
-OpenRouter adapter can make paid model calls only on the authorized CLI path. Jev judgments are semantic policy inputs, never
-measurements, significance, or clinical claims. Public GDC evidence alone does not establish
-dependency, druggability, therapeutic efficacy, safety, clinical benefit, biomarker
-qualification, or drug success; OntoJev's claim boundary is **candidate-target investigation**,
-not therapeutic target validation. Scientific contracts live in `docs/`, including the central
-[discovery roadmap and 32-deliverable index](docs/DISCOVERY_ROADMAP.md).
-The documentation architecture pass at `42b05d40e6edafec0b8613e7dd154a60a46e4fee`
-made no paid model calls and changed no production code or tests.
+The registered deep actions currently check retained evidence integrity; they acquire no new
+data and compute no new biological measurement. The default hypothesis generator is
+deterministic; the optional OpenRouter adapter can make paid model calls only on the authorized
+CLI path. Jev judgments are semantic policy inputs, never measurements, significance, or
+clinical claims. Public GDC evidence alone does not establish dependency, druggability,
+therapeutic efficacy, safety, clinical benefit, biomarker qualification, or drug success;
+OntoJev's claim boundary is **candidate-target investigation**, not therapeutic target
+validation. Scientific contracts live in `docs/`, indexed by the
+[discovery roadmap](docs/DISCOVERY_ROADMAP.md) (indexed systematic discovery is the next Stage 4
+task; proposed lane/action contracts there are not current runtime behavior).
 
 See [architecture](docs/ARCHITECTURE.md), [domain models](docs/DOMAIN_MODELS.md),
-[scientific invariants](docs/SCIENTIFIC_INVARIANTS.md), [GDC strategy](docs/GDC_STRATEGY.md),
-[GDC budgets](docs/GDC_BUDGETS.md), [Jev design](docs/JEV_DESIGN.md),
-[question architecture](docs/JEV_QUESTIONS.md), [research loop](docs/RESEARCH_LOOP.md),
-[API contract](docs/API_CONTRACT.md), [UI spec](docs/UI_SPEC.md), and
-[testing contract](docs/TESTING.md).
+[persistence](docs/PERSISTENCE.md), [scientific invariants](docs/SCIENTIFIC_INVARIANTS.md),
+[research loop](docs/RESEARCH_LOOP.md), [run events](docs/RUN_EVENTS.md),
+[GDC strategy](docs/GDC_STRATEGY.md), [GDC budgets](docs/GDC_BUDGETS.md),
+[GDC discovery captures](docs/GDC_DISCOVERY_CAPTURES.md), [source review](docs/SOURCE_REVIEW.md),
+[Jev design](docs/JEV_DESIGN.md), [question architecture](docs/JEV_QUESTIONS.md),
+[API contract](docs/API_CONTRACT.md), [UI spec](docs/UI_SPEC.md),
+[testing contract](docs/TESTING.md), [development skills](docs/DEVELOPMENT_SKILLS.md) and
+[deployment portability](docs/DEPLOYMENT_PORTABILITY.md).

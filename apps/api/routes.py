@@ -19,8 +19,10 @@ from cancerjev.storage.readers import (
 )
 from cancerjev.storage.repositories import Repository
 
+from . import serializers
+
 router = APIRouter()
-API_VERSION = "2.0.0"
+API_VERSION = "3.0.0"
 
 
 def services(request: Request) -> tuple[Repository, ArtifactStore]:
@@ -57,7 +59,7 @@ def system(request: Request):
         "providers": {
             "gdc": True,
             "jev": bool(os.getenv("TYPESAFE_API_KEY")),
-            "llm": False,
+            "llm": bool(os.getenv("OPENROUTER_API_KEY")),
         },
         "worker": {"owner_id": worker["owner_id"], "heartbeat_at": heartbeat_at, "version": worker["version"], "fresh": fresh} if worker else None,
         "active_run_id": active["run_id"] if active else None,
@@ -142,11 +144,13 @@ def state_detail(state_id: UUID, request: Request):
     if not metadata:
         raise HTTPException(503, detail="state artifact metadata missing")
     try:
-        content = read_state_record(repository, artifacts, str(state_id)).artifact.content
+        stored = read_state_record(repository, artifacts, str(state_id))
     except (OSError, ValueError) as exc:
         raise HTTPException(503, detail="state artifact unavailable or corrupt") from exc
-    headers = {"ETag": f'"{metadata["sha256"]}"', "X-Artifact-Id": metadata["artifact_id"], "X-Artifact-SHA256": metadata["sha256"]}
-    return JSONResponse(json.loads(content), headers=headers)
+    payload = serializers.state_detail(stored.record)
+    headers = {"ETag": f'"{serializers.response_etag(payload)}"',
+               "X-Artifact-Id": metadata["artifact_id"], "X-Artifact-SHA256": metadata["sha256"]}
+    return JSONResponse(payload, headers=headers)
 
 
 @router.get("/api/runs/{run_id}/projections")
@@ -199,11 +203,13 @@ def evidence_detail(evidence_state_id: UUID, request: Request):
     if not metadata:
         raise HTTPException(503, detail="evidence artifact metadata missing")
     try:
-        content = read_evidence_record(repository, artifacts, str(evidence_state_id)).artifact.content
+        stored = read_evidence_record(repository, artifacts, str(evidence_state_id))
     except (OSError, ValueError) as exc:
         raise HTTPException(503, detail="evidence artifact unavailable or corrupt") from exc
-    headers = {"ETag": f'"{metadata["sha256"]}"', "X-Artifact-Id": metadata["artifact_id"], "X-Artifact-SHA256": metadata["sha256"]}
-    return JSONResponse(json.loads(content), headers=headers)
+    payload = serializers.evidence_detail(stored.record)
+    headers = {"ETag": f'"{serializers.response_etag(payload)}"',
+               "X-Artifact-Id": metadata["artifact_id"], "X-Artifact-SHA256": metadata["sha256"]}
+    return JSONResponse(payload, headers=headers)
 
 
 @router.get("/api/runs/{run_id}/followups")

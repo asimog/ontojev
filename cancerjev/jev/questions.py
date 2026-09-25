@@ -8,11 +8,10 @@ the model.
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from typing import Any
 
-from cancerjev.domain.events import canonical_json
+from cancerjev.domain.measurements import digest
 
 WIDE_QUESTION_SET_VERSION = "wide-v3"
 DEEP_QUESTION_SET_VERSION = "deep-v1"
@@ -366,7 +365,7 @@ def question_set_hash(definitions: tuple[QuestionDefinition, ...], version: str)
             for definition in definitions
         ],
     }
-    return hashlib.sha256(canonical_json(payload)).hexdigest()
+    return digest(payload)
 
 
 def wide_question_set_hash() -> str:

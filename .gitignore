@@ -12,6 +12,10 @@ apps/web/node_modules/
 apps/web/.next/
 apps/web/playwright-report/
 apps/web/test-results/
+tests/browser/node_modules/
+tests/browser/playwright-report/
+tests/browser/test-results/
+.kilo/
 .tmp-*/
 *.tsbuildinfo
 

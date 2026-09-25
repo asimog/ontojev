@@ -1,11 +1,13 @@
-"""Deterministic baseline and bounded Jev admission over persisted judgments."""
+"""Deterministic baseline and bounded Jev admission over typed states and judgments."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
-from cancerjev.domain.state_summary import StateSummary
+from cancerjev.domain.envelopes import StateRecord
+from cancerjev.domain.measurements import Acquisition, ObservedCount
+from cancerjev.domain.scientific import StatisticalState
 from cancerjev.jev.contracts import EvaluationRecord
 
 BASELINE_POLICY_VERSION = "baseline-wide-v2"
@@ -28,48 +30,39 @@ _ADMISSION_THRESHOLDS = {
 class RankingState:
     state_id: str
     state_hash: str
-    gene_symbol: str
+    gene_symbol: str | None
     affected_cases: float | int | None
     coverage_imbalance: bool
     completeness: str
     expression_availability: str
 
 
-def _ranking_state(state: StateSummary | dict[str, Any]) -> RankingState:
-    if isinstance(state, StateSummary):
-        project = state.projects[0] if len(state.projects) == 1 else None
-        affected = project.affected_cases if project and state.project_id in (None, project.project_id) else None
-        return RankingState(state.state_id, state.scientific_hash, state.gene_symbol, affected,
-                            state.coverage_imbalance, state.completeness, state.expression_availability)
-    mutation, scope = _project_result(state)
-    return RankingState(state["state_id"], state["state_hash"], state["entity"]["gene_symbol"],
-                        _metric_value(mutation.get("affected_case_count")), scope["coverage_imbalance"],
-                        state["quality"]["completeness"], state["expression"]["availability"])
+def _expression_availability(state: StatisticalState) -> str:
+    observed = state.cross_project.projects_with_expression_observation
+    total = len(state.projects)
+    if observed == total:
+        return "OBSERVED"
+    return "PARTIAL" if observed else "INSUFFICIENT"
 
 
-def _metric_value(metric: dict[str, Any] | None) -> float | None:
-    if metric is None or metric.get("availability") != "OBSERVED":
-        return None
-    return metric.get("value")
-
-
-def _project_result(state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    project_ids = state["scope"]["projects"]
-    project_id = state["scope"].get("project_id")
-    if len(project_ids) != 1:
-        return {}, state["cross_project"]
-    project_id = project_id or project_ids[0]
-    if project_id != project_ids[0]:
-        return {}, state["cross_project"]
-    mutation = next(
-        (result for result in state["mutation"]["project_results"] if result["project_id"] == project_id),
-        {},
+def _ranking_state(record: StateRecord) -> RankingState:
+    state = record.state
+    project = state.projects[0] if len(state.projects) == 1 else None
+    affected: float | int | None = None
+    if project is not None and state.research.project_id in (None, project.population.frame.project_id):
+        measurement = project.mutation.affected_cases
+        if isinstance(measurement, ObservedCount):
+            affected = measurement.value
+    return RankingState(
+        record.state_id, record.state_hash, state.gene_symbol, affected,
+        state.cross_project.coverage_imbalance,
+        "COMPLETE" if state.quality.acquisition is Acquisition.COMPLETE else "PARTIAL",
+        _expression_availability(state),
     )
-    return mutation, state["cross_project"]
 
 
-def baseline_ranking(states: list[StateSummary] | list[dict[str, Any]]) -> dict[str, Any]:
-    entries = []
+def baseline_ranking(states: list[StateRecord]) -> dict[str, Any]:
+    entries: list[dict[str, Any]] = []
     for raw_state in states:
         state = _ranking_state(raw_state)
         entries.append({
@@ -101,10 +94,8 @@ def baseline_ranking(states: list[StateSummary] | list[dict[str, Any]]) -> dict[
     }
 
 
-def _applicable(evaluation: EvaluationRecord | dict[str, Any], question_id: str) -> bool:
-    if isinstance(evaluation, EvaluationRecord):
-        return evaluation.is_applicable(question_id)
-    return evaluation.get("applicability", {}).get(question_id, {}).get("applicable") is True
+def _applicable(evaluation: EvaluationRecord, question_id: str) -> bool:
+    return evaluation.is_applicable(question_id)
 
 
 def _eligibility_exclusions(state: RankingState) -> list[str]:
@@ -118,18 +109,13 @@ def _eligibility_exclusions(state: RankingState) -> list[str]:
     return reasons
 
 
-def _answer_probability(evaluation: EvaluationRecord | dict[str, Any], question_id: str) -> float | None:
+def _answer_probability(evaluation: EvaluationRecord, question_id: str) -> float | None:
     if not _applicable(evaluation, question_id):
         return None
-    if isinstance(evaluation, EvaluationRecord):
-        return evaluation.answers.probability(question_id) if evaluation.answers is not None else None
-    answer = evaluation.get("answers", {}).get(question_id)
-    if not answer or answer.get("kind") != "noul":
-        return None
-    return answer["probability_yes"]
+    return evaluation.answers.probability(question_id) if evaluation.answers is not None else None
 
 
-def _admission_exclusions(state: RankingState, evaluation: EvaluationRecord | dict[str, Any]) -> list[str]:
+def _admission_exclusions(state: RankingState, evaluation: EvaluationRecord) -> list[str]:
     reasons = _eligibility_exclusions(state)
     if reasons:
         return reasons
@@ -155,10 +141,9 @@ def _admission_exclusions(state: RankingState, evaluation: EvaluationRecord | di
     return reasons
 
 
-def _raw_dimensions(evaluation: EvaluationRecord | dict[str, Any]) -> dict[str, Any]:
-    if isinstance(evaluation, EvaluationRecord):
-        evaluation = evaluation.boundary_representation()  # Ranking artifact presentation.
-    answers = evaluation.get("answers", {})
+def _raw_dimensions(evaluation: EvaluationRecord) -> dict[str, Any]:
+    presentation = evaluation.boundary_representation()  # Ranking artifact presentation.
+    answers = presentation.get("answers", {})
     dimensions = {
         question_id: answer.get("probability_yes")
         for question_id, answer in answers.items()
@@ -171,8 +156,8 @@ def _raw_dimensions(evaluation: EvaluationRecord | dict[str, Any]) -> dict[str, 
             "dominant_limitation_confidence": limitation["confidence"],
             "dominant_limitation_probabilities": limitation["probabilities"],
         })
-    dimensions["applicability"] = evaluation.get("applicability", {})
-    dimensions["cache_source_evaluation_id"] = evaluation.get("cache_source_evaluation_id")
+    dimensions["applicability"] = presentation.get("applicability", {})
+    dimensions["cache_source_evaluation_id"] = presentation.get("cache_source_evaluation_id")
     return dimensions
 
 
@@ -180,7 +165,9 @@ def _ranking_probability(entry: dict[str, Any], question_id: str) -> float | Non
     dimensions = entry["dimensions"]
     if dimensions.get("applicability", {}).get(question_id, {}).get("applicable") is not True:
         return None
-    return dimensions.get(question_id)
+    # The judgment boundary records noul answers as validated probability floats
+    # (jev.contracts.validate_answer), so a present question answer is a float.
+    return cast(float | None, dimensions.get(question_id))
 
 
 def _descending_probability(entry: dict[str, Any], question_id: str) -> float:
@@ -193,16 +180,13 @@ def _ascending_probability(entry: dict[str, Any], question_id: str) -> float:
     return probability if probability is not None else 1.0
 
 
-def jev_ranking(states: list[StateSummary] | list[dict[str, Any]],
-                evaluations: list[EvaluationRecord] | list[dict[str, Any]]) -> dict[str, Any]:
-    by_state = {(evaluation.input_ref_id if isinstance(evaluation, EvaluationRecord) else evaluation["input_ref_id"]):
-                evaluation for evaluation in evaluations}
-    entries = []
+def jev_ranking(states: list[StateRecord], evaluations: list[EvaluationRecord]) -> dict[str, Any]:
+    by_state = {evaluation.input_ref_id: evaluation for evaluation in evaluations}
+    entries: list[dict[str, Any]] = []
     for raw_state in states:
         state = _ranking_state(raw_state)
         evaluation = by_state.get(state.state_id)
-        error = (evaluation.error_code if isinstance(evaluation, EvaluationRecord)
-                 else evaluation.get("error") if evaluation else None)
+        error = evaluation.error_code if evaluation is not None else None
         exclusion_reasons = _eligibility_exclusions(state)
         if evaluation is None:
             exclusion_reasons.append("EVALUATION_MISSING")
@@ -210,13 +194,12 @@ def jev_ranking(states: list[StateSummary] | list[dict[str, Any]],
             exclusion_reasons.append("EVALUATION_FAILED")
         else:
             exclusion_reasons = _admission_exclusions(state, evaluation)
-        dimensions = _raw_dimensions(evaluation) if evaluation and error is None else {}
+        dimensions = _raw_dimensions(evaluation) if evaluation is not None and error is None else {}
         entries.append({
             "state_id": state.state_id,
             "state_hash": state.state_hash,
             "gene_symbol": state.gene_symbol,
-            "evaluation_id": (evaluation.evaluation_id if isinstance(evaluation, EvaluationRecord)
-                              else evaluation.get("evaluation_id") if evaluation else None),
+            "evaluation_id": evaluation.evaluation_id if evaluation is not None else None,
             "dimensions": {
                 **dimensions,
                 "affected_cases": state.affected_cases,

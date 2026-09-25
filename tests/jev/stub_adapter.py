@@ -39,10 +39,10 @@ class StubAdapter:
         self.last_state = state
         if self.fail:
             raise JevProviderError("PROVIDER_ERROR", "stub provider failure")
-        if state.get("projection_version") == "jev-evidence-projection-v1":
+        if state.get("projection_version") == "jev-evidence-projection-v2":
             answers = self._deep_answers()
             answers.update(self.deep_override)
-        elif state.get("projection_version") == "jev-hypothesis-projection-v1":
+        elif state.get("projection_version") == "jev-hypothesis-projection-v2":
             answers = self._hypothesis_answers()
         else:
             answers = self._wide_answers(state)

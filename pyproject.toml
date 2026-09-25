@@ -23,13 +23,20 @@ python_version = "3.12"
 files = [
   "cancerjev/domain/measurements.py", "cancerjev/domain/scientific.py",
   "cancerjev/domain/evidence.py", "cancerjev/domain/_json.py", "cancerjev/domain/codecs.py",
-  "cancerjev/domain/legacy_codecs.py", "cancerjev/domain/hypotheses.py",
-  "cancerjev/domain/actions.py", "cancerjev/domain/state_summary.py",
+  "cancerjev/domain/envelopes.py", "cancerjev/domain/hypotheses.py",
+  "cancerjev/domain/actions.py",
   "cancerjev/research/specs.py", "cancerjev/research/acquisition.py",
   "cancerjev/research/seams.py", "cancerjev/research/nextmove.py",
+  "cancerjev/research/ranking.py", "cancerjev/research/deep.py",
+  "cancerjev/research/hypotheses.py", "cancerjev/research/dossier.py",
+  "cancerjev/research/investigation.py", "cancerjev/research/fixtures.py",
+  "cancerjev/research/orchestrator.py",
   "cancerjev/science/errors.py", "cancerjev/science/mutation.py",
   "cancerjev/science/expression.py", "cancerjev/science/methods.py",
-  "cancerjev/storage/readers.py", "cancerjev/jev/contracts.py",
+  "cancerjev/science/actions.py",
+  "cancerjev/jev/contracts.py", "cancerjev/jev/projection.py",
+  "cancerjev/storage/readers.py",
+  "apps/api/serializers.py",
 ]
 strict = true
 follow_imports = "silent"

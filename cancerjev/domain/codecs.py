@@ -1,7 +1,8 @@
-"""Direct versioned readers. JSON ends here; no reflection-based decoder.
+"""Schema-4 boundary codecs for the canonical scientific objects.
 
-Legacy records retain their original bytes and scientific identity. They are not
-v3 states. Storage must still validate artifact bytes and record bindings (Stage 2).
+JSON exists here only at the persistence boundary. Readers are explicit: no
+reflection-based decoder, no schema-1/2/3 compatibility and no legacy scientific
+model. An older, newer or wrongly typed schema version fails closed.
 """
 
 from dataclasses import asdict
@@ -16,16 +17,20 @@ from cancerjev.domain._json import (
     seq,
     string,
     string_tuple,
-    version,
 )
 from cancerjev.domain.evidence import (
     ActionRef,
+    BaselineObservation,
     CheckOutcome,
-    CheckSummary,
     EvidenceCheck,
-    EvidenceStateV3,
+    EvidenceProvenance,
+    EvidenceState,
+    InputArtifactRef,
+    MissingEvidence,
+    ProjectEvidenceRow,
+    ResearchPuzzle,
+    SourceStateBinding,
 )
-from cancerjev.domain.legacy_codecs import LegacyArtifact, read_legacy_evidence, read_legacy_state
 from cancerjev.domain.measurements import (
     Acquisition,
     Compatibility,
@@ -34,8 +39,11 @@ from cancerjev.domain.measurements import (
     Coverage,
     EntityRef,
     Measurement,
+    MethodIdentityRef,
     MethodParameters,
     MethodRef,
+    MetricAvailability,
+    MetricRecord,
     MissingGroup,
     ObservedCount,
     ObservedScalar,
@@ -56,15 +64,30 @@ from cancerjev.domain.measurements import (
     sha256,
 )
 from cancerjev.domain.scientific import (
+    AcquisitionScope,
     CnvOccurrence,
     CnvOccurrenceResult,
+    CrossProjectSummary,
     ExpressionSummaryResult,
     ExpressionValue,
+    GeneAnnotation,
     Lane,
     MutationCountResult,
-    StatisticalStateV3,
+    PopulationRecord,
+    ProjectState,
+    ProviderDiscoveryMetadata,
+    ProviderExpressionSummary,
+    ResearchState,
+    StatisticalState,
+    TestedContext,
     UnavailableLane,
 )
+
+STATE_SCHEMA_VERSION = 4
+EVIDENCE_SCHEMA_VERSION = 4
+
+
+# --------------------------------------------------------------- shared readers
 
 
 def _entity(value: object) -> EntityRef:
@@ -121,6 +144,11 @@ def _method(value: object) -> MethodRef:
                      string(d["missingness_rule"]), string_tuple(d["limitations"]))
 
 
+def _method_identity(value: object) -> MethodIdentityRef:
+    d = obj(value, "method_id version parameters_hash")
+    return MethodIdentityRef(string(d["method_id"]), string(d["version"]), string(d["parameters_hash"]))
+
+
 def read_measurement(value: object) -> Measurement:
     d = obj(value)
     if "status" in d:
@@ -166,13 +194,11 @@ def _unavailable_lane(value: object) -> UnavailableLane:
                            UnavailableStatus(string(d["status"])), string(d["reason"]))
 
 
-def _mutation(value: object) -> MutationCountResult | UnavailableLane:
-    d = obj(value)
-    if "status" in d:
-        return _unavailable_lane(d)
-    obj(d, "affected_cases ssm_coverage_cases frame quality entity")
+def _mutation(value: object) -> MutationCountResult:
+    d = obj(value, "affected_cases ssm_coverage_cases coverage_complete frame quality entity")
     return MutationCountResult(_count(d["affected_cases"]), _count(d["ssm_coverage_cases"]),
-                               _frame(d["frame"]), _quality(d["quality"]), _entity(d["entity"]))
+                               boolean(d["coverage_complete"]), _frame(d["frame"]),
+                               _quality(d["quality"]), _entity(d["entity"]))
 
 
 def _expression_value(value: object) -> ExpressionValue:
@@ -187,7 +213,8 @@ def _expression(value: object) -> ExpressionSummaryResult | UnavailableLane:
     obj(d, "values coverage median sample_sd minimum maximum quality sources entity")
     return ExpressionSummaryResult(tuple(_expression_value(item) for item in seq(d["values"])),
                                    _coverage(d["coverage"]), _scalar(d["median"]), _scalar(d["sample_sd"]),
-                                   _scalar(d["minimum"]), _scalar(d["maximum"]), _quality(d["quality"]), _sources(d["sources"]), _entity(d["entity"]))
+                                   _scalar(d["minimum"]), _scalar(d["maximum"]), _quality(d["quality"]),
+                                   _sources(d["sources"]), _entity(d["entity"]))
 
 
 def _occurrence(value: object) -> CnvOccurrence:
@@ -208,11 +235,162 @@ def _cnv(value: object) -> CnvOccurrenceResult | UnavailableLane:
                                _sources(d["sources"]), _quality(d["quality"]))
 
 
+# ------------------------------------------------------------- state components
+
+
+def _metric_record(value: object) -> MetricRecord:
+    d = obj(value, "value unit availability reason_code")
+    raw = d["value"]
+    if raw is None:
+        parsed: int | float | None = None
+    elif type(raw) is int:
+        parsed = raw
+    else:
+        parsed = number(raw)
+    return MetricRecord(parsed, optional_string(d["unit"]), MetricAvailability(string(d["availability"])),
+                        optional_string(d["reason_code"]))
+
+
+def _metric_tuple(value: object) -> tuple[MetricRecord, ...]:
+    return tuple(_metric_record(item) for item in seq(value))
+
+
+def _annotation(value: object) -> GeneAnnotation:
+    d = obj(value, "biotype cancer_census genome_build genome_build_note")
+    return GeneAnnotation(optional_string(d["biotype"]),
+                          None if d["cancer_census"] is None else boolean(d["cancer_census"]),
+                          optional_string(d["genome_build"]), string(d["genome_build_note"]))
+
+
+def _acquisition_scope(value: object) -> AcquisitionScope:
+    d = obj(value, "case_page_size case_batch_size max_cohort_cases discovery_gene_limit "
+                   "count_gene_limit candidate_gene_limit expression_file_sample_size")
+    return AcquisitionScope(integer(d["case_page_size"]), integer(d["case_batch_size"]),
+                            integer(d["max_cohort_cases"]), integer(d["discovery_gene_limit"]),
+                            integer(d["count_gene_limit"]), integer(d["candidate_gene_limit"]),
+                            integer(d["expression_file_sample_size"]))
+
+
+def _count_pairs(value: object, name: str) -> tuple[tuple[str, int], ...]:
+    result: list[tuple[str, int]] = []
+    for item in seq(value):
+        pair = seq(item)
+        require(len(pair) == 2, f"{name} entries must be pairs")
+        result.append((string(pair[0]), integer(pair[1])))
+    return tuple(result)
+
+
+def _sample_type_counts(value: object) -> tuple[tuple[str, tuple[tuple[str, int], ...]], ...]:
+    result: list[tuple[str, tuple[tuple[str, int], ...]]] = []
+    for item in seq(value):
+        pair = seq(item)
+        require(len(pair) == 2, "sample type counts must be project/count pairs")
+        result.append((string(pair[0]), _count_pairs(pair[1], "sample type counts")))
+    return tuple(result)
+
+
+def _research_state(value: object) -> ResearchState:
+    d = obj(value, "spec_id domain cohort project_id cohort_selection_rule gene_selection_rule "
+                   "examined_case_frame acquisition modalities programs projects workflows sample_types "
+                   "sample_type_counts comparability_statuses within_cohort_status within_cohort_reason "
+                   "cross_project_status cross_project_reason")
+    return ResearchState(
+        string(d["spec_id"]), string(d["domain"]), string(d["cohort"]), string(d["project_id"]),
+        string(d["cohort_selection_rule"]), string(d["gene_selection_rule"]), string(d["examined_case_frame"]),
+        _acquisition_scope(d["acquisition"]), string_tuple(d["modalities"]), string_tuple(d["programs"]),
+        string_tuple(d["projects"]), string_tuple(d["workflows"]), string_tuple(d["sample_types"]),
+        _sample_type_counts(d["sample_type_counts"]), string_tuple(d["comparability_statuses"]),
+        string(d["within_cohort_status"]), string(d["within_cohort_reason"]),
+        string(d["cross_project_status"]), string(d["cross_project_reason"]),
+    )
+
+
+def _population_record(value: object) -> PopulationRecord:
+    d = obj(value, "population_id frame program provider_reported_cases frame_hash workflows sample_types "
+                   "selection_method selection_version harmonization_context excluded_counts")
+    return PopulationRecord(
+        string(d["population_id"]), _frame(d["frame"]), optional_string(d["program"]),
+        None if d["provider_reported_cases"] is None else integer(d["provider_reported_cases"]),
+        string(d["frame_hash"]), string_tuple(d["workflows"]),
+        _count_pairs(d["sample_types"], "population sample types"),
+        string(d["selection_method"]), string(d["selection_version"]), string(d["harmonization_context"]),
+        _count_pairs(d["excluded_counts"], "excluded counts"),
+    )
+
+
+def _provider_discovery(value: object) -> ProviderDiscoveryMetadata:
+    d = obj(value, "rank score lane_id note")
+    return ProviderDiscoveryMetadata(integer(d["rank"]),
+                                     None if d["score"] is None else number(d["score"]),
+                                     string(d["lane_id"]), string(d["note"]))
+
+
+def _provider_expression(value: object) -> ProviderExpressionSummary:
+    d = obj(value, "median stddev source estimator_note unavailable_reason")
+    return ProviderExpressionSummary(
+        None if d["median"] is None else number(d["median"]),
+        None if d["stddev"] is None else number(d["stddev"]),
+        string(d["source"]), string(d["estimator_note"]), optional_string(d["unavailable_reason"]),
+    )
+
+
+def _project_state(value: object) -> ProjectState:
+    d = obj(value, "population mutation expression provider_expression discovery")
+    return ProjectState(
+        _population_record(d["population"]), _mutation(d["mutation"]), _expression(d["expression"]),
+        None if d["provider_expression"] is None else _provider_expression(d["provider_expression"]),
+        None if d["discovery"] is None else _provider_discovery(d["discovery"]),
+    )
+
+
+def _tested_context(value: object) -> TestedContext:
+    d = obj(value, "examined_genes_hash examined_genes_n rank_in_lane selection_rule selection_bias "
+                   "discovered_in_project_count selection_artifact_id")
+    return TestedContext(string(d["examined_genes_hash"]), integer(d["examined_genes_n"]),
+                         integer(d["rank_in_lane"]), string(d["selection_rule"]), string(d["selection_bias"]),
+                         integer(d["discovered_in_project_count"]), optional_string(d["selection_artifact_id"]))
+
+
+def _cross_project(value: object) -> CrossProjectSummary:
+    d = obj(value, "projects_with_mutation_observation projects_with_expression_observation "
+                   "affected_case_total top_project_share expression_median_min expression_median_max "
+                   "coverage_imbalance dominance_definition coverage_imbalance_definition direction "
+                   "comparability_status notes")
+    return CrossProjectSummary(
+        integer(d["projects_with_mutation_observation"]), integer(d["projects_with_expression_observation"]),
+        _metric_record(d["affected_case_total"]), _metric_record(d["top_project_share"]),
+        _metric_record(d["expression_median_min"]), _metric_record(d["expression_median_max"]),
+        boolean(d["coverage_imbalance"]), string(d["dominance_definition"]),
+        string(d["coverage_imbalance_definition"]), string(d["direction"]),
+        string(d["comparability_status"]), string_tuple(d["notes"]),
+    )
+
+
+# ------------------------------------------------------------ evidence readers
+
+
 def _check(value: object) -> EvidenceCheck:
-    d = obj(value, "check_id method_id method_version outcome claim input_hashes reason n_effective")
-    return EvidenceCheck(string(d["check_id"]), string(d["method_id"]), string(d["method_version"]),
-                         CheckOutcome(string(d["outcome"])), string(d["claim"]), string_tuple(d["input_hashes"]),
-                         optional_string(d["reason"]), None if d["n_effective"] is None else integer(d["n_effective"]))
+    d = obj(value, "check_id method_id method_version outcome claim input_hashes reason n_effective "
+                   "observed expected notes limitations missing_count missing_reason")
+    return EvidenceCheck(
+        string(d["check_id"]), string(d["method_id"]), string(d["method_version"]),
+        CheckOutcome(string(d["outcome"])), string(d["claim"]), string_tuple(d["input_hashes"]),
+        optional_string(d["reason"]), None if d["n_effective"] is None else integer(d["n_effective"]),
+        canonical_bytes(d["observed"]), canonical_bytes(d["expected"]), string_tuple(d["notes"]),
+        string_tuple(d["limitations"]), integer(d["missing_count"]), optional_string(d["missing_reason"]),
+    )
+
+
+def _baseline_observation(value: object) -> BaselineObservation:
+    d = obj(value, "method_id method_version observed availability n_effective "
+                   "missingness_count missingness_reason notes limitations")
+    return BaselineObservation(
+        string(d["method_id"]), string(d["method_version"]), canonical_bytes(d["observed"]),
+        string(d["availability"]), None if d["n_effective"] is None else integer(d["n_effective"]),
+        None if d["missingness_count"] is None else integer(d["missingness_count"]),
+        optional_string(d["missingness_reason"]),
+        string_tuple(d["notes"]), string_tuple(d["limitations"]),
+    )
 
 
 def _action(value: object) -> ActionRef | None:
@@ -222,29 +400,125 @@ def _action(value: object) -> ActionRef | None:
     return ActionRef(string(d["action_id"]), string(d["version"]))
 
 
-def _summary(value: object) -> CheckSummary:
-    d = obj(value, "total verified contradicted not_observed")
-    return CheckSummary(integer(d["total"]), integer(d["verified"]), integer(d["contradicted"]), integer(d["not_observed"]))
+def _source_state_binding(value: object) -> SourceStateBinding:
+    d = obj(value, "state_id state_identity_hash state_artifact_id state_artifact_sha256")
+    return SourceStateBinding(string(d["state_id"]), string(d["state_identity_hash"]),
+                              string(d["state_artifact_id"]), string(d["state_artifact_sha256"]))
 
 
-def state_identity(state: StatisticalStateV3) -> str:
-    # Explicit boundary serialization. Operational metadata never contributes.
-    payload = asdict(state)
-    del payload["operational_sources"]
-    return digest({"schema_version": 3, "kind": "STATISTICAL_STATE", **payload})
+def _research_puzzle(value: object) -> ResearchPuzzle:
+    d = obj(value, "origin question interpretation proposed_action_ids")
+    return ResearchPuzzle(string(d["origin"]), string(d["question"]), string(d["interpretation"]),
+                          string_tuple(d["proposed_action_ids"]))
 
 
-def evidence_identity(state: EvidenceStateV3) -> str:
-    return digest({"schema_version": 3, "kind": "EVIDENCE_STATE", **asdict(state)})
+def _project_evidence_row(value: object) -> ProjectEvidenceRow:
+    d = obj(value, "project_id affected_case_count examined_cases project_case_with_ssm "
+                   "cases_with_expression missing_measurements")
+    return ProjectEvidenceRow(string(d["project_id"]), _metric_record(d["affected_case_count"]),
+                              _metric_record(d["examined_cases"]), _metric_record(d["project_case_with_ssm"]),
+                              _metric_record(d["cases_with_expression"]),
+                              _metric_record(d["missing_measurements"]))
 
 
-def write_state(state: StatisticalStateV3) -> bytes:
-    return canonical_bytes({"schema_version": 3, "kind": "STATISTICAL_STATE", **asdict(state), "state_hash": state_identity(state)})
+def _missing_evidence(value: object) -> MissingEvidence:
+    d = obj(value, "needed_evidence availability reason")
+    return MissingEvidence(string(d["needed_evidence"]), MetricAvailability(string(d["availability"])),
+                           optional_string(d["reason"]))
 
 
-def write_evidence(state: EvidenceStateV3) -> bytes:
-    return canonical_bytes({"schema_version": 3, "kind": "EVIDENCE_STATE", **asdict(state),
-                            "summary": asdict(state.summary), "evidence_hash": evidence_identity(state)})
+def _input_artifact(value: object) -> InputArtifactRef:
+    d = obj(value, "kind ref sha256 verified")
+    return InputArtifactRef(string(d["kind"]), optional_string(d["ref"]),
+                            optional_string(d["sha256"]), boolean(d["verified"]))
+
+
+def _evidence_provenance(value: object) -> EvidenceProvenance:
+    d = obj(value, "gdc_release sources methods environment_hash action_registry_version "
+                   "selection_artifact_sha256 input_artifacts")
+    return EvidenceProvenance(
+        string(d["gdc_release"]), _sources(d["sources"]),
+        tuple(_method_identity(item) for item in seq(d["methods"])), string(d["environment_hash"]),
+        string(d["action_registry_version"]), string(d["selection_artifact_sha256"]),
+        tuple(_input_artifact(item) for item in seq(d["input_artifacts"])),
+    )
+
+
+# -------------------------------------------------------------------- identity
+
+
+def _jsonable(value: object) -> object:
+    """Convert retained boundary bytes into their decoded JSON form for identity/serialization."""
+    if isinstance(value, bytes):
+        return decode(value)
+    if isinstance(value, dict):
+        return {key: _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    return value
+
+
+def _state_identity_payload(state: StatisticalState) -> dict[str, object]:
+    payload = _jsonable(asdict(state))
+    assert isinstance(payload, dict)
+    # Operational attempt/cache/artifact links and provider ranking metadata are
+    # not scientific truth and never contribute to identity.
+    payload.pop("operational_sources")
+    tested_context = payload["tested_context"]
+    if isinstance(tested_context, dict):
+        tested_context.pop("selection_artifact_id", None)
+    projects = payload["projects"]
+    if isinstance(projects, list):
+        for project in projects:
+            if isinstance(project, dict):
+                project["discovery"] = None
+    return payload
+
+
+def _evidence_identity_payload(state: EvidenceState) -> dict[str, object]:
+    payload = _jsonable(asdict(state))
+    assert isinstance(payload, dict)
+    # The revision's scientific identity is its content: the accepted state's
+    # identity hash, parent identity, revision index, checks and copied evidence.
+    # Source state ids and input artifact ids are operational and never enter it.
+    source = payload["source_state"]
+    if isinstance(source, dict):
+        source.pop("state_artifact_id", None)
+        source.pop("state_artifact_sha256", None)
+        source.pop("state_id", None)
+    provenance = payload.get("provenance")
+    if isinstance(provenance, dict):
+        for artifact in provenance.get("input_artifacts", []):
+            if isinstance(artifact, dict):
+                artifact["ref"] = None
+    return payload
+
+
+def state_identity(state: StatisticalState) -> str:
+    return digest({"schema_version": STATE_SCHEMA_VERSION, "kind": "STATISTICAL_STATE",
+                   **_state_identity_payload(state)})
+
+
+def evidence_identity(state: EvidenceState) -> str:
+    return digest({"schema_version": EVIDENCE_SCHEMA_VERSION, "kind": "EVIDENCE_STATE",
+                   **_evidence_identity_payload(state)})
+
+
+# ---------------------------------------------------------------- serialization
+
+
+def write_state(state: StatisticalState) -> bytes:
+    payload = _jsonable(asdict(state))
+    assert isinstance(payload, dict)
+    return canonical_bytes({"schema_version": STATE_SCHEMA_VERSION, "kind": "STATISTICAL_STATE",
+                            **payload, "state_hash": state_identity(state)})
+
+
+def write_evidence(state: EvidenceState) -> bytes:
+    payload = _jsonable(asdict(state))
+    assert isinstance(payload, dict)
+    return canonical_bytes({"schema_version": EVIDENCE_SCHEMA_VERSION, "kind": "EVIDENCE_STATE",
+                            **payload, "evidence_hash": evidence_identity(state)})
 
 
 def _binding(actual: str, stored: object, expected: str | None) -> None:
@@ -256,17 +530,29 @@ def _binding(actual: str, stored: object, expected: str | None) -> None:
         require(actual == expected, "expected scientific identity mismatch")
 
 
-def read_state(data: bytes, *, expected_hash: str | None = None) -> StatisticalStateV3 | LegacyArtifact:
+def _unsupported(record: dict[str, object], version: int, kind: str) -> None:
+    if record.get("schema_version") != version:
+        raise ContractError("unsupported scientific schema version", "UNSUPPORTED_SCHEMA_VERSION")
+    if record.get("kind") != kind:
+        raise ContractError("wrong artifact kind", "UNSUPPORTED_SCHEMA_VERSION")
+
+
+def read_state(data: bytes, *, expected_hash: str | None = None) -> StatisticalState:
     try:
         d = decode(data)
-        if version(d) != 3:
-            return read_legacy_state(data, expected_hash=expected_hash)
-        obj(d, "schema_version kind entity frame universe mutation expression cnv quality sources operational_sources state_hash")
-        require(d["kind"] == "STATISTICAL_STATE", "wrong artifact kind")
-        state = StatisticalStateV3(_entity(d["entity"]), _frame(d["frame"]), _universe(d["universe"]),
-                                   _mutation(d["mutation"]), _expression(d["expression"]), _cnv(d["cnv"]),
-                                   _quality(d["quality"]), _sources(d["sources"]),
-                                   tuple(_operational_source(item) for item in seq(d["operational_sources"])))
+        _unsupported(d, STATE_SCHEMA_VERSION, "STATISTICAL_STATE")
+        obj(d, "schema_version kind entity annotation research universe tested_context projects "
+               "cross_project quality warnings missingness methods environment_hash sources "
+               "operational_sources state_hash")
+        state = StatisticalState(
+            _entity(d["entity"]), _annotation(d["annotation"]), _research_state(d["research"]),
+            _universe(d["universe"]), _tested_context(d["tested_context"]),
+            tuple(_project_state(item) for item in seq(d["projects"])), _cross_project(d["cross_project"]),
+            _quality(d["quality"]), string_tuple(d["warnings"]), string_tuple(d["missingness"]),
+            tuple(_method_identity(item) for item in seq(d["methods"])), string(d["environment_hash"]),
+            _sources(d["sources"]),
+            tuple(_operational_source(item) for item in seq(d["operational_sources"])),
+        )
         _binding(state_identity(state), d["state_hash"], expected_hash)
         return state
     except ContractError:
@@ -275,18 +561,23 @@ def read_state(data: bytes, *, expected_hash: str | None = None) -> StatisticalS
         raise ContractError("invalid statistical state") from exc
 
 
-def read_evidence(data: bytes, *, expected_hash: str | None = None) -> EvidenceStateV3 | LegacyArtifact:
+def read_evidence(data: bytes, *, expected_hash: str | None = None) -> EvidenceState:
     try:
         d = decode(data)
-        if version(d) != 3:
-            return read_legacy_evidence(data, expected_hash=expected_hash)
-        obj(d, "schema_version kind entity accepted_state_hash parent_evidence_hash revision_index action checks quality sources summary evidence_hash")
-        require(d["kind"] == "EVIDENCE_STATE", "wrong artifact kind")
-        state = EvidenceStateV3(_entity(d["entity"]), string(d["accepted_state_hash"]),
-                                optional_string(d["parent_evidence_hash"]), integer(d["revision_index"]),
-                                _action(d["action"]), tuple(_check(item) for item in seq(d["checks"])),
-                                _quality(d["quality"]), _sources(d["sources"]))
-        require(_summary(d["summary"]) == state.summary, "check summary does not match checks")
+        _unsupported(d, EVIDENCE_SCHEMA_VERSION, "EVIDENCE_STATE")
+        obj(d, "schema_version kind entity accepted_state_hash source_state parent_evidence_hash "
+               "revision_index action puzzle checks baseline_observations project_evidence missing_evidence "
+               "quality warnings provenance evidence_hash")
+        state = EvidenceState(
+            _entity(d["entity"]), string(d["accepted_state_hash"]), _source_state_binding(d["source_state"]),
+            optional_string(d["parent_evidence_hash"]), integer(d["revision_index"]), _action(d["action"]),
+            None if d["puzzle"] is None else _research_puzzle(d["puzzle"]),
+            tuple(_check(item) for item in seq(d["checks"])),
+            tuple(_baseline_observation(item) for item in seq(d["baseline_observations"])),
+            tuple(_project_evidence_row(item) for item in seq(d["project_evidence"])),
+            tuple(_missing_evidence(item) for item in seq(d["missing_evidence"])),
+            _quality(d["quality"]), string_tuple(d["warnings"]), _evidence_provenance(d["provenance"]),
+        )
         _binding(evidence_identity(state), d["evidence_hash"], expected_hash)
         return state
     except ContractError:

@@ -1,134 +1,310 @@
+"""Bounded synthetic provider-shaped fixtures for offline demonstration runs.
+
+These bodies are clearly labelled SYNTHETIC provider-shaped responses, used only
+to exercise the current architecture without network access. They flow through
+the same strict parsers, deterministic methods, typed states, registered actions,
+Jev projections and dossier path as a live run; only the provider transport and
+the Jev adapter are substituted. Real captured provider bytes live under
+``tests/contracts/fixtures/gdc`` and are never replaced by these.
+"""
+
 from __future__ import annotations
 
-from typing import Any
+import json
+from typing import Any, cast
+from uuid import uuid4
 
-from cancerjev.domain.hypotheses import HYPOTHESIS_LABEL
+from cancerjev.domain.events import utc_now
+from cancerjev.gdc.endpoints import GDCRequest
+from cancerjev.gdc.transport import GDCResponse
+from cancerjev.jev.questions import (
+    DEEP_LIMITATION_ROSTER,
+    HYPOTHESIS_UNSUPPORTED_ROSTER,
+    LIMITATION_ROSTER,
+    QuestionDefinition,
+)
+from cancerjev.jev.typesafe_adapter import ProviderAnswerSet
+from cancerjev.storage.artifacts import ArtifactStore
 
+FIXTURE_ID = "demo"
+FIXTURE_VERSION = "demo-v1"
 FIXTURE_NOTICE = "SYNTHETIC FAKE FIXTURE — NO REAL GDC DATA"
 
-PATTERNS = (
-    ("FJEV1", "obvious strong synthetic pattern", 0.88, "coherent"),
-    ("FJEV2", "weak distributed synthetic pattern", 0.46, "weak"),
-    ("FJEV3", "project-specific synthetic exception", 0.63, "exception"),
-    ("FJEV4", "fragile synthetic candidate", 0.74, "fragile"),
-    ("FJEV5", "no coherent synthetic pattern", 0.18, "none"),
-    ("FJEV6", "moderate distributed synthetic pattern", 0.57, "distributed"),
-    ("FJEV7", "missing-heavy synthetic pattern", 0.31, "missing"),
-    ("FJEV8", "opposing-project synthetic pattern", 0.52, "opposed"),
-    ("FJEV9", "flat synthetic pattern", 0.12, "none"),
-    ("FJEV10", "localized synthetic pattern", 0.41, "localized"),
-    ("FJEV11", "replicated synthetic pattern", 0.69, "replicated"),
-    ("FJEV12", "insufficient synthetic pattern", 0.22, "insufficient"),
-)
-
-# Valid option rosters per fixture question, mirroring the Choice contract.
-CHOICE_ROSTERS = {
-    "wide_pattern_route": ("PROMOTE", "DEFER"),
-    "deep_route": ("FOLLOW_UP", "CLOSE"),
-    "followup_outcome": ("WEAKENED", "UNCHANGED", "STRENGTHENED"),
-    "hypothesis_testability": ("TESTABLE", "NOT_TESTABLE"),
-}
-
-# Jev Score contract: 0..4 follow-up-value rubric, numbered from zero.
-SCORE_LEVELS = ("0", "1", "2", "3", "4")
-SCORE_LEGEND = {
-    "0": "no useful eligible test",
-    "1": "weak reason",
-    "2": "plausible reason",
-    "3": "strong reason",
-    "4": "unusually compelling reason",
-}
+PROJECTS = {"TCGA-LUAD": 100}
+GENES = ["ENSG00000000001", "ENSG00000000002"]
+COUNTS = {"TCGA-LUAD": {GENES[0]: 20, GENES[1]: 5}}
+COVERAGE = {"TCGA-LUAD": 95}
 
 
-def _normalized_distribution(options: tuple[str, ...], weights: list[float]) -> dict[str, float]:
-    total = sum(weights)
-    if total <= 0:
-        raise ValueError("distribution weights must be positive")
-    scaled = [weight / total for weight in weights]
-    distribution = {option: round(share, 3) for option, share in zip(options[:-1], scaled[:-1], strict=True)}
-    distribution[options[-1]] = round(max(0.0, 1 - sum(distribution.values())), 3)
-    return distribution
+def _json(payload: Any) -> bytes:
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
 
 
-def choice_answer(question_id: str, chosen: str, probability: float, confidence: float) -> dict[str, Any]:
-    roster = CHOICE_ROSTERS[question_id]
-    if chosen not in roster:
-        raise ValueError(f"{chosen} is not in the {question_id} roster")
-    if not 0 <= probability <= 1 or not 0 <= confidence <= 1:
-        raise ValueError("choice probabilities must be within [0,1]")
-    weights = [probability if option == chosen else (1 - probability) / (len(roster) - 1) for option in roster]
-    return {"question_id": question_id, "chosen": chosen, "distribution": _normalized_distribution(roster, weights), "confidence": confidence}
+def _filter_project(request: GDCRequest) -> str:
+    params = dict(request.params)
+    filters = json.loads(params["filters"])
+    # The bounded request builders in gdc.endpoints always place project id strings here.
+    return cast(str, filters["content"]["value"][0] if filters["op"] == "in"
+                else filters["content"][0]["content"]["value"][0])
 
 
-def score_answer(selected: int, confidence: float) -> dict[str, Any]:
-    if selected not in range(len(SCORE_LEVELS)):
-        raise ValueError("score level outside the 0..4 rubric")
-    if not 0 <= confidence <= 1:
-        raise ValueError("score confidence must be within [0,1]")
-    weights = [0.05] * len(SCORE_LEVELS)
-    weights[selected] = 0.8
-    distribution = _normalized_distribution(SCORE_LEVELS, weights)
-    expected = round(sum(int(level) * share for level, share in distribution.items()), 3)
-    return {"selected": selected, "expected": expected, "distribution": distribution, "confidence": confidence, "legend": dict(SCORE_LEGEND)}
+def status_body() -> bytes:
+    return _json({"commit": "0" * 40, "data_release": "Data Release TEST - 2026-01-01",
+                  "status": "OK", "tag": "9.0.0"})
 
 
-def statistical_states(run_id: str, make_id) -> list[dict[str, Any]]:
-    result = []
-    for index, (symbol, description, effect, shape) in enumerate(PATTERNS):
-        result.append({
-            "schema_version": 1, "state_id": make_id(f"state:{index}"), "run_id": run_id,
-            "fixture_notice": FIXTURE_NOTICE,
-            "entity": {"gene_id": f"SYNTHETIC-{index + 1:03d}", "gene_symbol": symbol, "genome_build": "SYNTHETIC"},
-            "scope": {"projects": ["SYNTHETIC-DEMO-A", "SYNTHETIC-DEMO-B"], "modalities": ["fixture-expression"]},
-            "pattern": {"description": description, "shape": shape, "effect_like_descriptive_value": effect, "unit": "synthetic-unit"},
-            "quality": {"availability": "OBSERVED", "missingness": round(index * 0.01, 2), "warnings": ["Fixture values are not scientific observations."]},
-            "tested_context": {"exploratory": True, "coverage": "COMPLETE_FOR_FIXTURE"},
-            "provenance": {"sources": [], "methods": ["SYNTHETIC_FIXTURE_GENERATOR_V1"]},
+def projects_body(projects: dict[str, int], selected_project_id: str) -> bytes:
+    hits = []
+    for project_id, case_count in projects.items():
+        if project_id != selected_project_id:
+            continue
+        hits.append({
+            "project_id": project_id, "name": f"Project {project_id}",
+            "program": {"name": "TESTPROG"}, "primary_site": ["Lung"],
+            "disease_type": ["Adenomas and Adenocarcinomas"],
+            "summary": {"case_count": case_count, "file_count": case_count * 5,
+                        "data_categories": [{"data_category": "Transcriptome Profiling"}]},
         })
-    return result
+    return _json({"data": {"hits": hits, "pagination": {"count": len(hits), "total": len(hits),
+                                                       "size": 100, "from": 0, "pages": 1}}})
 
 
-def judgment_vector(question_id: str, chosen: str, probability: float, score_level: int) -> dict[str, Any]:
-    return {
-        "fixture_notice": FIXTURE_NOTICE,
-        "noul": {"probability": probability, "semantic_label": "pattern merits attention"},
-        "choice": choice_answer(question_id, chosen, probability, 0.79),
-        "score": score_answer(score_level, 0.76),
-    }
+def discovery_body(project_id: str) -> bytes:
+    return _json({"data": {"hits": [
+        {"gene_id": GENES[0], "symbol": "GENEONE", "_score": 800.0},
+        {"gene_id": GENES[1], "symbol": "GENETWO", "_score": 120.0},
+    ], "pagination": {"count": 2, "total": 2, "size": 20, "from": 0, "pages": 1}}})
 
 
-def evidence(run_id: str, candidate_id: str, state: dict[str, Any], make_id, *, followup: bool = False, previous: str | None = None) -> dict[str, Any]:
-    iteration = 1 if followup else 0
-    n = 20 if followup else 24
-    effect = 0.61 if followup else 0.88
-    return {
-        "schema_version": 1, "evidence_state_id": make_id(f"evidence:{candidate_id}:{iteration}"),
-        "run_id": run_id, "candidate_id": candidate_id, "fixture_notice": FIXTURE_NOTICE,
-        "previous_evidence_state_id": previous, "iteration_number": iteration,
-        "entity": state["entity"], "source_statistical_state": {"state_identity_hash": state["state_hash"]},
-        "research_puzzle": {"origin": "DETERMINISTIC_TEMPLATE", "unresolved_questions": ["Is the synthetic pattern robust to influential fixture observations?"]},
-        "deterministic_observations": [{
-            "result_id": make_id(f"result:{candidate_id}:{iteration}"), "method_id": "FIXTURE_DESCRIPTIVE_V1",
-            "method_version": "1", "n_effective": n, "availability": "OBSERVED",
-            "effect": {"name": "synthetic contrast", "value": effect, "unit": "synthetic-unit"},
-            "p_value": None, "q_value": None, "inference_status": "NOT_APPLICABLE_FIXTURE",
-            "missingness": {"count": 4 if followup else 2, "reason": "deliberate fixture variation"},
-            "limitations": ["Synthetic fixture only; no real population, assay, or inferential claim."],
-        }],
-        "project_level_evidence": [
-            {"project_id": "SYNTHETIC-DEMO-A", "n": n // 2, "effect_like_value": effect, "availability": "OBSERVED"},
-            {"project_id": "SYNTHETIC-DEMO-B", "n": n // 2, "effect_like_value": round(effect - 0.17, 2), "availability": "OBSERVED"},
-        ],
-        "cross_project_patterns": {"limitations": ["Two fabricated projects cannot establish generality."]},
-        "missing_evidence": [{"needed_evidence": "real molecular observations", "availability": "NOT_ACQUIRED", "reason": "Phase 1 forbids providers"}],
-        "quality_and_fragility": {"sample_sizes": [n // 2, n // 2], "sensitivity_results": ([{"action": "DROP_INFLUENTIAL_FIXTURE_POINTS", "before": 0.88, "after": 0.61}] if followup else []), "warnings": ["SYNTHETIC"]},
-        "provenance": {"sources": [], "environment": "fixture"},
-    }
+def counts_body() -> bytes:
+    buckets = []
+    for project_id, counts in COUNTS.items():
+        gene_buckets = [{"key": gene_id, "doc_count": count} for gene_id, count in sorted(counts.items())]
+        buckets.append({"key": project_id, "doc_count": sum(counts.values()),
+                        "genes": {"my_genes": {"gene_id": {"buckets": gene_buckets}}}})
+    return _json({"took": 5, "timed_out": False, "_shards": {"total": 5, "successful": 5, "failed": 0},
+                  "hits": {"total": {"value": sum(sum(c.values()) for c in COUNTS.values())}},
+                  "sum_other_doc_count": 0, "doc_count_error_upper_bound": 0,
+                  "aggregations": {"projects": {"buckets": buckets}}})
 
 
-def hypotheses(candidate_id: str, evidence_id: str, make_id) -> list[dict[str, Any]]:
-    return [
-        {"hypothesis_id": make_id(f"hypothesis:{candidate_id}:a"), "label": HYPOTHESIS_LABEL, "candidate_id": candidate_id, "evidence_state_id": evidence_id, "statement": "The synthetic pattern is broadly distributed across fixture observations.", "proposed_mechanism": "Fixture generator branch A", "predictions": ["Removing a few points preserves most of the pattern."], "contradicted_if": ["The fixture contrast collapses after sensitivity analysis."], "distinguishing_tests": ["DROP_INFLUENTIAL_FIXTURE_POINTS_V1"], "required_evidence": ["fixture sensitivity result"], "unsupported_assumptions": ["No biological mechanism is asserted."], "proposed_action_ids": ["DROP_INFLUENTIAL_FIXTURE_POINTS_V1"], "factual_observation_refs": []},
-        {"hypothesis_id": make_id(f"hypothesis:{candidate_id}:b"), "label": HYPOTHESIS_LABEL, "candidate_id": candidate_id, "evidence_state_id": evidence_id, "statement": "The synthetic pattern is dominated by a small number of fixture observations.", "proposed_mechanism": "Fixture generator branch B", "predictions": ["Removing influential points materially weakens the pattern."], "contradicted_if": ["The fixture contrast is stable."], "distinguishing_tests": ["DROP_INFLUENTIAL_FIXTURE_POINTS_V1"], "required_evidence": ["fixture sensitivity result"], "unsupported_assumptions": ["No biological mechanism is asserted."], "proposed_action_ids": ["DROP_INFLUENTIAL_FIXTURE_POINTS_V1"], "factual_observation_refs": []},
-    ]
+def coverage_body() -> bytes:
+    buckets = [{"key": project_id, "doc_count": count,
+                "case_summary": {"case_with_ssm": {"doc_count": count}}}
+               for project_id, count in sorted(COVERAGE.items())]
+    return _json({"took": 3, "timed_out": False, "_shards": {"total": 5, "successful": 5, "failed": 0},
+                  "sum_other_doc_count": 0, "doc_count_error_upper_bound": 0,
+                  "aggregations": {"projects": {"buckets": buckets}}})
 
+
+def genes_body() -> bytes:
+    return _json({"data": {"hits": [
+        {"gene_id": GENES[0], "symbol": "GENEONE", "name": "Gene One", "biotype": "protein_coding",
+         "is_cancer_gene_census": True},
+        {"gene_id": GENES[1], "symbol": "GENETWO", "name": "Gene Two", "biotype": "protein_coding",
+         "is_cancer_gene_census": False},
+    ], "pagination": {"count": 2, "total": 2, "size": 10, "from": 0, "pages": 1}}})
+
+
+def case_ids(project_id: str, projects: dict[str, int]) -> list[str]:
+    return [f"{project_id}-case-{index:04d}" for index in range(projects[project_id])]
+
+
+def cases_body(project_id: str, projects: dict[str, int], *, size: int, offset: int) -> bytes:
+    all_ids = case_ids(project_id, projects)
+    ids = all_ids[offset:offset + size]
+    hits = [{"case_id": case_id, "submitter_id": case_id.upper(), "project": {"project_id": project_id},
+             "samples": [{"sample_type": "Primary Tumor"}]} for case_id in ids]
+    total = len(all_ids)
+    return _json({"data": {"hits": hits, "pagination": {"count": len(hits), "total": total,
+                                                       "size": size, "from": offset,
+                                                       "pages": (total + size - 1) // size}}})
+
+
+def files_body(project_id: str) -> bytes:
+    hits = [{"file_id": f"{project_id}-file-{index}", "access": "open",
+             "analysis": {"workflow_type": "STAR - Counts"}, "experimental_strategy": "RNA-Seq"}
+            for index in range(3)]
+    return _json({"data": {"hits": hits, "pagination": {"count": len(hits), "total": len(hits),
+                                                       "size": 5, "from": 0, "pages": 1}}})
+
+
+def availability_body(case_ids_requested: list[str], gene_ids: list[str]) -> bytes:
+    return _json({
+        "cases": {
+            "details": [{"case_id": case_id, "has_gene_expression_values": True}
+                        for case_id in case_ids_requested],
+            "with_gene_expression_count": len(case_ids_requested),
+            "without_gene_expression_count": 0,
+        },
+        "genes": {
+            "details": [{"gene_id": gene_id, "has_gene_expression_values": True}
+                        for gene_id in gene_ids],
+            "with_gene_expression_count": len(gene_ids),
+            "without_gene_expression_count": 0,
+        },
+    })
+
+
+def gene_selection_body(case_ids_requested: list[str], gene_ids: list[str]) -> bytes:
+    return _json({"gene_selection": [
+        {"gene_id": gene_id, "symbol": f"GENE{gene_ids.index(gene_id) + 1}",
+         "log2_uqfpkm_median": 3.0 + gene_ids.index(gene_id), "log2_uqfpkm_stddev": 0.5}
+        for gene_id in gene_ids
+    ]})
+
+
+def values_body(case_ids_requested: list[str], gene_ids: list[str]) -> bytes:
+    lines = ["gene_id\t" + "\t".join(case_ids_requested)]
+    for gene_index, gene_id in enumerate(gene_ids):
+        cells = [f"{3.0 + gene_index + (index % 7) * 0.5:.4f}" for index in range(len(case_ids_requested))]
+        lines.append(gene_id + "\t" + "\t".join(cells))
+    return ("\n".join(lines) + "\n").encode()
+
+
+class FixtureTransport:
+    """Network-boundary fixture double: real artifacts, real provider shapes, no sockets."""
+
+    def __init__(self, artifacts: ArtifactStore, run_id: str, *, repository: Any = None,
+                 project_case_counts: dict[str, int] | None = None) -> None:
+        self.artifacts = artifacts
+        self.run_id = run_id
+        self.repository = repository
+        self.project_case_counts = project_case_counts or PROJECTS
+        self.requests: list[GDCRequest] = []
+        self.published: list[Any] = []
+        self._counter = 0
+
+    def _project_of(self, case_ids: list[str]) -> str:
+        return case_ids[0].rsplit("-case-", 1)[0]
+
+    def request(self, request: GDCRequest) -> GDCResponse:
+        self.requests.append(request)
+        self._counter += 1
+        name = request.endpoint.name
+        # The expression POST endpoints always carry a body built by gdc.endpoints.expression_*_request.
+        request_body = cast(dict[str, Any], request.body)
+        if name == "status":
+            body = status_body()
+        elif name == "projects":
+            body = projects_body(self.project_case_counts, _filter_project(request))
+        elif name == "top_mutated_genes_by_project":
+            body = discovery_body(_filter_project(request))
+        elif name == "top_cases_counts_by_genes":
+            body = counts_body()
+        elif name == "mutated_cases_count_by_project":
+            body = coverage_body()
+        elif name == "genes":
+            body = genes_body()
+        elif name == "cases":
+            params = dict(request.params)
+            body = cases_body(_filter_project(request), self.project_case_counts,
+                              size=int(params["size"]), offset=int(params["from"]))
+        elif name == "files":
+            body = files_body(_filter_project(request))
+        elif name == "gene_expression_availability":
+            body = availability_body(request_body["case_ids"], request_body["gene_ids"])
+        elif name == "gene_expression_gene_selection":
+            body = gene_selection_body(request_body["case_ids"], request_body["gene_ids"])
+        elif name == "gene_expression_values":
+            body = values_body(request_body["case_ids"], request_body["gene_ids"])
+        else:  # pragma: no cover - guards against silent fixture drift
+            raise AssertionError(f"fixture transport has no response for {name}")
+        media = "text/tab-separated-values" if request.accept != "application/json" else "application/json"
+        artifact = self.artifacts.publish(
+            f"fixture/{self.run_id}/{name}-{self._counter}.body", body, media, "gdc-response",
+        )
+        self.published.append(artifact)
+        if self.repository is not None:
+            self.repository.register_artifact(artifact, self.run_id)
+        return GDCResponse(
+            request_hash=request.request_hash(), endpoint=request.path, method=request.method,
+            http_status=200, headers={"content-type": media}, body=body,
+            body_sha256=artifact.sha256, artifact=artifact, completeness="COMPLETE",
+            from_cache=False, retrieved_at=utc_now(), latency_ms=1,
+            request_id=str(uuid4()), attempt_no=1,
+        )
+
+
+class FixtureJevAdapter:
+    """Deterministic offline Jev stand-in for the current question sets.
+
+    Answers are a fixed, clearly labelled synthetic judgment: they exercise the
+    same projection, validation, admission, deep-policy and hypothesis-review path
+    as a live adapter, and the recorded model identity makes the substitution
+    explicit. No network, no SDK and no provider credential.
+    """
+
+    def __init__(self, *, model: str) -> None:
+        self.model = model
+        self.calls = 0
+        self.last_projection: dict[str, Any] | None = None
+
+    def evaluate(self, projection: dict[str, Any],
+                 definitions: tuple[QuestionDefinition, ...]) -> ProviderAnswerSet:
+        self.calls += 1
+        self.last_projection = projection
+        version = projection.get("projection_version")
+        if version == "jev-evidence-projection-v2":
+            answers = self._deep_answers()
+        elif version == "jev-hypothesis-projection-v2":
+            answers = self._hypothesis_answers()
+        else:
+            answers = self._wide_answers(projection)
+        return ProviderAnswerSet(
+            requested_model=self.model,
+            resolved_model=self.model,
+            answers=answers,
+            usage={"input_tokens": None, "output_tokens": None},
+            latency_ms=0,
+            request_id="fixture-jev-request",
+        )
+
+    def _deep_answers(self) -> dict[str, dict[str, Any]]:
+        probabilities = {
+            option: (0.88 if option == "NONE" else 0.12 / (len(DEEP_LIMITATION_ROSTER) - 1))
+            for option in DEEP_LIMITATION_ROSTER
+        }
+        return {
+            "revision_reliable": {"kind": "noul", "probability_yes": 0.90},
+            "evidence_sufficient_for_next_step": {"kind": "noul", "probability_yes": 0.70},
+            "next_step_warranted": {"kind": "noul", "probability_yes": 0.20},
+            "stopping_more_honest": {"kind": "noul", "probability_yes": 0.80},
+            "dominant_limitation": {
+                "kind": "choice", "choice": "NONE", "confidence": 0.88,
+                "probabilities": probabilities,
+            },
+        }
+
+    def _hypothesis_answers(self) -> dict[str, dict[str, Any]]:
+        probabilities = {
+            option: (0.70 if option == "NONE" else 0.30 / (len(HYPOTHESIS_UNSUPPORTED_ROSTER) - 1))
+            for option in HYPOTHESIS_UNSUPPORTED_ROSTER
+        }
+        return {
+            "hypothesis_testable": {"kind": "noul", "probability_yes": 0.80},
+            "hypothesis_exceeds_recorded_evidence": {"kind": "noul", "probability_yes": 0.35},
+            "hypothesis_dominant_unsupported_assumption": {
+                "kind": "choice", "choice": "NONE", "confidence": 0.70, "probabilities": probabilities,
+            },
+        }
+
+    def _wide_answers(self, projection: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        cohort = projection.get("cohort", {})
+        limitation = "COVERAGE" if cohort.get("coverage_imbalance") else "NONE"
+        probabilities = {
+            option: (0.88 if option == limitation else 0.12 / (len(LIMITATION_ROSTER) - 1))
+            for option in LIMITATION_ROSTER
+        }
+        return {
+            "evidence_quality_adequate": {"kind": "noul", "probability_yes": 0.85},
+            "mutation_evidence_coherent": {"kind": "noul", "probability_yes": 0.82},
+            "expression_evidence_coherent": {"kind": "noul", "probability_yes": 0.80},
+            "signal_explained_by_coverage": {"kind": "noul", "probability_yes": 0.10},
+            "unresolved_uncertainty_material": {"kind": "noul", "probability_yes": 0.85},
+            "warrants_deeper_investigation": {"kind": "noul", "probability_yes": 0.90},
+            "dominant_limitation": {
+                "kind": "choice", "choice": limitation, "confidence": 0.88,
+                "probabilities": probabilities,
+            },
+        }

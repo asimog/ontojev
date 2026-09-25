@@ -1,471 +1,460 @@
-"""Phase 6: bounded hypothesis generation, its Jev review, and the live dossier."""
+"""Hypothesis stage integration: bounded generation, labelled text, one review each.
+
+Template generation is the default and is deterministic. An injected generator is
+untrusted input: malformed output is a typed UNAVAILABLE outcome, nothing is persisted
+partially, and generated text never writes a measured field. Each stored hypothesis is
+judged exactly once under ``hypothesis-v2``.
+"""
 
 from __future__ import annotations
 
 import json
 
-from fastapi.testclient import TestClient
+import pytest
 
-from apps.api.main import create_app
+from cancerjev.domain.hypotheses import DRAFT_FIELDS
 from cancerjev.research.hypotheses import (
-    INJECTED_GENERATOR,
     LIVE_HYPOTHESIS_LABEL,
     LLM_HYPOTHESIS_LABEL,
-    MAX_HYPOTHESES,
     TEMPLATE_GENERATOR,
-    generate_template_hypotheses,
 )
 from cancerjev.science.actions import ACTION_REGISTRY
-from tests.integration.test_live_replay import _orchestrator
+from cancerjev.storage.readers import read_hypothesis_record
+from tests.integration.test_live_replay import (
+    _api_client,
+    _events,
+    _orchestrator,
+)
 from tests.jev.stub_adapter import StubAdapter
 
-HYPOTHESIS_QUESTIONS = {
+HYPOTHESIS_ANSWERS = {
     "hypothesis_testable", "hypothesis_exceeds_recorded_evidence",
     "hypothesis_dominant_unsupported_assumption",
 }
 
 
-def _hypothesis_adapter(**deep_overrides) -> StubAdapter:
-    """Wide admission abstains; the deep judgment asks for competing explanations."""
-    deep = {"next_step_warranted": {"kind": "noul", "probability_yes": 0.2},
-            "stopping_more_honest": {"kind": "noul", "probability_yes": 0.2},
-            "evidence_sufficient_for_next_step": {"kind": "noul", "probability_yes": 0.8}}
-    deep.update(deep_overrides)
-    return StubAdapter(override={"warrants_deeper_investigation": {"kind": "noul", "probability_yes": 0.05}},
-                       deep_override=deep)
+def _hypothesis_adapter(*, stopping: float = 0.2, warranted: float = 0.2,
+                        sufficient: float = 0.8, reliable: float = 0.9) -> StubAdapter:
+    return StubAdapter(
+        override={"warrants_deeper_investigation": {"kind": "noul", "probability_yes": 0.05}},
+        deep_override={
+            "stopping_more_honest": {"kind": "noul", "probability_yes": stopping},
+            "next_step_warranted": {"kind": "noul", "probability_yes": warranted},
+            "evidence_sufficient_for_next_step": {"kind": "noul", "probability_yes": sufficient},
+            "revision_reliable": {"kind": "noul", "probability_yes": reliable},
+        },
+    )
 
 
-def _run(runtime, monkeypatch, *, authorized=True, settings_override=None, llm_generator=None, **kwargs):
+def _run(runtime, monkeypatch, *, jev_adapter=None, authorized=True, hypotheses_requested=False,
+         llm_generator=None, **replay_options):
+    adapter = jev_adapter if jev_adapter is not None else _hypothesis_adapter()
     orchestrator, _, repository = _orchestrator(
-        runtime, monkeypatch,
-        jev_adapter=_hypothesis_adapter(**kwargs.pop("deep_overrides", {})),
-        deep_selection="GENEONE", deep_followup_authorized=authorized, **kwargs)
-    if settings_override is not None:
-        orchestrator.settings = settings_override
-    if llm_generator is not None:
-        orchestrator.llm_generator = llm_generator
+        runtime, monkeypatch, jev_adapter=adapter, deep_selection="GENEONE",
+        deep_followup_authorized=authorized, deep_hypotheses_requested=hypotheses_requested,
+        llm_generator=llm_generator, **replay_options)
     run_id = orchestrator.run()
-    run = repository.get_run(run_id)
-    assert run["status"] == "COMPLETED"
-    completed = [event for event in repository.events(run_id, 0, 800)["items"]
-                 if event["type"] == "RUN_COMPLETED"][-1]
-    return run_id, run, repository, completed["data"]["deep"]["candidates"][0]
+    assert repository.get_run(run_id)["status"] == "COMPLETED"
+    deep = next(event for event in _events(repository, run_id)
+                if event["type"] == "RUN_COMPLETED")["data"]["deep"]
+    assert deep["candidate_count"] == 1
+    return run_id, deep["candidates"][0], repository
 
 
-def _llm_generator(payload: dict):
-    def generate(request: dict):
-        assert set(request) >= {"recorded_facts", "eligible_registered_actions", "response_schema"}
-        assert request["eligible_registered_actions"], "the request supplies only eligible registered actions"
-        return payload["hypotheses"], {"input_tokens": 321, "output_tokens": 45}
+def _hypothesis_rows(repository, run_id, candidate_id=None):
+    return repository.page_child("hypotheses", run_id, 100, None,
+                                 {"candidate_id": candidate_id})["items"]
 
+
+def _evaluations(repository, run_id, purpose):
+    return repository.page_child("jev_evaluations", run_id, 100, None,
+                                 {"purpose": purpose})["items"]
+
+
+def _dossier(runtime, repository, run_id, candidate_id):
+    row = next(item for item in repository.list_table("dossiers", run_id)
+               if item["candidate_id"] == candidate_id)
+    return json.loads(runtime[2].read(repository.artifact(row["json_artifact_id"])["relative_path"]))
+
+
+def _generator(entries, *, name=None, usage=None):
+    payload = entries if usage is None else (entries, usage)
+
+    def generate(request):
+        generate.requests.append(request)
+        return payload
+
+    generate.requests = []
+    if name is not None:
+        generate.name = name
     return generate
 
 
-def test_unauthorized_arc_records_no_hypotheses(runtime, monkeypatch):
-    run_id, run, repository, summary = _run(runtime, monkeypatch, authorized=False)
+def _valid_entry(statement: str = "A competing explanation for the recorded signal.") -> dict:
+    return {
+        "statement": statement,
+        "proposed_mechanism": "hypothetical mechanism",
+        "predictions": ["a bounded restatement changes the reading"],
+        "contradicted_if": ["the restatement leaves the reading unchanged"],
+        "distinguishing_tests": ["CHECK_REVISION_FAITHFULNESS_V1"],
+        "required_evidence": ["a retained per-case membership response"],
+        "unsupported_assumptions": ["not a measured result"],
+    }
+
+
+# ------------------------------------------------------------------ template default
+
+
+def test_deep_policy_asks_for_hypotheses_without_dispatching_them(runtime, monkeypatch):
+    run_id, summary, repository = _run(runtime, monkeypatch)
+    assert summary["status"] == "HYPOTHESIZED"
+    assert summary["final_move"] == "GENERATE_HYPOTHESES"
+    manifest = summary["decisions"][0]
+    assert manifest["move"] == "GENERATE_HYPOTHESES"
+    assert manifest["reason_code"] == "HYPOTHESES_JUSTIFIED"
+    assert manifest["executed"] is False
+    assert summary["hypothesis"]["status"] == "GENERATED"
+    assert summary["hypothesis"]["requested_reason"] is None
+    dispatch = [event for event in _events(repository, run_id)
+                if event["type"] == "NEXT_MOVE_DISPATCHED"]
+    assert dispatch and dispatch[-1]["data"]["reason_code"] == "MOVE_NOT_FOLLOW_UP"
+    assert dispatch[-1]["data"]["dispatched"] is False
+    assert len(_hypothesis_rows(repository, run_id)) == 2
+    assert repository.get_run(run_id)["provider_usage"]["llm_calls"] == 0
+
+
+def test_template_generation_is_labelled_bounded_and_judged_once(runtime, monkeypatch):
+    run_id, summary, repository = _run(runtime, monkeypatch)
+    rows = _hypothesis_rows(repository, run_id)
+    assert len(rows) == 2
+    assert summary["hypothesis"]["generator"] == TEMPLATE_GENERATOR
+    assert summary["hypothesis"]["hypothesis_ids"] == [row["hypothesis_id"] for row in rows]
+
+    generated = [event for event in _events(repository, run_id)
+                 if event["type"] == "HYPOTHESES_GENERATED"]
+    assert len(generated) == 1
+    assert generated[0]["data"]["outcome"] == "GENERATED"
+    assert generated[0]["data"]["count"] == 2
+    assert generated[0]["data"]["label"] == LIVE_HYPOTHESIS_LABEL
+    assert generated[0]["data"]["generator"] == TEMPLATE_GENERATOR
+    assert generated[0]["data"]["provider_attempted"] is False
+    assert generated[0]["data"]["requested_reason"] is None
+
+    for row in rows:
+        draft = row["hypothesis"]
+        assert draft["label"] == LIVE_HYPOTHESIS_LABEL
+        assert draft["generator"] == TEMPLATE_GENERATOR
+        assert draft["candidate_id"] == row["candidate_id"]
+        assert draft["statement"]
+        assert draft["predictions"] and draft["contradicted_if"]
+        assert set(draft["proposed_action_ids"]) <= set(ACTION_REGISTRY)
+        assert any("not a measured result" in item for item in draft["unsupported_assumptions"])
+        for field in DRAFT_FIELDS:
+            assert field in draft
+
+    types = [event["type"] for event in _events(repository, run_id)]
+    assert types.count("HYPOTHESIS_EVALUATED") == 2
+    assert types.index("HYPOTHESES_GENERATED") < types.index("HYPOTHESIS_EVALUATED")
+    assert types.index("HYPOTHESIS_EVALUATED") < types.index("DOSSIER_CREATED")
+    assert repository.get_run(run_id)["provider_usage"]["llm_calls"] == 0
+
+
+def test_operator_requested_hypotheses_record_their_reason(runtime, monkeypatch):
+    adapter = _hypothesis_adapter(stopping=0.8)
+    run_id, summary, repository = _run(runtime, monkeypatch, jev_adapter=adapter,
+                                       hypotheses_requested=True)
+    assert summary["final_move"] == "COMPLETE"
+    assert summary["status"] == "HYPOTHESIZED"
+    assert summary["hypothesis"]["requested_reason"] == "OPERATOR_REQUESTED_HYPOTHESES"
+    generated = [event for event in _events(repository, run_id)
+                 if event["type"] == "HYPOTHESES_GENERATED"][-1]
+    assert generated["data"]["requested_reason"] == "OPERATOR_REQUESTED_HYPOTHESES"
+    assert generated["data"]["outcome"] == "GENERATED"
+
+
+def test_unauthorized_arc_generates_nothing(runtime, monkeypatch):
+    run_id, summary, _ = _run(runtime, monkeypatch, authorized=False)
+    repository = runtime[1]
     assert summary["final_move"] == "GENERATE_HYPOTHESES"
     assert summary["hypothesis"] is None
-    assert repository.list_table("hypotheses", run_id) == []
-    assert run["provider_usage"]["llm_calls"] == 0
-    dossier = repository.list_table("dossiers", run_id)
-    assert len(dossier) == 1, "the dossier still records what was and was not done"
-    assert dossier[0]["summary"]["warning"].startswith("REAL OPEN-ACCESS GDC EVIDENCE")
+    assert _hypothesis_rows(repository, run_id) == []
+    assert repository.get_run(run_id)["provider_usage"]["llm_calls"] == 0
+    dossiers = repository.list_table("dossiers", run_id)
+    assert len(dossiers) == 1
 
 
-def test_authorized_arc_generates_labelled_hypotheses_and_has_jev_review_them(runtime, monkeypatch):
-    run_id, run, repository, summary = _run(runtime, monkeypatch, authorized=True)
-    assert summary["final_move"] == "GENERATE_HYPOTHESES"
+# ------------------------------------------------------------------- injected generator
+
+
+def test_injected_generator_text_is_labelled_bounded_and_reviewed(runtime, monkeypatch):
+    entries = [_valid_entry("An injected statement about the recorded mutation signal.")]
+    generator = _generator(entries, name="test-generator", usage={"input_tokens": 321, "output_tokens": 45})
+    run_id, summary, repository = _run(runtime, monkeypatch, llm_generator=generator)
+    assert summary["status"] == "HYPOTHESIZED"
+    assert summary["hypothesis"]["generator"] == "test-generator"
     assert summary["hypothesis"]["status"] == "GENERATED"
-    assert summary["hypothesis"]["generator"] == TEMPLATE_GENERATOR
-    assert len(summary["hypothesis"]["hypothesis_ids"]) == 2
+    assert generator.requests
+    request = generator.requests[0]
+    assert set(request["recorded_facts"]) >= {"symbol", "affected", "examined", "iteration"}
+    assert request["eligible_registered_actions"] == ["CHECK_REVISION_FAITHFULNESS_V1"]
+    assert "invent no numbers" in request["task"]
 
-    events = repository.events(run_id, 0, 800)["items"]
-    generated = [event for event in events if event["type"] == "HYPOTHESES_GENERATED"]
-    assert len(generated) == 1
-    data = generated[0]["data"]
-    assert data["outcome"] == "GENERATED" and data["count"] == 2
-    assert data["label"] == LIVE_HYPOTHESIS_LABEL
-    assert data["provider_attempted"] is False, "the default generator is deterministic and offline"
-
-    rows = repository.page_child("hypotheses", run_id, 20, None, {})["items"]
-    assert len(rows) == 2
-    for row in rows:
-        hypothesis = row["hypothesis"]
-        assert hypothesis["label"] == LIVE_HYPOTHESIS_LABEL
-        assert hypothesis["generator"] == TEMPLATE_GENERATOR
-        assert hypothesis["statement"] and hypothesis["predictions"] and hypothesis["contradicted_if"]
-        assert set(hypothesis["proposed_action_ids"]) <= set(ACTION_REGISTRY)
-        assert "not a measured result" in hypothesis["unsupported_assumptions"][0]
-
-    evaluations = repository.page_child("jev_evaluations", run_id, 20, None,
-                                        {"purpose": "HYPOTHESIS"})["items"]
-    assert len(evaluations) == 2
-    for row in evaluations:
-        vector = row["vector"]
-        assert vector["input_ref_kind"] == "HYPOTHESIS"
-        assert vector["question_set_version"] == "hypothesis-v2"
-        assert set(vector["answers"]) == HYPOTHESIS_QUESTIONS
-        assert all(rule["applicable"] for rule in vector["applicability"].values())
-        assert vector["generator"] == TEMPLATE_GENERATOR
-        assert vector["error"] is None
-    hypotheses_left = repository.page_child("hypotheses", run_id, 20, None, {})["items"]
-    assert len(hypotheses_left) <= MAX_HYPOTHESES
-    assert run["provider_usage"]["llm_calls"] == 0
-    assert run["provider_usage"]["jev_calls"] >= 3, "two hypothesis judgments on top of the deep ones"
-
-    dossier = repository.list_table("dossiers", run_id)[0]
-    payload = json.loads(runtime[2].read(repository.artifact(
-        dossier["json_artifact_id"])["relative_path"]))
-    sections = payload["sections"]
-    assert sections["competing_hypotheses"]["availability"] == "OBSERVED"
-    assert sections["hypothesis_jev_reviews"]["availability"] == "OBSERVED"
-    assert sections["falsification_criteria"]["availability"] == "OBSERVED"
-    assert sections["llm_provider_model_metadata"]["availability"] == "NOT_ACQUIRED"
-    assert sections["research_only_notice"]["narrative"] == payload["warning"]
-    assert payload["hypothesis_ids"] == summary["hypothesis"]["hypothesis_ids"]
-
-
-def test_configured_llm_generation_is_labelled_bound_and_uses_its_own_usage(runtime, monkeypatch):
-    payload = {"hypotheses": [{
-        "statement": "The recorded mutation count is dominated by the examined frame composition.",
-        "proposed_mechanism": "Hypothetically, frame composition drives the count.",
-        "predictions": ["A bounded restatement changes the count."],
-        "contradicted_if": ["A bounded restatement leaves the count unchanged."],
-        "distinguishing_tests": ["CHECK_REVISION_FAITHFULNESS_V1"],
-        "required_evidence": ["per-case mutation membership"],
-        "unsupported_assumptions": ["Mechanism is hypothetical only."],
-    }]}
-    run_id, run, repository, summary = _run(
-        runtime, monkeypatch, authorized=True, llm_generator=_llm_generator(payload))
-    assert summary["hypothesis"]["status"] == "GENERATED", summary["hypothesis"]
-    assert summary["hypothesis"]["generator"] == INJECTED_GENERATOR
-    rows = repository.page_child("hypotheses", run_id, 20, None, {})["items"]
+    rows = _hypothesis_rows(repository, run_id)
     assert len(rows) == 1
-    assert rows[0]["hypothesis"]["label"] == LLM_HYPOTHESIS_LABEL
-    generated = [event for event in repository.events(run_id, 0, 800)["items"]
-                 if event["type"] == "HYPOTHESES_GENERATED"][0]["data"]
-    assert generated["provider_attempted"] is True
-    assert generated["usage"] == {"input_tokens": 321, "output_tokens": 45}
-    assert run["provider_usage"]["llm_calls"] == 1
-    assert run["provider_usage"]["llm_input_tokens"] == 321
+    draft = rows[0]["hypothesis"]
+    assert draft["label"] == LLM_HYPOTHESIS_LABEL
+    assert draft["generator"] == "test-generator"
+    assert draft["generator_model"] is None
+    assert draft["statement"] == entries[0]["statement"]
+
+    generated = [event for event in _events(repository, run_id)
+                 if event["type"] == "HYPOTHESES_GENERATED"][-1]
+    assert generated["data"]["provider_attempted"] is True
+    assert generated["data"]["usage"] == {"input_tokens": 321, "output_tokens": 45}
+    run_usage = repository.get_run(run_id)["provider_usage"]
+    assert run_usage["llm_calls"] == 1
+    assert run_usage["llm_input_tokens"] == 321
+    assert run_usage["llm_output_tokens"] == 45
+
+    dossier = _dossier(runtime, repository, run_id, rows[0]["candidate_id"])
+    assert dossier["sections"]["llm_provider_model_metadata"]["availability"] == "NOT_ACQUIRED", (
+        "only the known provider adapter is reported as LLM-generated text")
+    assert "no LLM was configured" in dossier["sections"]["llm_provider_model_metadata"]["reason"]
+    assert dossier["hypothesis_ids"] == [rows[0]["hypothesis_id"]]
 
 
-def test_malformed_llm_response_is_a_typed_unavailability(runtime, monkeypatch):
-    def broken_generator(request: dict):
-        raise TimeoutError("provider timed out")
+def test_injected_text_never_writes_a_measured_field(runtime, monkeypatch):
+    state_artifacts = {}
+    entries = [_valid_entry("Generated claim: the mutation bucket is a frame artefact.")]
+    generator = _generator(entries)
+    run_id, summary, repository = _run(runtime, monkeypatch, llm_generator=generator)
+    candidate = repository.get_candidate(summary["candidate_id"])
+    for table in ("statistical_states", "evidence_states"):
+        for row in repository.list_table(table, run_id):
+            state_artifacts[row["artifact_id"]] = row["artifact_sha256"] if "artifact_sha256" in row else None
+    for row in repository.list_table("statistical_states", run_id):
+        body = runtime[2].read(repository.artifact(row["artifact_id"])["relative_path"]).decode()
+        assert entries[0]["statement"] not in body
+    for row in repository.list_table("evidence_states", run_id):
+        body = runtime[2].read(repository.artifact(row["artifact_id"])["relative_path"]).decode()
+        assert entries[0]["statement"] not in body
+    for row in _hypothesis_rows(repository, run_id):
+        assert "not a measured result" in " ".join(row["hypothesis"]["unsupported_assumptions"])
+    assert candidate["status"] == "DOSSIER_READY", "the dossier is published after the text is stored"
 
-    run_id, run, repository, summary = _run(
-        runtime, monkeypatch, authorized=True, llm_generator=broken_generator)
+
+@pytest.mark.parametrize("bad_payload", [
+    [],
+    [_valid_entry()] * 4,
+    [{"statement": "too thin"}],
+    [dict(_valid_entry(), statement="x" * 5000)],
+    [dict(_valid_entry(), predictions="not-a-list")],
+    [dict(_valid_entry(), distinguishing_tests=["NOT_A_REGISTERED_ACTION"])],
+    [_valid_entry(), {"statement": "the second statement is malformed"}],
+])
+def test_malformed_generator_output_is_a_typed_unavailable_outcome(runtime, monkeypatch, bad_payload):
+    generator = _generator(bad_payload)
+    run_id, summary, repository = _run(runtime, monkeypatch, llm_generator=generator)
+    assert summary["status"] == "ABSTAINED"
+    assert summary["hypothesis"]["status"] == "UNAVAILABLE"
+    assert summary["hypothesis"]["error_code"] == "GENERATOR_RESPONSE_MALFORMED"
+    assert _hypothesis_rows(repository, run_id) == []
+    generated = [event for event in _events(repository, run_id)
+                 if event["type"] == "HYPOTHESES_GENERATED"][-1]
+    assert generated["data"]["outcome"] == "UNAVAILABLE"
+    assert generated["data"]["error_code"] == "GENERATOR_RESPONSE_MALFORMED"
+    assert generated["data"]["provider_attempted"] is True
+    assert repository.get_run(run_id)["provider_usage"]["llm_calls"] == 1
+    assert len(repository.list_table("dossiers", run_id)) == 1
+
+
+def test_generator_failure_is_a_typed_outcome(runtime, monkeypatch):
+    def failing(request):
+        raise TimeoutError("synthetic provider timeout")
+
+    run_id, summary, repository = _run(runtime, monkeypatch, llm_generator=failing)
+    assert summary["status"] == "ABSTAINED"
     assert summary["hypothesis"]["status"] == "UNAVAILABLE"
     assert summary["hypothesis"]["error_code"] == "GENERATOR_ERROR"
-    assert repository.list_table("hypotheses", run_id) == []
-    events = [event for event in repository.events(run_id, 0, 800)["items"]
-              if event["type"] == "HYPOTHESES_GENERATED"]
-    assert events[-1]["data"]["outcome"] == "UNAVAILABLE"
-    assert events[-1]["data"]["error_code"] == "GENERATOR_ERROR"
-    assert run["provider_usage"]["llm_calls"] == 1, "the failed attempt is still recorded as a call"
+    assert _hypothesis_rows(repository, run_id) == []
+    generated = [event for event in _events(repository, run_id)
+                 if event["type"] == "HYPOTHESES_GENERATED"][-1]
+    assert generated["data"]["outcome"] == "UNAVAILABLE"
+    assert generated["data"]["error_code"] == "GENERATOR_ERROR"
+    assert repository.get_run(run_id)["provider_usage"]["llm_calls"] == 1
 
 
-def test_malformed_generator_output_is_rejected_without_storing_anything(runtime, monkeypatch):
-    def bad_generator(request: dict):
-        return [{"statement": "too thin a draft"}], {"input_tokens": 10, "output_tokens": 1}
-
-    run_id, run, repository, summary = _run(
-        runtime, monkeypatch, authorized=True, llm_generator=bad_generator)
-    assert summary["hypothesis"]["status"] == "UNAVAILABLE"
-    assert summary["hypothesis"]["error_code"] == "GENERATOR_RESPONSE_MALFORMED"
-    assert repository.list_table("hypotheses", run_id) == []
-
-
-def test_hypotheses_and_dossier_are_visible_through_the_api(runtime, monkeypatch):
-    run_id, _, repository, summary = _run(runtime, monkeypatch, authorized=True)
-    client = TestClient(create_app())
-    hypotheses = client.get(f"/api/runs/{run_id}/hypotheses")
-    assert hypotheses.status_code == 200
-    assert len(hypotheses.json()["items"]) == 2
-    dossiers = client.get(f"/api/runs/{run_id}/dossiers")
-    assert dossiers.status_code == 200
-    items = dossiers.json()["items"]
-    assert len(items) == 1
-    detail = client.get(f"/api/dossiers/{items[0]['dossier_id']}")
-    assert detail.status_code == 200
-    payload = detail.json()
-    assert payload["mode"] == "LIVE"
-    assert payload["warning"].startswith("REAL OPEN-ACCESS GDC EVIDENCE")
-    assert payload["hypothesis_ids"] == summary["hypothesis"]["hypothesis_ids"]
-    assert payload["sections"]["deterministic_deep_evidence"]["availability"] == "OBSERVED"
-    assert "SYNTHETIC" not in detail.text
-
-def _live_hypothesis_events(repository, run_id):
-    return [event for event in repository.events(run_id, 0, 800)["items"]
-            if event["type"] in {"HYPOTHESIS_EVALUATED", "JEV_DEEP_EVIDENCE_JUDGED"}]
+def test_per_candidate_bound_limits_recorded_statements(runtime, monkeypatch):
+    generator = _generator([_valid_entry()])
+    monkeypatch.setattr("cancerjev.research.hypotheses.MAX_HYPOTHESES", 1)
+    run_id, summary, repository = _run(runtime, monkeypatch, llm_generator=generator)
+    assert summary["status"] == "HYPOTHESIZED"
+    assert len(_hypothesis_rows(repository, run_id)) == 1
+    generated = [event for event in _events(repository, run_id)
+                 if event["type"] == "HYPOTHESES_GENERATED"][-1]
+    assert generated["data"]["count"] == 1
 
 
-def test_live_hypothesis_review_is_recorded_as_hypothesis_evaluated(runtime, monkeypatch):
-    """The live review must appear under its own registered event type, once per statement."""
-    run_id, _, repository, summary = _run(runtime, monkeypatch, authorized=True)
-    events = _live_hypothesis_events(repository, run_id)
-    reviews = [event for event in events if event["type"] == "HYPOTHESIS_EVALUATED"]
-    revisions = [event for event in events if event["type"] == "JEV_DEEP_EVIDENCE_JUDGED"]
-    assert len(reviews) == len(summary["hypothesis"]["hypothesis_ids"]) == 2
-    for event in reviews:
-        data = event["data"]
-        assert data["input_ref_kind"] == "HYPOTHESIS"
-        assert data["hypothesis_id"] in summary["hypothesis"]["hypothesis_ids"]
-        assert data["evidence_state_id"], "the judged revision must be named"
-        assert data["generator"] == TEMPLATE_GENERATOR
-    assert len(revisions) == len(summary["steps"]), "one deep revision judgment per step, never a review"
-
-
-def test_identical_generated_text_reuses_its_review_across_runs(runtime, monkeypatch):
-    """The review projection must not include the run-specific hypothesis id."""
-    payload = {"hypotheses": [{
-        "statement": "Recorded mutation count may follow the examined frame composition.",
-        "proposed_mechanism": "Hypothetically frame composition drives the count.",
-        "predictions": ["A bounded restatement changes the count."],
-        "contradicted_if": ["A bounded restatement leaves the count unchanged."],
-        "distinguishing_tests": ["CHECK_REVISION_FAITHFULNESS_V1"],
-        "required_evidence": ["per-case mutation membership"],
-        "unsupported_assumptions": ["Mechanism is hypothetical only."],
-    }]}
-    settings, repository, artifacts = runtime
-    from cancerjev.jev.service import JevService
-    from cancerjev.research.live import LiveOrchestrator
-    from cancerjev.research.specs import LUAD_RESEARCH_V1
-    from tests.integration.replay import ReplayTransport
-
-    adapter = _hypothesis_adapter()
-    service = JevService(settings, repository, artifacts, adapter_factory=lambda: adapter)
-    calls_before = adapter.calls
-
-    def _run_once():
-        orchestrator = LiveOrchestrator(
-            settings, repository, artifacts, lambda event: None, jev_service=service,
-            transport_factory=lambda repo, store, budget, run_id, emit: ReplayTransport(
-                store, run_id, repository=repo),
-            research_spec=LUAD_RESEARCH_V1, deep_selection="GENEONE",
-            deep_followup_authorized=True, llm_generator=_llm_generator(payload),
-        )
-        run_id = orchestrator.run()
-        return run_id, adapter.calls
-
-    first_run, calls_after_first = _run_once()
-    second_run, calls_after_second = _run_once()
-    assert calls_after_first > calls_before
-    assert calls_after_second == calls_after_first, "an identical review must not be recomputed"
-    for run_id, expected_cache in ((first_run, False), (second_run, True)):
-        rows = repository.page_child("jev_evaluations", run_id, 50, None,
-                                     {"purpose": "HYPOTHESIS"})["items"]
-        assert len(rows) == 1
-        assert bool(rows[0]["vector"]["cache_source_evaluation_id"]) is expected_cache
-
-
-def test_oversized_or_malformed_generated_output_is_rejected_typed(runtime, monkeypatch):
-    def oversized(request):
-        return ([{"statement": "x" * 5_000, "proposed_mechanism": "m", "predictions": ["p"],
-                  "contradicted_if": ["c"], "distinguishing_tests": [],
-                  "required_evidence": ["r"], "unsupported_assumptions": ["a"]}], None)
-
-    run_id, run, repository, summary = _run(runtime, monkeypatch, authorized=True,
-                                            llm_generator=oversized)
-    assert summary["hypothesis"]["status"] == "UNAVAILABLE"
-    assert summary["hypothesis"]["error_code"] == "GENERATOR_RESPONSE_MALFORMED"
-    assert repository.list_table("hypotheses", run_id) == []
-    assert run["status"] == "COMPLETED", "a rejected generation never aborts the run"
-
-    def stringly(request):
-        return ([{"statement": "A statement.", "proposed_mechanism": "m", "predictions": "not a list",
-                  "contradicted_if": ["c"], "distinguishing_tests": [],
-                  "required_evidence": ["r"], "unsupported_assumptions": ["a"]}], None)
-
-    run_id, run, repository, summary = _run(runtime, monkeypatch, authorized=True,
-                                            llm_generator=stringly)
-    assert summary["hypothesis"]["error_code"] == "GENERATOR_RESPONSE_MALFORMED"
-    assert repository.list_table("hypotheses", run_id) == []
-
-
-def test_hypothesis_bound_is_recorded_when_already_reached(runtime, monkeypatch):
+def test_the_per_candidate_bound_is_respected_when_already_exhausted(runtime, monkeypatch):
     monkeypatch.setattr("cancerjev.research.hypotheses.MAX_HYPOTHESES", 0)
-    run_id, run, repository, summary = _run(runtime, monkeypatch, authorized=True)
+    run_id, summary, repository = _run(runtime, monkeypatch)
+    assert summary["status"] == "ABSTAINED"
     assert summary["hypothesis"]["status"] == "NO_NEW_HYPOTHESES"
-    events = [event for event in repository.events(run_id, 0, 800)["items"]
-              if event["type"] == "HYPOTHESES_GENERATED"]
-    assert events[-1]["data"]["outcome"] == "NO_NEW_HYPOTHESES"
-    assert events[-1]["data"]["count"] == 0
-    assert repository.list_table("hypotheses", run_id) == []
-    assert run["provider_usage"]["llm_calls"] == 0
+    assert _hypothesis_rows(repository, run_id) == []
+    generated = [event for event in _events(repository, run_id)
+                 if event["type"] == "HYPOTHESES_GENERATED"][-1]
+    assert generated["data"]["outcome"] == "NO_NEW_HYPOTHESES"
+    assert repository.get_run(run_id)["provider_usage"]["llm_calls"] == 0
+    dossier = _dossier(runtime, repository, run_id, summary["candidate_id"])
+    assert dossier["sections"]["competing_hypotheses"]["availability"] == "NOT_ACQUIRED"
 
 
-def test_template_phrasing_never_quotes_an_unobserved_metric():
-    revision = {
-        "entity": {"gene_symbol": "GENEONE"}, "iteration_number": 1,
-        "project_level_evidence": [{
-            "project_id": "TCGA-LUAD",
-            "affected_case_count": {"value": None, "availability": "NOT_OBSERVED"},
-            "examined_cases": {"value": 585, "availability": "OBSERVED"},
-            "projects_case_with_ssm": {"value": None, "availability": "NOT_OBSERVED"},
-            "cases_with_expression": {"value": None, "availability": "NOT_OBSERVED"},
-            "missing_measurements": {"value": None, "availability": "NOT_OBSERVED"},
-        }],
-        "deterministic_observations": [], "missing_evidence": [],
-    }
-    drafts = generate_template_hypotheses(revision, candidate={"entity": {"gene_symbol": "GENEONE"}},
-                                          eligible_action_ids=["CHECK_REVISION_FAITHFULNESS_V1"])
-    assert len(drafts) == 2
-    for draft in drafts:
-        assert "None" not in draft["statement"]
-        assert "not observed" in draft["statement"]
-    assert any("not observed in this revision" in item for item in drafts[0]["unsupported_assumptions"])
+# ------------------------------------------------------------------------ reviews
 
 
-def test_duplicate_selection_is_de_duplicated_with_a_typed_notice(runtime, monkeypatch):
+def test_each_statement_is_judged_once_and_bound_to_its_evidence(runtime, monkeypatch):
+    run_id, summary, repository = _run(runtime, monkeypatch)
+    rows = _hypothesis_rows(repository, run_id)
+    candidate = repository.get_candidate(summary["candidate_id"])
+    evidence_state_id = candidate["latest_evidence_state_id"]
+    evaluations = _evaluations(repository, run_id, "HYPOTHESIS")
+    assert len(evaluations) == 2
+    assert {row["input_ref_id"] for row in evaluations} == {row["hypothesis_id"] for row in rows}
+    for evaluation in evaluations:
+        vector = evaluation["vector"]
+        assert vector["input_ref_kind"] == "HYPOTHESIS"
+        assert vector["question_set_version"] == "hypothesis-v2"
+        assert vector["error"] is None
+        assert set(vector["answers"]) == HYPOTHESIS_ANSWERS
+        assert all(entry["applicable"] for entry in vector["applicability"].values())
+        assert vector["generator"] == TEMPLATE_GENERATOR
+        assert vector["source_evidence_hash"]
+        assert vector["resolved_model"] == "jev-1.13.0"
+    evaluated = [event for event in _events(repository, run_id)
+                 if event["type"] == "HYPOTHESIS_EVALUATED"]
+    assert len(evaluated) == 2
+    assert {event["data"]["hypothesis_id"] for event in evaluated} == {row["hypothesis_id"] for row in rows}
+    assert all(event["data"]["input_ref_kind"] == "HYPOTHESIS" for event in evaluated)
+    assert all(event["data"]["evidence_state_id"] == evidence_state_id for event in evaluated)
+    assert all(event["data"]["generator"] == TEMPLATE_GENERATOR for event in evaluated)
+
+    for row in rows:
+        stored = read_hypothesis_record(repository, runtime[2], row["hypothesis_id"],
+                                        candidate_id=candidate["candidate_id"],
+                                        allowed_action_ids=frozenset(ACTION_REGISTRY))
+        assert stored.draft.statement == row["hypothesis"]["statement"]
+        assert stored.evidence_state_id == evidence_state_id
+
+
+def test_identical_generated_text_reuses_its_review(runtime, monkeypatch):
+    entries = [_valid_entry("An identical injected statement for cache reuse."),
+               _valid_entry("An identical injected statement for cache reuse.")]
+    generator = _generator(entries, name="test-generator")
+    adapter = _hypothesis_adapter()
+    run_id, _, repository = _run(runtime, monkeypatch, jev_adapter=adapter,
+                                 llm_generator=generator)
+    reviews = _evaluations(repository, run_id, "HYPOTHESIS")
+    assert len(reviews) == 2
+    cached = [row for row in reviews if row["vector"]["cache_source_evaluation_id"]]
+    supplied = [row for row in reviews if not row["vector"]["cache_source_evaluation_id"]]
+    assert len(cached) == 1, "identical generated text reuses its recorded review"
+    assert len(supplied) == 1
+    assert cached[0]["vector"]["cache_source_evaluation_id"] == supplied[0]["evaluation_id"]
+    assert cached[0]["vector"]["projection_hash"] == supplied[0]["vector"]["projection_hash"]
+    assert adapter.calls == 4, "2 wide + 1 deep + 1 reviewed hypothesis"
+
+
+def test_dossiers_keep_their_reviews_to_their_own_candidate(runtime, monkeypatch):
+    orchestrator, _, repository = _orchestrator(
+        runtime, monkeypatch, jev_adapter=_hypothesis_adapter(),
+        deep_selections=("GENEONE", "GENETWO"), deep_followup_authorized=True)
+    run_id = orchestrator.run()
+    assert repository.get_run(run_id)["status"] == "COMPLETED"
+    candidates = repository.list_table("candidates", run_id)
+    assert {row["entity"]["gene_symbol"] for row in candidates} == {"GENEONE", "GENETWO"}
+    dossiers = repository.list_table("dossiers", run_id)
+    assert len(dossiers) == 2
+    seen: set[str] = set()
+    for candidate in candidates:
+        own = _hypothesis_rows(repository, run_id, candidate["candidate_id"])
+        assert len(own) == 2
+        other_ids = {row["hypothesis_id"]
+                     for other in candidates if other["candidate_id"] != candidate["candidate_id"]
+                     for row in _hypothesis_rows(repository, run_id, other["candidate_id"])}
+        dossier = _dossier(runtime, repository, run_id, candidate["candidate_id"])
+        assert dossier["hypothesis_ids"] == [row["hypothesis_id"] for row in own]
+        assert set(dossier["hypothesis_ids"]).isdisjoint(other_ids)
+        narrative = dossier["sections"]["hypothesis_jev_reviews"]["narrative"]
+        assert all(hypothesis_id[:8] in narrative for hypothesis_id in dossier["hypothesis_ids"])
+        assert "hypothesis-v2" in narrative
+        assert dossier["sections"]["competing_hypotheses"]["availability"] == "OBSERVED"
+        assert dossier["sections"]["llm_provider_model_metadata"]["availability"] == "NOT_ACQUIRED"
+        seen.update(dossier["hypothesis_ids"])
+    assert len(seen) == 4
+
+
+def test_dossier_names_the_deep_judgment_question_set_and_model(runtime, monkeypatch):
+    run_id, summary, repository = _run(runtime, monkeypatch)
+    dossier = _dossier(runtime, repository, run_id, summary["candidate_id"])
+    versions = dossier["sections"]["jev_model_question_versions"]["narrative"]
+    assert "deep-v1" in versions
+    assert "jev-1.13.0" in versions
+    assert dossier["sections"]["jev_deep_judgments"]["availability"] == "OBSERVED"
+
+
+def test_duplicate_selections_are_investigated_once(runtime, monkeypatch):
     orchestrator, _, repository = _orchestrator(
         runtime, monkeypatch, jev_adapter=_hypothesis_adapter(),
         deep_selections=("GENEONE", "GENEONE"), deep_followup_authorized=True)
     run_id = orchestrator.run()
-    completed = [event for event in repository.events(run_id, 0, 800)["items"]
-                 if event["type"] == "RUN_COMPLETED"][-1]["data"]["deep"]
-    assert completed["selections"] == ["GENEONE"]
-    assert completed["candidate_count"] == 1
-    duplicates = [event for event in repository.events(run_id, 0, 800)["items"]
-                  if event["type"] == "DEEP_SELECTION_UNAVAILABLE"
-                  and event["data"].get("reason_code") == "DUPLICATE_SELECTION"]
-    assert len(duplicates) == 1
+    deep = next(event for event in _events(repository, run_id)
+                if event["type"] == "RUN_COMPLETED")["data"]["deep"]
+    assert deep["selections"] == ["GENEONE"]
+    assert deep["candidate_count"] == 1
+    duplicates = [event for event in _events(repository, run_id)
+                  if event["type"] == "DEEP_SELECTION_UNAVAILABLE"]
+    assert duplicates and duplicates[-1]["data"]["reason_code"] == "DUPLICATE_SELECTION"
     assert len(repository.list_table("candidates", run_id)) == 1
     assert len(repository.list_table("dossiers", run_id)) == 1
+    assert len(_hypothesis_rows(repository, run_id)) == 2
 
 
-def test_multi_candidate_dossiers_keep_their_own_reviews_and_model(runtime, monkeypatch):
-    orchestrator, _, repository = _orchestrator(
-        runtime, monkeypatch, jev_adapter=_hypothesis_adapter(),
-deep_selections=("GENEONE", "GENETWO"), deep_followup_authorized=True)
-    run_id = orchestrator.run()
-    artifacts = runtime[2]
-    for row in repository.list_table("dossiers", run_id):
-        payload = json.loads(artifacts.read(repository.artifact(row["json_artifact_id"])["relative_path"]))
-        own_ids = set(payload["hypothesis_ids"])
-        assert own_ids, "each investigated candidate records its own statements"
-        reviews = payload["sections"]["hypothesis_jev_reviews"]["narrative"] or ""
-        assert reviews.count(";") + 1 == len(own_ids), "no other candidate's review may appear"
-        versions = payload["sections"]["jev_model_question_versions"]["narrative"]
-        assert versions and "n/a" not in versions
-        assert "deep-v1" in versions and "jev-1.13.0" in versions, "real question set and model are reported"
+def test_template_phrasing_never_quotes_an_unobserved_metric(runtime, monkeypatch):
+    run_id, summary, repository = _run(runtime, monkeypatch,
+                                       empty_expression_projects={"TCGA-LUAD"})
+    assert summary["status"] == "HYPOTHESIZED"
+    rows = _hypothesis_rows(repository, run_id)
+    assert len(rows) == 2
+    for row in rows:
+        draft = row["hypothesis"]
+        assert "None" not in draft["statement"]
+        assert any("not observed in this revision" in item for item in draft["unsupported_assumptions"])
+    expression_statement = rows[1]["hypothesis"]["statement"]
+    assert "not observed in this revision" in expression_statement
+    assert "0 of 100" not in expression_statement, "an unobserved metric is never quoted as a number"
+    assert "0 observed" not in expression_statement
+    assert repository.get_run(run_id)["provider_usage"]["llm_calls"] == 0
 
 
-def _openrouter_envelope() -> bytes:
-    entries = [{
-        "statement": "The recorded affected-case count may follow the examined frame composition.",
-        "proposed_mechanism": "Hypothetically, frame composition drives the count.",
-        "predictions": ["A bounded restatement changes the count."],
-        "contradicted_if": ["A bounded restatement leaves the count unchanged."],
-        "distinguishing_tests": ["CHECK_REVISION_FAITHFULNESS_V1"],
-        "required_evidence": ["per-case mutation membership"],
-        "unsupported_assumptions": ["Mechanism is hypothetical only."],
-    }]
-    envelope = {"choices": [{"message": {"content": json.dumps({"hypotheses": entries})}}],
-                "usage": {"prompt_tokens": 900, "completion_tokens": 120}}
-    return json.dumps(envelope).encode()
+# ---------------------------------------------------------------------------- API
 
 
-class _StubResponse:
-    """Streaming double whose reads advance, like a real HTTP response."""
+def test_hypothesis_stage_is_visible_through_the_api(runtime, monkeypatch):
+    run_id, summary, repository = _run(runtime, monkeypatch)
+    client = _api_client(runtime, monkeypatch)
+    rows = _hypothesis_rows(repository, run_id)
+    listed = client.get(f"/api/runs/{run_id}/hypotheses").json()["items"]
+    assert {item["hypothesis_id"] for item in listed} == {row["hypothesis_id"] for row in rows}
+    assert all(item["hypothesis"]["label"] == LIVE_HYPOTHESIS_LABEL for item in listed)
 
-    def __init__(self, body: bytes) -> None:
-        self._body = body
-        self._offset = 0
+    evaluations = client.get(f"/api/runs/{run_id}/evaluations",
+                             params={"purpose": "HYPOTHESIS"}).json()["items"]
+    assert len(evaluations) == 2
+    assert all(row["vector"]["question_set_version"] == "hypothesis-v2" for row in evaluations)
+    assert all(row["vector"]["generator"] == TEMPLATE_GENERATOR for row in evaluations)
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        return None
-
-    def read(self, size: int = -1) -> bytes:
-        if size < 0:
-            chunk = self._body[self._offset:]
-            self._offset = len(self._body)
-            return chunk
-        chunk = self._body[self._offset:self._offset + size]
-        self._offset += len(chunk)
-        return chunk
-
-
-def test_openrouter_generator_is_recorded_with_its_model(runtime, monkeypatch):
-    """An injected provider is named, pinned and counted; its review is provider-specific."""
-    from cancerjev.jev.projection import build_hypothesis_projection
-    from cancerjev.llm.openrouter import DEFAULT_MODEL, GENERATOR_NAME, OpenRouterGenerator
-
-    def opener(request, timeout=None):
-        return _StubResponse(_openrouter_envelope())
-
-    generator = OpenRouterGenerator(api_key="test-key", opener=opener)
-    run_id, run, repository, summary = _run(runtime, monkeypatch, authorized=True,
-                                            llm_generator=generator)
-    assert summary["hypothesis"]["generator"] == GENERATOR_NAME
-    rows = repository.page_child("hypotheses", run_id, 20, None, {})["items"]
-    assert len(rows) == 1
-    record = rows[0]["hypothesis"]
-    assert record["generator"] == GENERATOR_NAME
-    assert record["generator_model"] == DEFAULT_MODEL
-    assert record["label"] == LLM_HYPOTHESIS_LABEL
-    generated = [event for event in repository.events(run_id, 0, 800)["items"]
-                 if event["type"] == "HYPOTHESES_GENERATED"][0]["data"]
-    assert generated["provider_attempted"] is True
-    assert generated["usage"] == {"input_tokens": 900, "output_tokens": 120}
-    assert run["provider_usage"]["llm_calls"] == 1
-    assert run["provider_usage"]["llm_output_tokens"] == 120
-    started = [event for event in repository.events(run_id, 0, 800)["items"]
-               if event["type"] == "RUN_STARTED"][0]["data"]
-    assert started["llm_generation"] == {
-        "enabled": True, "generator": GENERATOR_NAME, "model": DEFAULT_MODEL,
-        "credential": "environment-only; never recorded",
-    }
-    dossier = json.loads(runtime[2].read(repository.artifact(
-        repository.list_table("dossiers", run_id)[0]["json_artifact_id"])["relative_path"]))
-    assert dossier["sections"]["llm_provider_model_metadata"]["availability"] == "OBSERVED"
-    assert "LLM-GENERATED" in dossier["warning"], "a live dossier names generated-text provenance"
-
-    revision = json.loads(runtime[2].read(repository.artifact(
-        repository.evidence_revisions(rows[0]["candidate_id"])[1]["artifact_id"])["relative_path"]))
-    template_style = {**record, "generator": "deterministic-template-v1", "generator_model": None}
-    llm_hash = build_hypothesis_projection(dict(record), revision, eligible_actions=[],
-                                           evidence_hash="0" * 64)
-    template_hash = build_hypothesis_projection(template_style, revision, eligible_actions=[],
-                                                evidence_hash="0" * 64)
-    assert llm_hash == llm_hash and template_hash == template_hash
-    assert json.dumps(llm_hash, sort_keys=True) != json.dumps(template_hash, sort_keys=True), (
-        "a provider-specific review is never reused for another generator"
-    )
-
-
-def test_operator_request_generates_hypotheses_without_rewriting_the_move(runtime, monkeypatch):
-    """An explicit request reaches the stage while the recorded next move stays COMPLETE."""
-    def complete_adapter() -> StubAdapter:
-        return StubAdapter(override={"warrants_deeper_investigation":
-                                     {"kind": "noul", "probability_yes": 0.05}})
-
-    requested, _, repository_requested = _orchestrator(
-        runtime, monkeypatch, jev_adapter=complete_adapter(), deep_selection="GENEONE",
-        deep_followup_authorized=True, deep_hypotheses_requested=True)
-    run_id = requested.run()
-    completed = [event for event in repository_requested.events(run_id, 0, 900)["items"]
-                 if event["type"] == "RUN_COMPLETED"][-1]["data"]["deep"]["candidates"][0]
-    assert completed["final_move"] == "COMPLETE", "the recorded move is never rewritten"
-    assert completed["hypothesis"]["status"] == "GENERATED"
-    assert completed["hypothesis"]["requested_reason"] == "OPERATOR_REQUESTED_HYPOTHESES"
-    generated = [event for event in repository_requested.events(run_id, 0, 900)["items"]
-                 if event["type"] == "HYPOTHESES_GENERATED"][-1]["data"]
-    assert generated["requested_reason"] == "OPERATOR_REQUESTED_HYPOTHESES"
-    assert generated["generator"] == TEMPLATE_GENERATOR
-    assert len(repository_requested.list_table("hypotheses", run_id)) == 2
-    assert len(repository_requested.list_table("dossiers", run_id)) == 1
-
-    plain, _, repository_plain = _orchestrator(
-        runtime, monkeypatch, jev_adapter=complete_adapter(), deep_selection="GENEONE",
-        deep_followup_authorized=True)
-    plain_run = plain.run()
-    plain_summary = [event for event in repository_plain.events(plain_run, 0, 900)["items"]
-                     if event["type"] == "RUN_COMPLETED"][-1]["data"]["deep"]["candidates"][0]
-    assert plain_summary["final_move"] == "COMPLETE"
-    assert plain_summary["hypothesis"] is None, "no request means no generation"
-    assert repository_plain.list_table("hypotheses", plain_run) == []
+    dossier_row = repository.list_table("dossiers", run_id)[0]
+    dossier = client.get(f"/api/dossiers/{dossier_row['dossier_id']}").json()
+    assert dossier["hypothesis_ids"] == [row["hypothesis_id"] for row in rows]
+    assert dossier["sections"]["competing_hypotheses"]["availability"] == "OBSERVED"
+    assert dossier["sections"]["research_only_notice"]["narrative"] == dossier["warning"]

@@ -14,8 +14,7 @@ EVENT_LIMIT = 96 * 1024
 SUPPORTED_SCHEMA_VERSION = 1
 
 # Registered vocabulary: every type any orchestrator or storage path may commit.
-# An unknown type is a compatibility error. Phase 1 registered the fixture
-# subset; Phase 2 adds the live GDC families and Phase 3 the Jev families.
+# An unknown type is a compatibility error.
 REGISTERED_EVENT_TYPES = frozenset({
     "RUN_CREATED", "RUN_STARTED", "RUN_COMPLETED", "RUN_FAILED", "RUN_STOPPED",
     "STAGE_STARTED", "STAGE_COMPLETED",

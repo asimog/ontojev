@@ -1,4 +1,4 @@
-"""Phase 4 first slice: deterministic deep evidence revision for one candidate.
+"""Phase 4 deep evidence: deterministic revisions for one explicitly selected candidate.
 
 Sequence for one explicitly selected candidate: accept the candidate's immutable
 StatisticalState evidence E0, compute the eligible registered deterministic
@@ -17,21 +17,43 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
-from cancerjev.domain.actions import ComputedEvidenceRevision, IntegrityCheck
+from cancerjev.domain.actions import IntegrityCheck
+from cancerjev.domain.codecs import evidence_identity, write_evidence
+from cancerjev.domain.envelopes import EvidenceRecord, StateRecord
 from cancerjev.domain.events import canonical_json, utc_now
-from cancerjev.domain.identity import (
-    content_hash,
-    evidence_state_identity_payload,
+from cancerjev.domain.evidence import (
+    ActionRef,
+    BaselineObservation,
+    CheckOutcome,
+    EvidenceCheck,
+    EvidenceProvenance,
+    EvidenceState,
+    InputArtifactRef,
+    MethodIdentityRef,
+    MissingEvidence,
+    ProjectEvidenceRow,
+    ResearchPuzzle,
+    SourceStateBinding,
 )
-from cancerjev.domain.legacy_codecs import LegacyArtifact
+from cancerjev.domain.measurements import (
+    EntityRef,
+    MetricAvailability,
+    MetricRecord,
+    ObservedCount,
+    ObservedScalar,
+    UnavailableMeasurement,
+)
+from cancerjev.domain.scientific import (
+    ExpressionSummaryResult,
+    StatisticalState,
+    UnavailableLane,
+)
 from cancerjev.jev.service import JevService
 from cancerjev.research.nextmove import DEEP_POLICY_VERSION, DeepJudgment, decide_next_move
 from cancerjev.research.seams import PublishJson
 from cancerjev.science.actions import (
     ACTION_REGISTRY,
     ACTION_REGISTRY_VERSION,
-    CHECK_CONTRADICTED,
-    CHECK_NOT_OBSERVED,
     ActionDefinition,
     ActionEligibility,
     ActionError,
@@ -50,6 +72,17 @@ LIVE_RESEARCH_NOTICE = (
     "REAL OPEN-ACCESS GDC EVIDENCE — DETERMINISTIC RESEARCH ONLY, NOT CLINICAL OR DIAGNOSTIC USE"
 )
 
+_METRIC_AVAILABILITY = {
+    "NOT_OBSERVED": MetricAvailability.NOT_OBSERVED,
+    "NOT_ACQUIRED": MetricAvailability.NOT_ACQUIRED,
+    "PARTIAL": MetricAvailability.PARTIAL,
+    "UNAVAILABLE": MetricAvailability.UNAVAILABLE,
+    "INSUFFICIENT": MetricAvailability.INSUFFICIENT,
+    "INCOMPATIBLE": MetricAvailability.UNAVAILABLE,
+    "INVALID": MetricAvailability.UNAVAILABLE,
+    "NOT_APPLICABLE": MetricAvailability.NOT_APPLICABLE,
+}
+
 
 class DeepError(Exception):
     def __init__(self, code: str, detail: str) -> None:
@@ -66,10 +99,10 @@ def stable_id(run_id: str, label: str) -> str:
 @dataclass(frozen=True)
 class CandidateEvidence:
     candidate_id: str
-    entity: dict[str, Any]
+    entity: EntityRef
     promotion_slot: int
     state_id: str
-    state: LegacyArtifact | None
+    record: StateRecord | None
     state_artifact_id: str
     state_artifact_sha256: str
 
@@ -101,16 +134,15 @@ class FollowUpResult:
     checks_contradicted: int
     checks_not_observed: int
     error_code: str | None
-    revision: ComputedEvidenceRevision | None
+    revision: EvidenceRecord | None
 
     def __post_init__(self) -> None:
         if self.revision is not None:
-            if not isinstance(self.revision, ComputedEvidenceRevision):
-                raise DeepError("INVALID_REVISION", "typed revision required")
-            summary = self.revision.check_summary
+            summary = self.revision.revision.summary
             if (self.evidence_state_id, self.evidence_hash, self.iteration, self.action_id) != (
-                self.revision.evidence_state_id, self.revision.scientific_hash,
-                self.revision.iteration, self.revision.action_id,
+                self.revision.evidence_state_id, self.revision.evidence_hash,
+                self.revision.revision.revision_index,
+                self.revision.revision.action.action_id if self.revision.revision.action else None,
             ) or (self.checks_total, self.checks_verified, self.checks_contradicted,
                   self.checks_not_observed) != (summary.total, summary.verified,
                                                summary.contradicted, summary.not_observed):
@@ -126,294 +158,256 @@ class FollowUpResult:
         }
 
 
-def _project_sources(state: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
-        {
-            "endpoint": source["endpoint"],
-            "normalized_request_hash": source["normalized_request_hash"],
-            "response_artifact_id": source["response_artifact_id"],
-            "response_sha256": source["response_sha256"],
-            "parser_version": source["parser_version"],
-            "completeness": source["completeness"],
-            "source_release": source["source_release"],
-            "json_pointer_or_table_locator": source["json_pointer_or_table_locator"],
-        }
-        for source in state["provenance"]["sources"]
-    ]
+def _observed_count(measurement: Any) -> int | None:
+    return measurement.value if isinstance(measurement, ObservedCount) else None
 
 
-def _provenance(state: dict[str, Any], *, action_method: dict[str, Any] | None = None) -> dict[str, Any]:
-    methods = list(state["provenance"]["methods"])
-    if action_method is not None:
-        methods.append({"method_id": action_method["method_id"], "version": action_method["method_version"],
-                        "parameters_hash": action_method["parameters_hash"]})
-    return {
-        "gdc_release": state["provenance"]["gdc_release"],
-        "sources": _project_sources(state),
-        "methods": methods,
-        "environment_hash": state["provenance"]["environment_hash"],
-        "action_registry_version": ACTION_REGISTRY_VERSION,
-        "selection_artifact_sha256": state["tested_context"]["examined_genes_hash"],
-        "input_artifacts": [],
-    }
+def _observed_scalar(measurement: Any) -> float | None:
+    return measurement.value if isinstance(measurement, ObservedScalar) else None
 
 
-def _metric_block(metric: Any) -> dict[str, Any]:
-    if not isinstance(metric, dict):
-        return {"value": None, "unit": None, "availability": "NOT_OBSERVED", "reason_code": "FIELD_ABSENT"}
-    return {
-        "value": metric.get("value"), "unit": metric.get("unit"),
-        "availability": metric.get("availability", "NOT_OBSERVED"),
-        "reason_code": metric.get("reason_code"),
-    }
+def _observation_availability(measurement: Any) -> str:
+    if isinstance(measurement, (ObservedCount, ObservedScalar)):
+        return "OBSERVED"
+    if isinstance(measurement, UnavailableMeasurement):
+        return measurement.status.value
+    return "NOT_OBSERVED"
 
 
-def _project_level_evidence(state: dict[str, Any]) -> list[dict[str, Any]]:
-    mutation = {item.get("project_id"): item for item in state["mutation"]["project_results"]}
-    expression = {item.get("project_id"): item for item in state["expression"]["project_results"]}
-    rows: list[dict[str, Any]] = []
-    for project_id in sorted(set(mutation) | set(expression)):
-        mutation_item = mutation.get(project_id, {})
-        expression_item = expression.get(project_id, {})
-        coverage = expression_item.get("coverage", {}) if isinstance(expression_item.get("coverage"), dict) else {}
-        rows.append({
-            "project_id": project_id,
-            "affected_case_count": _metric_block(mutation_item.get("affected_case_count")),
-            "examined_cases": _metric_block(mutation_item.get("examined_cases")),
-            "project_case_with_ssm": _metric_block(mutation_item.get("project_case_with_ssm")),
-            "cases_with_expression": _metric_block(coverage.get("cases_with_expression")),
-            "missing_measurements": _metric_block(coverage.get("missing_measurements")),
-        })
-    return rows
+def _metric_record(measurement: Any, unit: str, default_reason: str | None = None) -> MetricRecord:
+    if isinstance(measurement, (ObservedCount, ObservedScalar)):
+        return MetricRecord.observed_value(measurement.value, unit)
+    status = _observation_availability(measurement)
+    reason = measurement.reason if isinstance(measurement, UnavailableMeasurement) else default_reason
+    return MetricRecord.unavailable(unit, _METRIC_AVAILABILITY.get(status, MetricAvailability.UNAVAILABLE),
+                                    reason)
 
 
-def _baseline_observations(state: dict[str, Any], *, run_id: str, candidate_id: str) -> list[dict[str, Any]]:
-    observations: list[dict[str, Any]] = []
+def _provenance(state: StatisticalState, *, action_method: MethodIdentityRef | None = None,
+                input_artifacts: tuple[InputArtifactRef, ...] = ()) -> EvidenceProvenance:
+    methods = state.methods + ((action_method,) if action_method is not None else ())
+    return EvidenceProvenance(
+        gdc_release=state.entity.release,
+        sources=state.sources,
+        methods=methods,
+        environment_hash=state.environment_hash,
+        action_registry_version=ACTION_REGISTRY_VERSION,
+        selection_artifact_sha256=state.tested_context.examined_genes_hash,
+        input_artifacts=input_artifacts,
+    )
+
+
+def _project_level_evidence(state: StatisticalState) -> tuple[ProjectEvidenceRow, ...]:
+    rows: list[ProjectEvidenceRow] = []
+    for project in state.projects:
+        mutation = project.mutation
+        expression = project.expression
+        if isinstance(expression, ExpressionSummaryResult):
+            examined = len(expression.coverage.frame.examined_ids)
+            valid = len(expression.coverage.valid_ids)
+            cases_with_expression = MetricRecord.observed_value(valid, "cases")
+            missing_measurements = MetricRecord.observed_value(examined - valid, "cases")
+        else:
+            reason = expression.reason if isinstance(expression, UnavailableLane) else None
+            availability = _METRIC_AVAILABILITY.get(
+                expression.status.value if isinstance(expression, UnavailableLane) else "NOT_OBSERVED",
+                MetricAvailability.NOT_OBSERVED,
+            )
+            cases_with_expression = MetricRecord.unavailable("cases", availability, reason)
+            missing_measurements = MetricRecord.unavailable("cases", availability, reason)
+        rows.append(ProjectEvidenceRow(
+            project_id=project.population.frame.project_id,
+            affected_case_count=_metric_record(mutation.affected_cases, "cases"),
+            examined_cases=MetricRecord.observed_value(len(mutation.frame.examined_ids), "cases"),
+            project_case_with_ssm=_metric_record(mutation.ssm_coverage_cases, "cases"),
+            cases_with_expression=cases_with_expression,
+            missing_measurements=missing_measurements,
+        ))
+    return tuple(rows)
+
+
+def _baseline_observations(state: StatisticalState) -> tuple[BaselineObservation, ...]:
+    observations: list[BaselineObservation] = []
 
     def add(method_id: str, *, availability: str, value: Any, unit: str, n_effective: Any,
-            missingness: dict[str, Any], notes: tuple[str, ...] = ()) -> None:
+            missingness_count: Any, missingness_reason: str | None,
+            notes: tuple[str, ...] = ()) -> None:
         definition = METHODS[method_id]
-        observations.append({
-            "result_id": stable_id(run_id, f"baseline-result:{candidate_id}:{method_id}"),
-            "method_id": definition.method_id,
-            "method_version": definition.version,
-            "observed": {"value": value, "unit": unit},
-            "availability": availability,
-            "n_effective": n_effective,
-            "missingness": missingness,
-            "inference_status": "NOT_APPLICABLE",
-            "notes": list(notes),
-            "limitations": list(definition.limitations),
-        })
+        observations.append(BaselineObservation(
+            method_id=definition.method_id, method_version=definition.version,
+            observed=canonical_json({"value": value, "unit": unit}),
+            availability=availability, n_effective=n_effective,
+            missingness_count=missingness_count, missingness_reason=missingness_reason,
+            notes=notes, limitations=tuple(definition.limitations),
+        ))
 
-    for item in state["mutation"]["project_results"]:
-        metric = item.get("affected_case_count", {})
-        add(
-            "MUTATION_AFFECTED_CASE_COUNT_V1",
-            availability=metric.get("availability", "NOT_OBSERVED"),
-            value=metric.get("value"), unit=metric.get("unit", "cases"),
-            n_effective=item.get("examined_cases", {}).get("value"),
-            missingness={"count": 0, "reason": None},
-            notes=(f"project {item.get('project_id')}",),
-        )
-    coverage = state["mutation"].get("coverage", {})
-    if isinstance(coverage, dict) and isinstance(coverage.get("case_with_ssm"), dict):
-        add(
-            "PROJECT_SSM_COVERAGE_V1",
-            availability=coverage["case_with_ssm"].get("availability", "NOT_OBSERVED"),
-            value=coverage["case_with_ssm"].get("value"), unit="cases",
-            n_effective=state["populations"][0].get("examined_n"),
-            missingness={"count": 0, "reason": None},
-        )
-    for item in state["expression"]["project_results"]:
-        local = item.get("local", {}) if isinstance(item.get("local"), dict) else {}
-        median = local.get("median", {})
-        n_missing = local.get("n_missing", {}).get("value")
-        add(
-            "EXPRESSION_LOG2_SUMMARY_V1",
-            availability=median.get("availability", "NOT_OBSERVED"),
-            value=median.get("value"), unit=median.get("unit", "log2(UQFPKM+1)"),
-            n_effective=local.get("n_finite", {}).get("value") if isinstance(local.get("n_finite"), dict) else None,
-            missingness={"count": n_missing, "reason": "EXAMINED_CASES_WITHOUT_RETURNED_VALUE" if n_missing else None},
-            notes=(f"project {item.get('project_id')}",),
-        )
-    return observations
+    for project in state.projects:
+        project_id = project.population.frame.project_id
+        mutation = project.mutation
+        add("MUTATION_AFFECTED_CASE_COUNT_V1",
+            availability=_observation_availability(mutation.affected_cases),
+            value=_observed_count(mutation.affected_cases), unit="cases",
+            n_effective=len(mutation.frame.examined_ids),
+            missingness_count=0, missingness_reason=None, notes=(f"project {project_id}",))
+    ssm_values = [
+        _observed_count(project.mutation.ssm_coverage_cases)
+        for project in state.projects
+    ]
+    ssm_values = [value for value in ssm_values if value is not None]
+    examined_n = len(state.projects[0].population.frame.examined_ids) if state.projects else None
+    add("PROJECT_SSM_COVERAGE_V1",
+        availability="OBSERVED" if ssm_values else "NOT_OBSERVED",
+        value=sum(ssm_values) if ssm_values else None, unit="cases",
+        n_effective=examined_n, missingness_count=0, missingness_reason=None)
+    for project in state.projects:
+        project_id = project.population.frame.project_id
+        expression = project.expression
+        if isinstance(expression, ExpressionSummaryResult):
+            n_missing: Any = len(expression.coverage.frame.examined_ids) - len(expression.coverage.valid_ids)
+            add("EXPRESSION_LOG2_SUMMARY_V1",
+                availability=_observation_availability(expression.median),
+                value=_observed_scalar(expression.median), unit="log2(UQFPKM+1)",
+                n_effective=len(expression.values), missingness_count=n_missing,
+                missingness_reason="EXAMINED_CASES_WITHOUT_RETURNED_VALUE" if n_missing else None,
+                notes=(f"project {project_id}",))
+        else:
+            add("EXPRESSION_LOG2_SUMMARY_V1",
+                availability=_observation_availability(expression),
+                value=None, unit="log2(UQFPKM+1)",
+                n_effective=None, missingness_count=None, missingness_reason=None,
+                notes=(f"project {project_id}",))
+    return tuple(observations)
 
 
-def _baseline_evidence(state: dict[str, Any], candidate: CandidateEvidence, *, run_id: str,
-                       eligible_ids: list[str]) -> dict[str, Any]:
-    evidence_state_id = stable_id(run_id, f"evidence:{candidate.candidate_id}:0")
-    population = state["populations"][0]
-    return {
-        "schema_version": 2,
-        "mode": "LIVE",
-        "evidence_state_id": evidence_state_id,
-        "run_id": run_id,
-        "candidate_id": candidate.candidate_id,
-        "created_at": utc_now(),
-        "previous_evidence_state_id": None,
-        "iteration_number": 0,
-        "entity": state["entity"],
-        "source_statistical_state": {
-            "state_id": candidate.state_id,
-            "state_identity_hash": state["state_hash"],
-            "state_artifact_id": candidate.state_artifact_id,
-            "state_artifact_sha256": candidate.state_artifact_sha256,
-        },
-        "research_puzzle": {
-            "origin": "STATISTICAL_STATE_BASELINE",
-            "question": (
-                f"What does the recorded evidence for {state['entity']['gene_symbol']} support, and what "
+def _baseline_evidence(record: StateRecord, candidate: CandidateEvidence, *, run_id: str,
+                       eligible_ids: list[str]) -> EvidenceState:
+    state = record.state
+    population = state.projects[0].population if state.projects else None
+    return EvidenceState(
+        entity=state.entity,
+        accepted_state_hash=record.state_hash,
+        source_state=SourceStateBinding(candidate.state_id, record.state_hash,
+                                        candidate.state_artifact_id, candidate.state_artifact_sha256),
+        parent_evidence_hash=None,
+        revision_index=0,
+        action=None,
+        puzzle=ResearchPuzzle(
+            origin="STATISTICAL_STATE_BASELINE",
+            question=(
+                f"What does the recorded evidence for {state.entity.symbol} support, and what "
                 "follow-up computation is eligible on it?"
             ),
-            "interpretation": (
+            interpretation=(
                 "The baseline revision is the accepted current evidence of the candidate, not a Jev judgment "
                 "and not a new measurement."
             ),
-            "proposed_action_ids": eligible_ids,
-        },
-        "research_only_notice": LIVE_RESEARCH_NOTICE,
-        "action": None,
-        "deterministic_observations": _baseline_observations(state, run_id=run_id,
-                                                             candidate_id=candidate.candidate_id),
-        "project_level_evidence": _project_level_evidence(state),
-        "cross_project_patterns": {
-            "status": "NOT_APPLICABLE",
-            "limitations": ["A single cohort is examined; no cross-project comparison is made."],
-        },
-        "missing_evidence": [
-            {
-                "needed_evidence": "population_exclusions",
-                "availability": "OBSERVED" if population.get("excluded_counts_by_reason") else "NOT_OBSERVED",
-                "reason": None if population.get("excluded_counts_by_reason")
-                else "the recorded population does not list excluded cases",
-            },
-        ],
-        "quality_and_fragility": {
-            "checks_total": 0, "checks_verified": 0, "checks_contradicted": 0, "checks_not_observed": 0,
-            "warnings": list(state["quality"].get("missingness", [])),
-        },
-        "provenance": _provenance(state),
-    }
+            proposed_action_ids=tuple(eligible_ids),
+        ),
+        checks=(),
+        baseline_observations=_baseline_observations(state),
+        project_evidence=_project_level_evidence(state),
+        missing_evidence=(
+            MissingEvidence(
+                needed_evidence="population_exclusions",
+                availability=(MetricAvailability.OBSERVED if population is not None and population.excluded_counts
+                              else MetricAvailability.NOT_OBSERVED),
+                reason=(None if population is not None and population.excluded_counts
+                        else "the recorded population does not list excluded cases"),
+            ),
+        ),
+        quality=state.quality,
+        warnings=state.missingness,
+        provenance=_provenance(state),
+    )
 
 
-def _observation(result: IntegrityCheck, definition: ActionDefinition, *, run_id: str, candidate_id: str) -> dict[str, Any]:
-    check = result.boundary_representation()
-    outcome = check["outcome"]
-    observed = outcome != CHECK_NOT_OBSERVED
-    return {
-        "result_id": stable_id(run_id, f"result:{candidate_id}:{definition.action_id}:{check['check_id']}"),
-        "method_id": definition.method_id,
-        "method_version": definition.method_version,
-        "check_id": check["check_id"],
-        "claim": check["claim"],
-        "outcome": outcome,
-        "n_effective": check["n_effective"],
-        "availability": "OBSERVED" if observed else "NOT_OBSERVED",
-        "observed": check["observed"],
-        "expected": check["expected"],
-        "notes": check["notes"],
-        "missingness": {
-            "count": 0 if observed else 1,
-            "reason": None if observed else "RECORDED_EVIDENCE_DOES_NOT_PERMIT_VERIFICATION",
-        },
-        "inference_status": "NOT_APPLICABLE",
-        "limitations": check["limitations"] or list(definition.limitations),
-    }
+def _observation(result: IntegrityCheck, definition: ActionDefinition,
+                 accepted_state_hash: str) -> EvidenceCheck:
+    outcome = CheckOutcome(result.outcome)
+    if outcome == CheckOutcome.VERIFIED:
+        reason = None
+        missing_count = 0
+        missing_reason = None
+    elif outcome == CheckOutcome.NOT_OBSERVED:
+        reason = "RECORDED_EVIDENCE_DOES_NOT_PERMIT_VERIFICATION"
+        missing_count = 1
+        missing_reason = "RECORDED_EVIDENCE_DOES_NOT_PERMIT_VERIFICATION"
+    else:
+        reason = "RECORDED_EVIDENCE_CONTRADICTS_THE_CLAIM"
+        missing_count = 0
+        missing_reason = None
+    return EvidenceCheck(
+        check_id=result.check_id, method_id=definition.method_id,
+        method_version=definition.method_version, outcome=outcome, claim=result.claim,
+        input_hashes=(accepted_state_hash,), reason=reason, n_effective=result.n_effective,
+        observed=result.observed_json, expected=result.expected_json, notes=result.notes,
+        limitations=result.limitations or tuple(definition.limitations),
+        missing_count=missing_count, missing_reason=missing_reason,
+    )
 
 
-def _followup_evidence(outcome: ActionOutcome, candidate: CandidateEvidence, state: dict[str, Any], *,
-                       run_id: str, iteration: int, previous_evidence_id: str) -> dict[str, Any]:
+def _followup_evidence(outcome: ActionOutcome, candidate: CandidateEvidence, record: StateRecord, *,
+                       run_id: str, iteration: int, previous_evidence_id: str,
+                       previous_evidence_hash: str) -> EvidenceState:
     definition = outcome.definition
-    checks = [check for check in outcome.checks]
+    state = record.state
     missing_evidence = [
-        {
-            "needed_evidence": check.check_id,
-            "availability": "NOT_OBSERVED",
-            "reason": "recorded evidence does not permit verification",
-        }
-        for check in checks if check.outcome == CHECK_NOT_OBSERVED
+        MissingEvidence(
+            needed_evidence=check.check_id,
+            availability=MetricAvailability.NOT_OBSERVED,
+            reason="recorded evidence does not permit verification",
+        )
+        for check in outcome.checks if check.outcome == "NOT_OBSERVED"
     ]
-    missing_evidence.append({
-        "needed_evidence": "new_gdc_measurement",
-        "availability": "NOT_ACQUIRED",
-        "reason": "this deterministic action acquires no new GDC evidence",
-    })
-    input_artifacts = [
-        {"kind": entry["kind"], "ref": entry["ref"], "sha256": entry["sha256"], "verified": entry["verified"]}
-        for entry in outcome.inputs
-    ]
-    provenance = _provenance(state, action_method=definition.ref())
-    provenance["input_artifacts"] = input_artifacts
-    return {
-        "schema_version": 2,
-        "mode": "LIVE",
-        "evidence_state_id": stable_id(run_id, f"evidence:{candidate.candidate_id}:{iteration}"),
-        "run_id": run_id,
-        "candidate_id": candidate.candidate_id,
-        "created_at": utc_now(),
-        "previous_evidence_state_id": previous_evidence_id,
-        "iteration_number": iteration,
-        "entity": state["entity"],
-        "source_statistical_state": {
-            "state_id": candidate.state_id,
-            "state_identity_hash": state["state_hash"],
-            "state_artifact_id": candidate.state_artifact_id,
-            "state_artifact_sha256": candidate.state_artifact_sha256,
-        },
-        "research_puzzle": {
-            "origin": "DETERMINISTIC_ACTION_REGISTRY",
-            "question": definition.question,
-            "interpretation": definition.interpretation,
-            "proposed_action_ids": [definition.action_id],
-        },
-        "research_only_notice": LIVE_RESEARCH_NOTICE,
-        "action": {
-            **definition.ref(),
-            "title": definition.title,
-            "unit": definition.unit,
-            "required_evidence": list(definition.required_evidence),
-            "limitations": list(definition.limitations),
-        },
-        "deterministic_observations": [
-            _observation(check, definition, run_id=run_id, candidate_id=candidate.candidate_id)
-            for check in checks
-        ],
-        "project_level_evidence": _project_level_evidence(state),
-        "cross_project_patterns": {
-            "status": "NOT_APPLICABLE",
-            "limitations": ["A single cohort is examined; no cross-project comparison is made."],
-        },
-        "missing_evidence": missing_evidence,
-        "quality_and_fragility": {
-            "checks_total": len(checks),
-            "checks_verified": outcome.verified,
-            "checks_contradicted": outcome.contradictions,
-            "checks_not_observed": outcome.not_observed,
-            "warnings": [
-                f"CONTRADICTED check {check.check_id}" for check in checks
-                if check.outcome == CHECK_CONTRADICTED
-            ],
-        },
-        "provenance": provenance,
-    }
+    missing_evidence.append(MissingEvidence(
+        needed_evidence="new_gdc_measurement",
+        availability=MetricAvailability.NOT_ACQUIRED,
+        reason="this deterministic action acquires no new GDC evidence",
+    ))
+    return EvidenceState(
+        entity=state.entity,
+        accepted_state_hash=record.state_hash,
+        source_state=SourceStateBinding(candidate.state_id, record.state_hash,
+                                        candidate.state_artifact_id, candidate.state_artifact_sha256),
+        parent_evidence_hash=previous_evidence_hash,
+        revision_index=iteration,
+        action=ActionRef(definition.action_id, definition.version),
+        puzzle=ResearchPuzzle(
+            origin="DETERMINISTIC_ACTION_REGISTRY",
+            question=definition.question,
+            interpretation=definition.interpretation,
+            proposed_action_ids=(definition.action_id,),
+        ),
+        checks=tuple(_observation(check, definition, record.state_hash) for check in outcome.checks),
+        baseline_observations=(),
+        project_evidence=_project_level_evidence(state),
+        missing_evidence=tuple(missing_evidence),
+        quality=state.quality,
+        warnings=tuple(
+            f"CONTRADICTED check {check.check_id}" for check in outcome.checks
+            if check.outcome == "CONTRADICTED"
+        ),
+        provenance=_provenance(
+            state,
+            action_method=MethodIdentityRef(definition.method_id, definition.method_version,
+                                            definition.ref()["parameters_hash"]),
+            input_artifacts=outcome.inputs,
+        ),
+    )
 
 
-def load_candidate_evidence(repository: Repository, artifacts: ArtifactStore, candidate: dict[str, Any]) -> CandidateEvidence:
+def load_candidate_evidence(repository: Repository, artifacts: ArtifactStore,
+                            candidate: dict[str, Any]) -> CandidateEvidence:
     """Accept the candidate's immutable StatisticalState evidence, or fail closed."""
-    state_id = candidate["source_state_id"]
     try:
         stored = read_candidate_state(repository, artifacts, candidate["candidate_id"])
         if repository.evidence_revisions(candidate["candidate_id"]):
             read_revision_chain(repository, artifacts, candidate["candidate_id"])
     except ScientificReadError as exc:
         raise DeepError(exc.code, exc.detail) from exc
-    state = stored.state
-    if not isinstance(state, LegacyArtifact) or state.schema_version != 2:
-        raise DeepError("UNSUPPORTED_RUNTIME_VERSION", "this execution path requires live v2 evidence")
     return CandidateEvidence(
-        candidate_id=candidate["candidate_id"], entity=candidate["entity"],
-        promotion_slot=candidate["promotion_slot"], state_id=state_id, state=state,
+        candidate_id=candidate["candidate_id"], entity=stored.state.entity,
+        promotion_slot=candidate["promotion_slot"], state_id=stored.state_id, record=stored.record,
         state_artifact_id=stored.artifact.artifact_id, state_artifact_sha256=stored.artifact.sha256,
     )
 
@@ -435,8 +429,8 @@ def _resolve_requested_action(eligibilities: tuple[ActionEligibility, ...],
     return requested_action_id, None, None
 
 
-def plan_deep_slice(*, run_id: str, candidate: dict[str, Any], repository: Repository, artifacts: ArtifactStore,
-                    emit: Callable[..., Any], publish_json: PublishJson,
+def plan_deep_slice(*, run_id: str, candidate: dict[str, Any], repository: Repository,
+                    artifacts: ArtifactStore, emit: Callable[..., Any], publish_json: PublishJson,
                     requested_action_id: str | None = None) -> DeepPlan:
     """Accept E0, create the baseline revision, and compute eligible actions."""
     try:
@@ -451,33 +445,37 @@ def plan_deep_slice(*, run_id: str, candidate: dict[str, Any], repository: Repos
                   "error_code": exc.code, "detail": exc.detail},
         )
         return DeepPlan(candidate=CandidateEvidence(
-            candidate_id=candidate["candidate_id"], entity=candidate["entity"],
-            promotion_slot=candidate["promotion_slot"], state_id=candidate["source_state_id"], state=None,
-            state_artifact_id="", state_artifact_sha256=""), baseline_evidence_id=baseline_id,
-            baseline_evidence_hash="", baseline_already_present=False, eligibilities=(),
-            selected_action_id=None, abstain_reason="EVIDENCE_ACCEPTANCE_FAILED",
-            abstain_detail=exc.detail, iteration_number=None, execution_id=None, evidence_state_id=None)
+            candidate_id=candidate["candidate_id"], entity=EntityRef(
+                candidate["entity"]["gene_id"], candidate["entity"].get("gene_symbol"), ""),
+            promotion_slot=candidate["promotion_slot"], state_id=candidate["source_state_id"],
+            record=None, state_artifact_id="", state_artifact_sha256=""),
+            baseline_evidence_id=baseline_id, baseline_evidence_hash="",
+            baseline_already_present=False, eligibilities=(), selected_action_id=None,
+            abstain_reason="EVIDENCE_ACCEPTANCE_FAILED", abstain_detail=exc.detail,
+            iteration_number=None, execution_id=None, evidence_state_id=None)
 
-    if evidence.state is None:
+    if evidence.record is None:
         raise DeepError("EVIDENCE_ACCEPTANCE_FAILED", "accepted state missing")
-    state = evidence.state.boundary_representation()
+    state = evidence.record.state
     eligibilities = eligible_actions(state, "STATISTICAL_STATE")
     eligible_ids = [item.action_id for item in eligibilities if item.eligible]
 
     baseline_id = stable_id(run_id, f"evidence:{candidate['candidate_id']}:0")
     existing_revisions = repository.evidence_revisions(candidate["candidate_id"])
     baseline_present = any(row["evidence_state_id"] == baseline_id for row in existing_revisions)
-    baseline_evidence = _baseline_evidence(state, evidence, run_id=run_id, eligible_ids=eligible_ids)
-    baseline_hash = content_hash(evidence_state_identity_payload(baseline_evidence))
+    baseline_evidence = _baseline_evidence(evidence.record, evidence, run_id=run_id,
+                                           eligible_ids=eligible_ids)
+    baseline_hash = evidence_identity(baseline_evidence)
     if not baseline_present:
         artifact = publish_json(run_id, f"runs/{run_id}/evidence/{baseline_id}.json",
-                                baseline_evidence, "evidence-state")
+                                write_evidence(baseline_evidence), "evidence-state")
         emit(
             run_id, "EVIDENCE_STATE_CREATED", f"evidence:{baseline_id}:created",
-            f"Accepted baseline evidence E0 for {evidence.entity['gene_symbol']} (iteration 0).",
+            f"Accepted baseline evidence E0 for {state.entity.symbol} (iteration 0).",
             stage="DEEP_ANALYSIS", candidate_id=candidate["candidate_id"], iteration=0,
             data={"evidence_state_id": baseline_id, "evidence_hash": baseline_hash,
-                  "iteration": 0, "previous_evidence_state_id": None, "candidate_id": candidate["candidate_id"],
+                  "iteration": 0, "previous_evidence_state_id": None,
+                  "candidate_id": candidate["candidate_id"],
                   "state_id": evidence.state_id, "origin": "STATISTICAL_STATE_BASELINE"},
             artifact_refs=[artifact.ref()],
             registrations=[
@@ -487,7 +485,9 @@ def plan_deep_slice(*, run_id: str, candidate: dict[str, Any], repository: Repos
                     previous_evidence_state_id=None, iteration=0, evidence_hash=baseline_hash,
                     artifact_id=artifact.artifact_id,
                     summary_json=canonical_json({
-                        "entity": evidence.entity, "iteration": 0, "origin": "STATISTICAL_STATE_BASELINE",
+                        "entity": {"gene_id": evidence.entity.gene_id,
+                                   "gene_symbol": evidence.entity.symbol},
+                        "iteration": 0, "origin": "STATISTICAL_STATE_BASELINE",
                         "state_id": evidence.state_id,
                     }).decode(),
                     created_at=utc_now(),
@@ -506,7 +506,7 @@ def plan_deep_slice(*, run_id: str, candidate: dict[str, Any], repository: Repos
         f"{candidate['candidate_id']}.",
         stage="DEEP_ANALYSIS", candidate_id=candidate["candidate_id"], iteration=0,
         data={"candidate_id": candidate["candidate_id"], "input_evidence_state_id": baseline_id,
-              "input_evidence_hash": state["state_hash"], "eligible_action_ids": eligible_ids,
+              "input_evidence_hash": evidence.record.state_hash, "eligible_action_ids": eligible_ids,
               "ineligible": [
                   {"action_id": item.action_id, "reasons": list(item.reasons)}
                   for item in eligibilities if not item.eligible
@@ -532,7 +532,7 @@ def plan_deep_slice(*, run_id: str, candidate: dict[str, Any], repository: Repos
 
     completed = [row for row in repository.followup_executions_for(candidate["candidate_id"])
                  if row["status"] == "COMPLETED"]
-    input_evidence_hash = state["state_hash"]
+    input_evidence_hash = evidence.record.state_hash
     if any(row["action_id"] == action_id and row["input_evidence_hash"] == input_evidence_hash
            for row in completed):
         emit(
@@ -582,8 +582,9 @@ def _abstain(run_id: str, emit: Callable[..., Any], evidence: CandidateEvidence,
                     evidence_state_id=None)
 
 
-def _execute_action(*, run_id: str, candidate: CandidateEvidence, record: LegacyArtifact | ComputedEvidenceRevision, input_kind: str,
-                    action_id: str, previous_evidence_id: str, iteration: int, execution_id: str,
+def _execute_action(*, run_id: str, candidate: CandidateEvidence, record: StateRecord | EvidenceRecord,
+                    input_kind: str, action_id: str, previous_evidence_id: str,
+                    previous_evidence_hash: str, iteration: int, execution_id: str,
                     evidence_state_id: str, repository: Repository, emit: Callable[..., Any],
                     publish_json: PublishJson,
                     read_artifact: Callable[[str], bytes | None]) -> FollowUpResult:
@@ -596,13 +597,17 @@ def _execute_action(*, run_id: str, candidate: CandidateEvidence, record: Legacy
     """
     definition = ACTION_REGISTRY[action_id]
     if input_kind == "STATISTICAL_STATE":
-        input_evidence_hash = record.scientific_hash
+        if not isinstance(record, StateRecord):
+            raise DeepError("INVALID_ACTION_INPUT", "state input required")
+        input_evidence_hash = record.state_hash
         input_evidence_state_id = previous_evidence_id
+        action_input: StatisticalState | EvidenceState = record.state
     else:
-        input_evidence_hash = record.scientific_hash
-        if not isinstance(record, ComputedEvidenceRevision):
+        if not isinstance(record, EvidenceRecord):
             raise DeepError("INVALID_ACTION_INPUT", "revision input required")
+        input_evidence_hash = record.evidence_hash
         input_evidence_state_id = record.evidence_state_id
+        action_input = record.revision
     emit(
         run_id, "FOLLOWUP_STARTED", f"deep:{execution_id}:started",
         f"Deterministic follow-up {action_id} started for candidate {candidate.candidate_id}.",
@@ -613,7 +618,7 @@ def _execute_action(*, run_id: str, candidate: CandidateEvidence, record: Legacy
               "input_evidence_hash": input_evidence_hash},
     )
     try:
-        outcome = execute(action_id, record, read_artifact=read_artifact)
+        outcome = execute(action_id, action_input, read_artifact=read_artifact)
     except ActionError as exc:
         emit(
             run_id, "FOLLOWUP_FAILED", f"deep:{execution_id}:failed",
@@ -638,14 +643,15 @@ def _execute_action(*, run_id: str, candidate: CandidateEvidence, record: Legacy
             checks_not_observed=0, error_code=exc.code, revision=None,
         )
 
-    if candidate.state is None:
+    if candidate.record is None:
         raise DeepError("EVIDENCE_ACCEPTANCE_FAILED", "accepted source missing")
-    revision = _followup_evidence(outcome, candidate, candidate.state.boundary_representation(), run_id=run_id, iteration=iteration,
-                                  previous_evidence_id=previous_evidence_id)
-    evidence_hash = content_hash(evidence_state_identity_payload(revision))
+    revision = _followup_evidence(outcome, candidate, candidate.record, run_id=run_id, iteration=iteration,
+                                  previous_evidence_id=previous_evidence_id,
+                                  previous_evidence_hash=previous_evidence_hash)
+    evidence_hash = evidence_identity(revision)
     outcome_label = "COMPLETED_WITH_CONTRADICTIONS" if outcome.contradictions else "COMPLETED"
     artifact = publish_json(run_id, f"runs/{run_id}/evidence/{evidence_state_id}.json",
-                            revision, "evidence-state")
+                            write_evidence(revision), "evidence-state")
     emit(
         run_id, "EVIDENCE_STATE_CREATED", f"evidence:{evidence_state_id}:created",
         f"Immutable evidence revision E{iteration} recorded for candidate {candidate.candidate_id}.",
@@ -666,7 +672,9 @@ def _execute_action(*, run_id: str, candidate: CandidateEvidence, record: Legacy
                 iteration=iteration, evidence_hash=evidence_hash,
                 artifact_id=artifact.artifact_id,
                 summary_json=canonical_json({
-                    "entity": candidate.entity, "iteration": iteration, "action_id": action_id,
+                    "entity": {"gene_id": candidate.entity.gene_id,
+                               "gene_symbol": candidate.entity.symbol},
+                    "iteration": iteration, "action_id": action_id,
                     "outcome": outcome_label, "checks_verified": outcome.verified,
                     "checks_contradicted": outcome.contradictions,
                     "checks_not_observed": outcome.not_observed,
@@ -709,9 +717,8 @@ def _execute_action(*, run_id: str, candidate: CandidateEvidence, record: Legacy
         status=outcome_label, action_id=action_id, evidence_state_id=evidence_state_id,
         evidence_hash=evidence_hash, iteration=iteration, checks_total=len(outcome.checks),
         checks_verified=outcome.verified, checks_contradicted=outcome.contradictions,
-        checks_not_observed=outcome.not_observed, error_code=None, revision=ComputedEvidenceRevision(
-            evidence_state_id, evidence_hash, candidate.candidate_id, previous_evidence_id,
-            iteration, action_id, outcome.checks, canonical_json(revision)),
+        checks_not_observed=outcome.not_observed, error_code=None,
+        revision=EvidenceRecord(evidence_state_id, evidence_hash, revision),
     )
 
 
@@ -722,12 +729,14 @@ def execute_followup(*, run_id: str, plan: DeepPlan, repository: Repository, emi
     if plan.selected_action_id is None or plan.iteration_number is None or plan.execution_id is None \
             or plan.evidence_state_id is None:
         raise DeepError("FOLLOWUP_NOT_PLANNED", "execute_followup requires a selected action plan")
-    if plan.candidate.state is None:
+    if plan.candidate.record is None:
         raise DeepError("EVIDENCE_ACCEPTANCE_FAILED", "accepted source missing")
     return _execute_action(
-        run_id=run_id, candidate=plan.candidate, record=plan.candidate.state,
+        run_id=run_id, candidate=plan.candidate, record=plan.candidate.record,
         input_kind="STATISTICAL_STATE", action_id=plan.selected_action_id,
-        previous_evidence_id=plan.baseline_evidence_id, iteration=plan.iteration_number,
+        previous_evidence_id=plan.baseline_evidence_id,
+        previous_evidence_hash=plan.baseline_evidence_hash,
+        iteration=plan.iteration_number,
         execution_id=plan.execution_id, evidence_state_id=plan.evidence_state_id,
         repository=repository, emit=emit, publish_json=publish_json, read_artifact=read_artifact,
     )
@@ -801,7 +810,9 @@ def dispatch_recorded_move(*, run_id: str, candidate: CandidateEvidence, result:
     evidence_state_id = stable_id(run_id, f"evidence:{candidate.candidate_id}:{iteration}")
     followup = _execute_action(
         run_id=run_id, candidate=candidate, record=result.revision, input_kind="EVIDENCE_STATE",
-        action_id=action_id, previous_evidence_id=result.evidence_state_id, iteration=iteration,
+        action_id=action_id, previous_evidence_id=result.evidence_state_id,
+        # FollowUpResult.__post_init__ binds evidence_hash to the present revision's hash.
+        previous_evidence_hash=result.revision.evidence_hash, iteration=iteration,
         execution_id=execution_id, evidence_state_id=evidence_state_id, repository=repository,
         emit=emit, publish_json=publish_json, read_artifact=read_artifact,
     )
@@ -841,7 +852,7 @@ def judge_evidence_revision(*, run_id: str, candidate: CandidateEvidence, result
     if result.revision is None or result.evidence_state_id is None or result.evidence_hash is None:
         return {"deep_evaluation_id": None, "deep_error_code": "NO_REVISION_TO_JUDGE",
                 "next_move": None}
-    revision_eligibilities = eligible_actions(result.revision, "EVIDENCE_STATE")
+    revision_eligibilities = eligible_actions(result.revision.revision, "EVIDENCE_STATE")
     eligible_action_ids = [item.action_id for item in revision_eligibilities if item.eligible]
     eligible_action_payloads = [ACTION_REGISTRY[action_id].payload() for action_id in eligible_action_ids]
     emit(
@@ -859,12 +870,12 @@ def judge_evidence_revision(*, run_id: str, candidate: CandidateEvidence, result
               "question_set_version": "deep-v1"},
     )
     evaluation_record = jev_service.evaluate_evidence_record(
-        run_id=run_id, evidence=result.revision, eligible_actions=eligible_action_payloads,
-        evidence_hash=result.evidence_hash, emit=emit,
+        run_id=run_id, evidence=result.revision, eligible_actions=eligible_action_payloads, emit=emit,
+        candidate_id=candidate.candidate_id,
     )
     evaluation = evaluation_record.boundary_representation()
     decision = decide_next_move(
-        checks=result.revision.check_summary,
+        checks=result.revision.revision.summary,
         judgment=DeepJudgment.from_evaluation(evaluation_record, result.action_id),
         eligible_action_ids=eligible_action_ids,
     )

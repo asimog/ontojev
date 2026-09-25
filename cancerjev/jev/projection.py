@@ -1,9 +1,9 @@
-"""Deterministic projection of a StatisticalState into compact Jev input.
+"""Deterministic projection of canonical scientific objects into compact Jev input.
 
-Only fields that already exist in the deterministic state are copied; nothing is
-recomputed from raw responses. The projection hash covers canonical payload
-bytes and is the inference-identity component. A projection that would exceed
-the hard byte cap fails closed.
+Only fields that already exist in the typed state, revision, hypothesis draft or
+action registry are copied; nothing is recomputed from raw responses. The
+projection hash covers canonical payload bytes and is the inference-identity
+component. A projection that would exceed the hard byte cap fails closed.
 """
 
 from __future__ import annotations
@@ -11,12 +11,25 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from cancerjev.domain.envelopes import EvidenceRecord, StateRecord
 from cancerjev.domain.events import canonical_json
-from cancerjev.domain.state_summary import ProjectSummary, StateSummary
+from cancerjev.domain.evidence import EvidenceState
+from cancerjev.domain.hypotheses import HypothesisDraft
+from cancerjev.domain.measurements import (
+    Acquisition,
+    MetricAvailability,
+    ObservedCount,
+    ObservedScalar,
+)
+from cancerjev.domain.scientific import (
+    ExpressionSummaryResult,
+    StatisticalState,
+)
+from cancerjev.science.actions import ACTION_REGISTRY
 
-PROJECTION_VERSION = "jev-state-projection-v2"
-EVIDENCE_PROJECTION_VERSION = "jev-evidence-projection-v1"
-HYPOTHESIS_PROJECTION_VERSION = "jev-hypothesis-projection-v1"
+PROJECTION_VERSION = "jev-state-projection-v3"
+EVIDENCE_PROJECTION_VERSION = "jev-evidence-projection-v2"
+HYPOTHESIS_PROJECTION_VERSION = "jev-hypothesis-projection-v2"
 PROJECTION_BYTE_CAP = 65_536
 
 INCLUDED_FIELDS = (
@@ -62,12 +75,6 @@ class ProjectionError(Exception):
         self.detail = detail
 
 
-def _metric_value(metric: dict[str, Any] | None) -> Any:
-    if metric is None or metric.get("availability") != "OBSERVED":
-        return None
-    return metric.get("value")
-
-
 def _limitations(completeness: str) -> list[str]:
     limitations = [
         "Mutation counts are provider-defined case counts with no matched denominator; a project with no "
@@ -84,103 +91,85 @@ def _limitations(completeness: str) -> list[str]:
     return limitations
 
 
-def build_projection(state: dict[str, Any] | StateSummary) -> dict[str, Any]:
-    if isinstance(state, StateSummary):
-        return build_summary_projection(state)
-    project_ids = state["scope"]["projects"]
+def _observed_count(measurement: Any) -> int | None:
+    return measurement.value if isinstance(measurement, ObservedCount) else None
+
+
+def _observed_scalar(measurement: Any) -> float | None:
+    return measurement.value if isinstance(measurement, ObservedScalar) else None
+
+
+def build_projection(record: StateRecord) -> dict[str, Any]:
+    state: StatisticalState = record.state
+    project_ids = list(state.research.projects)
     if len(project_ids) != 1:
         raise ProjectionError(
             "MULTI_COHORT_STATE",
             f"single-cohort projection requires exactly one project, received {len(project_ids)}",
         )
-    project_id = state["scope"].get("project_id") or project_ids[0]
+    project_id = state.research.project_id or project_ids[0]
     if project_id != project_ids[0]:
         raise ProjectionError("COHORT_PROJECT_MISMATCH", "scope project_id does not match its project list")
-
-    population = next((item for item in state["populations"] if item["project"] == project_id), {})
-    mutation = next(
-        (item for item in state["mutation"]["project_results"] if item["project_id"] == project_id),
-        {},
-    )
-    expression = next(
-        (item for item in state["expression"]["project_results"] if item["project_id"] == project_id),
-        {},
-    )
-    local = expression.get("local") or {}
-    provider = expression.get("provider") or {}
-    affected = mutation.get("affected_case_count")
-    expression_median = local.get("median")
-    missingness = list(state["quality"]["missingness"])
-    for warning in state["quality"]["api_warnings"]:
-        if warning not in missingness:
-            missingness.append(warning)
-    summary = StateSummary(
-        state["state_id"], state["state_hash"], state["entity"]["gene_id"], state["entity"]["gene_symbol"],
-        state["entity"]["biotype"], state["entity"]["is_cancer_gene_census"], project_id,
-        state["scope"].get("cohort"), state["scope"].get("domain"),
-        (ProjectSummary(project_id, population.get("examined_n"), _metric_value(affected),
-                        _metric_value(mutation.get("project_case_with_ssm")), _metric_value(expression_median),
-                        _metric_value(local.get("sample_sd")), _metric_value(local.get("n_finite")),
-                        _metric_value(local.get("n_missing")), _metric_value(provider.get("median")),
-                        _metric_value(provider.get("stddev"))),),
-        tuple(state["scope"]["modalities"]), tuple(state["scope"]["workflows"]),
-        state["scope"]["examined_case_frame"], state["tested_context"]["selection_bias"],
-        state["mutation"]["coverage"]["coverage_complete"], state["expression"]["availability"],
-        state["quality"]["completeness"], state["quality"]["scientific_sufficiency"],
-        state["cross_project"]["coverage_imbalance"], tuple(missingness), (),
-    )
-    return build_summary_projection(summary)
-
-
-def build_summary_projection(state: StateSummary) -> dict[str, Any]:
     if len(state.projects) != 1:
-        raise ProjectionError("MULTI_COHORT_STATE", "single-cohort projection requires exactly one project")
+        raise ProjectionError("MULTI_COHORT_STATE", "typed state does not hold exactly one project frame")
     project = state.projects[0]
-    project_id = state.project_id or project.project_id
-    if project_id != project.project_id:
-        raise ProjectionError("COHORT_PROJECT_MISMATCH", "scope project_id does not match its project list")
+    mutation = project.mutation
+    expression = project.expression
+    if isinstance(expression, ExpressionSummaryResult):
+        expression_median = _observed_scalar(expression.median)
+        expression_sample_sd = _observed_scalar(expression.sample_sd)
+        expression_n_finite = len(expression.values)
+        expression_n_missing = (len(expression.coverage.frame.examined_ids)
+                                - len(expression.coverage.valid_ids))
+    else:
+        expression_median = None
+        expression_sample_sd = None
+        expression_n_finite = None
+        expression_n_missing = None
+    provider = project.provider_expression
     missingness = list(state.missingness)
     for warning in state.warnings:
         if warning not in missingness:
             missingness.append(warning)
+    completeness = "COMPLETE" if state.quality.acquisition is Acquisition.COMPLETE else "PARTIAL"
     projection = {
         "projection_version": PROJECTION_VERSION,
         "entity": {
-            "gene_id": state.gene_id,
-            "symbol": state.gene_symbol,
-            "biotype": state.biotype,
-            "cancer_census": state.cancer_census,
+            "gene_id": state.entity.gene_id,
+            "symbol": state.entity.symbol,
+            "biotype": state.annotation.biotype,
+            "cancer_census": state.annotation.cancer_census,
         },
         "scope": {
-            "cohort": state.cohort or project_id,
-            "domain": state.domain,
-            "projects": [p.project_id for p in state.projects],
-            "modalities": list(state.modalities),
+            "cohort": state.research.cohort or project_id,
+            "domain": state.research.domain,
+            "projects": project_ids,
+            "modalities": list(state.research.modalities),
             "expression_unit": "log2(UQFPKM+1)",
-            "workflow": ",".join(state.workflows) if state.workflows else None,
-            "examined_case_frame": state.examined_case_frame,
-            "selection_bias": state.selection_bias,
+            "workflow": ",".join(state.research.workflows) if state.research.workflows else None,
+            "examined_case_frame": state.research.examined_case_frame,
+            "selection_bias": state.tested_context.selection_bias,
         },
         "cohort": {
             "project_id": project_id,
-            "examined_cases": project.examined_cases,
-            "affected_cases": project.affected_cases,
-            "mutation_observed": project.affected_cases is not None,
-            "mutation_coverage_complete": state.mutation_coverage_complete,
-            "ssm_coverage_cases": project.ssm_coverage_cases,
-            "expression_observed": project.expression_median is not None,
-            "expression_median": project.expression_median,
-            "expression_sample_sd": project.expression_sample_sd,
-            "expression_n_finite": project.expression_n_finite,
-            "expression_n_missing": project.expression_n_missing,
-            "expression_provider_median": project.provider_median,
-            "expression_provider_stddev": project.provider_stddev,
-            "coverage_imbalance": state.coverage_imbalance,
-            "completeness": state.completeness,
-            "scientific_sufficiency": state.scientific_sufficiency,
+            "examined_cases": len(project.population.frame.examined_ids),
+            "affected_cases": _observed_count(mutation.affected_cases),
+            "mutation_observed": isinstance(mutation.affected_cases, ObservedCount),
+            "mutation_coverage_complete": mutation.coverage_complete,
+            "ssm_coverage_cases": _observed_count(mutation.ssm_coverage_cases),
+            "expression_observed": expression_median is not None,
+            "expression_median": expression_median,
+            "expression_sample_sd": expression_sample_sd,
+            "expression_n_finite": expression_n_finite,
+            "expression_n_missing": expression_n_missing,
+            "expression_provider_median": provider.median if provider is not None else None,
+            "expression_provider_stddev": provider.stddev if provider is not None else None,
+            "coverage_imbalance": state.cross_project.coverage_imbalance,
+            "completeness": completeness,
+            "scientific_sufficiency": state.quality.sufficiency.value,
         },
         "missingness": missingness,
-        "limitations": _limitations(state.completeness),
+        "limitations": _limitations(completeness),
         "eligible_followups": [],
     }
     encoded = canonical_json(projection)
@@ -212,84 +201,139 @@ HYPOTHESIS_INCLUDED_FIELDS = (
 )
 
 
-def build_hypothesis_projection(hypothesis: dict[str, Any], evidence: dict[str, Any], *,
-                                eligible_actions: list[dict[str, Any]], evidence_hash: str) -> dict[str, Any]:
-    """Project one generated hypothesis together with the revision it came from.
-
-    The hypothesis text is carried verbatim and labelled with its generator; the
-    projection never presents generated text as evidence, never recomputes anything
-    and never includes operational ids — in particular the run-specific hypothesis
-    id is excluded, so identical generated text over identical evidence reuses its
-    review across runs.
-    """
-    if evidence.get("schema_version") != 2:
-        raise ProjectionError("UNSUPPORTED_EVIDENCE_SCHEMA", f"schema {evidence.get('schema_version')!r}")
-    observations = []
-    for observation in evidence.get("deterministic_observations", []):
+def _observations(evidence: EvidenceState) -> list[dict[str, Any]]:
+    observations: list[dict[str, Any]] = []
+    for observation in evidence.baseline_observations:
         observations.append({
-            "check_id": observation.get("check_id") or observation.get("method_id"),
-            "outcome": observation.get("outcome"),
-            "availability": observation.get("availability"),
-            "n_effective": observation.get("n_effective"),
-            "missingness": observation.get("missingness"),
+            "check_id": observation.method_id,
+            "method_id": observation.method_id,
+            "method_version": observation.method_version,
+            "outcome": None,
+            "availability": observation.availability,
+            "n_effective": observation.n_effective,
+            "observed": None,
+            "missingness": {"count": observation.missingness_count,
+                            "reason": observation.missingness_reason},
+            "notes": list(observation.notes),
+            "limitations": list(observation.limitations),
         })
-    project_evidence = []
-    for row in evidence.get("project_level_evidence", []):
-        entry = {"project_id": row.get("project_id")}
-        for key in ("affected_case_count", "examined_cases", "project_case_with_ssm",
-                    "cases_with_expression", "missing_measurements"):
-            metric = row.get(key) or {}
-            entry[key] = metric.get("value")
-            entry[f"{key}_availability"] = metric.get("availability")
-        project_evidence.append(entry)
-    projection = {
-        "projection_version": HYPOTHESIS_PROJECTION_VERSION,
-        "hypothesis": {
-            "label": hypothesis.get("label"),
-            "generator": hypothesis.get("generator"),
-            "generator_model": hypothesis.get("generator_model"),
-            "statement": hypothesis.get("statement"),
-            "proposed_mechanism": hypothesis.get("proposed_mechanism"),
-            "predictions": list(hypothesis.get("predictions", [])),
-            "contradicted_if": list(hypothesis.get("contradicted_if", [])),
-            "distinguishing_tests": list(hypothesis.get("distinguishing_tests", [])),
-            "required_evidence": list(hypothesis.get("required_evidence", [])),
-            "unsupported_assumptions": list(hypothesis.get("unsupported_assumptions", [])),
-        },
+    for check in evidence.checks:
+        observations.append({
+            "check_id": check.check_id,
+            "method_id": check.method_id,
+            "method_version": check.method_version,
+            "outcome": str(check.outcome),
+            "availability": check.availability,
+            "n_effective": check.n_effective,
+            "observed": check.boundary_representation()["observed"],
+            "expected": check.boundary_representation()["expected"],
+            "missingness": {"count": check.missing_count, "reason": check.missing_reason},
+            "notes": list(check.notes),
+            "limitations": list(check.limitations),
+        })
+    return observations
+
+
+def _revision_quality(evidence: EvidenceState) -> dict[str, Any]:
+    if evidence.action is None:
+        return {"checks_total": 0, "checks_verified": 0, "checks_contradicted": 0,
+                "checks_not_observed": 0, "warnings": list(evidence.warnings)}
+    summary = evidence.summary
+    return {
+        "checks_total": summary.total, "checks_verified": summary.verified,
+        "checks_contradicted": summary.contradicted, "checks_not_observed": summary.not_observed,
+        "warnings": list(evidence.warnings),
+    }
+
+
+def _project_evidence(evidence: EvidenceState) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in evidence.project_evidence:
+        entry: dict[str, Any] = {"project_id": row.project_id}
+        for key, metric in row.metrics():
+            entry[key] = metric.value
+            entry[f"{key}_availability"] = metric.availability.value
+        rows.append(entry)
+    return rows
+
+
+def _missing_evidence(evidence: EvidenceState) -> list[dict[str, Any]]:
+    return [
+        {"needed_evidence": item.needed_evidence, "availability": item.availability.value}
+        for item in evidence.missing_evidence
+    ]
+
+
+def _action_block(evidence: EvidenceState) -> dict[str, Any] | None:
+    if evidence.action is None:
+        return None
+    definition = ACTION_REGISTRY.get(evidence.action.action_id)
+    if definition is None:
+        return {"action_id": evidence.action.action_id, "version": evidence.action.version}
+    return {
+        **definition.ref(),
+        "title": definition.title,
+        "unit": definition.unit,
+        "input_kind": definition.input_kind,
+        "required_evidence": list(definition.required_evidence),
+        "limitations": list(definition.limitations),
+    }
+
+
+def _action_payloads(eligible_actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "action_id": action.get("action_id"),
+            "version": action.get("version"),
+            "title": action.get("title"),
+            "question": action.get("question"),
+            "unit": action.get("unit"),
+            "input_kind": action.get("input_kind"),
+            "required_evidence": list(action.get("required_evidence", [])),
+        }
+        for action in eligible_actions
+    ]
+
+
+def _revision_core(evidence: EvidenceState, evidence_hash: str) -> dict[str, Any]:
+    observations = _observations(evidence)
+    evidence_present = any(observation["availability"] == "OBSERVED" for observation in observations)
+    integrity_observed = any(
+        observation["check_id"] in {"RESPONSE_ARTIFACT_INTEGRITY", "TESTED_UNIVERSE_REPRODUCIBLE"}
+        and observation["availability"] == "OBSERVED"
+        for observation in observations
+    )
+    for row in evidence.project_evidence:
+        for _key, metric in row.metrics():
+            if metric.availability is MetricAvailability.OBSERVED:
+                evidence_present = True
+    quality = _revision_quality(evidence)
+    return {
         "revision": {
-            "iteration": evidence.get("iteration_number"),
-            "source_state_hash": (evidence.get("source_statistical_state") or {}).get("state_identity_hash"),
+            "iteration": evidence.revision_index,
+            "source_state_hash": evidence.source_state.state_identity_hash,
+            "evidence_present": bool(evidence_present),
+            "integrity_observed": bool(integrity_observed),
+            "verified_checks": quality["checks_verified"],
+            "contradicted_checks": quality["checks_contradicted"],
+            "not_observed_checks": quality["checks_not_observed"],
             "evidence_hash": evidence_hash,
         },
+        "action": _action_block(evidence),
         "observations": observations,
-        "project_evidence": project_evidence,
-        "missing_evidence": [
-            {"needed_evidence": item.get("needed_evidence"), "availability": item.get("availability")}
-            for item in evidence.get("missing_evidence", [])
-        ],
-        "eligible_actions": [
-            {
-                "action_id": action.get("action_id"),
-                "version": action.get("version"),
-                "title": action.get("title"),
-                "unit": action.get("unit"),
-            }
-            for action in eligible_actions
-        ],
-        "limitations": [
-            "The hypothesis text is generated, not measured; it is not evidence.",
-            "Judgments about the statement are inputs to Python policy and never execute anything.",
-            "A single cohort is examined and the examined gene set is selection-biased.",
-        ],
+        "project_evidence": _project_evidence(evidence),
+        "missing_evidence": _missing_evidence(evidence),
+        "quality": quality,
+        "provenance": {
+            "gdc_release": evidence.provenance.gdc_release,
+            "response_source_count": len(evidence.provenance.sources),
+            "selection_artifact_sha256": evidence.provenance.selection_artifact_sha256,
+            "input_artifacts_total": len(evidence.provenance.input_artifacts),
+            "input_artifacts_verified": sum(1 for item in evidence.provenance.input_artifacts
+                                            if item.verified is True),
+            "action_registry_version": evidence.provenance.action_registry_version,
+        },
     }
-    encoded = canonical_json(projection)
-    if len(encoded) > PROJECTION_BYTE_CAP:
-        raise ProjectionError("PROJECTION_TOO_LARGE", f"{len(encoded)} bytes exceeds cap {PROJECTION_BYTE_CAP}")
-    return projection
-
-
-def projection_hash(projection: dict[str, Any]) -> str:
-    return hashlib.sha256(canonical_json(projection)).hexdigest()
 
 
 EVIDENCE_INCLUDED_FIELDS = (
@@ -327,8 +371,8 @@ EVIDENCE_INCLUDED_FIELDS = (
 )
 
 
-def build_evidence_projection(evidence: dict[str, Any], eligible_actions: list[dict[str, Any]], *,
-                              evidence_hash: str) -> dict[str, Any]:
+def build_evidence_projection(record: EvidenceRecord,
+                              eligible_actions: list[dict[str, Any]]) -> dict[str, Any]:
     """Project one immutable EvidenceState revision plus the eligible action set.
 
     Only fields that already exist in the revision and in the action registry are
@@ -336,102 +380,88 @@ def build_evidence_projection(evidence: dict[str, Any], eligible_actions: list[d
     candidate id, artifact id, timestamp, request id) enters the projection, so the
     same revision content projects to the same bytes and can reuse inference.
     """
-    if evidence.get("schema_version") != 2:
-        raise ProjectionError("UNSUPPORTED_EVIDENCE_SCHEMA", f"schema {evidence.get('schema_version')!r}")
-    observations = []
-    integrity_observed = False
-    evidence_present = False
-    for observation in evidence.get("deterministic_observations", []):
-        check_id = observation.get("check_id")
-        availability = observation.get("availability")
-        observed = availability == "OBSERVED"
-        evidence_present = evidence_present or observed
-        if check_id in {"RESPONSE_ARTIFACT_INTEGRITY", "TESTED_UNIVERSE_REPRODUCIBLE"} and observed:
-            integrity_observed = True
-        observations.append({
-            "check_id": check_id or observation.get("method_id"),
-            "method_id": observation.get("method_id"),
-            "method_version": observation.get("method_version"),
-            "outcome": observation.get("outcome"),
-            "availability": availability,
-            "n_effective": observation.get("n_effective"),
-            "observed": observation.get("observed"),
-            "missingness": observation.get("missingness"),
-            "notes": list(observation.get("notes", [])),
-            "limitations": list(observation.get("limitations", [])),
-        })
-    project_evidence = []
-    for row in evidence.get("project_level_evidence", []):
-        entry = {"project_id": row.get("project_id")}
-        for key in ("affected_case_count", "examined_cases", "project_case_with_ssm",
-                    "cases_with_expression", "missing_measurements"):
-            metric = row.get(key) or {}
-            entry[key] = metric.get("value")
-            entry[f"{key}_availability"] = metric.get("availability")
-        project_evidence.append(entry)
-        evidence_present = evidence_present or entry.get("affected_case_count_availability") == "OBSERVED"
-        evidence_present = evidence_present or entry.get("cases_with_expression_availability") == "OBSERVED"
-    quality = evidence.get("quality_and_fragility", {})
-    provenance = evidence.get("provenance", {})
-    input_artifacts = provenance.get("input_artifacts", [])
+    evidence = record.revision
+    action_block = _action_block(evidence)
     projection = {
         "projection_version": EVIDENCE_PROJECTION_VERSION,
-        "entity": {
-            "gene_id": (evidence.get("entity") or {}).get("gene_id"),
-            "symbol": (evidence.get("entity") or {}).get("gene_symbol"),
-        },
-        "revision": {
-            "iteration": evidence.get("iteration_number"),
-            "source_state_hash": (evidence.get("source_statistical_state") or {}).get("state_identity_hash"),
-            "evidence_present": bool(evidence_present),
-            "integrity_observed": bool(integrity_observed),
-            "verified_checks": quality.get("checks_verified"),
-            "contradicted_checks": quality.get("checks_contradicted"),
-            "not_observed_checks": quality.get("checks_not_observed"),
-        },
-        "action": evidence.get("action"),
-        "observations": observations,
-        "project_evidence": project_evidence,
-        "missing_evidence": [
-            {"needed_evidence": item.get("needed_evidence"), "availability": item.get("availability")}
-            for item in evidence.get("missing_evidence", [])
-        ],
-        "quality": {
-            "checks_total": quality.get("checks_total"),
-            "checks_verified": quality.get("checks_verified"),
-            "checks_contradicted": quality.get("checks_contradicted"),
-            "checks_not_observed": quality.get("checks_not_observed"),
-            "warnings": list(quality.get("warnings", [])),
-        },
-        "provenance": {
-            "gdc_release": provenance.get("gdc_release"),
-            "response_source_count": len(provenance.get("sources", [])),
-            "selection_artifact_sha256": provenance.get("selection_artifact_sha256"),
-            "input_artifacts_total": len(input_artifacts),
-            "input_artifacts_verified": sum(1 for item in input_artifacts if item.get("verified") is True),
-            "action_registry_version": provenance.get("action_registry_version"),
-        },
-        "eligible_actions": [
-            {
-                "action_id": action.get("action_id"),
-                "version": action.get("version"),
-                "title": action.get("title"),
-                "question": action.get("question"),
-                "unit": action.get("unit"),
-                "required_evidence": list(action.get("required_evidence", [])),
-            }
-            for action in eligible_actions
-        ],
+        "entity": {"gene_id": evidence.entity.gene_id, "symbol": evidence.entity.symbol},
+        **_revision_core(evidence, record.evidence_hash),
+        "eligible_actions": _action_payloads(eligible_actions),
         "limitations": (
-            list((evidence.get("action") or {}).get("limitations", []))
+            list((action_block or {}).get("limitations", []))
             + [
                 "The revision is deterministic evidence about recorded GDC evidence, not biological evidence.",
                 "A single cohort is examined and the examined gene set is selection-biased.",
             ]
         ),
     }
-    projection["revision"]["evidence_hash"] = evidence_hash
     encoded = canonical_json(projection)
     if len(encoded) > PROJECTION_BYTE_CAP:
         raise ProjectionError("PROJECTION_TOO_LARGE", f"{len(encoded)} bytes exceeds cap {PROJECTION_BYTE_CAP}")
     return projection
+
+
+def build_hypothesis_projection(draft: HypothesisDraft, record: EvidenceRecord, *,
+                                eligible_actions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Project one generated hypothesis together with the revision it came from.
+
+    The hypothesis text is carried verbatim and labelled with its generator; the
+    projection never presents generated text as evidence, never recomputes anything
+    and never includes operational ids — in particular the run-specific hypothesis
+    id is excluded, so identical generated text over identical evidence reuses its
+    review across runs.
+    """
+    evidence = record.revision
+    projection = {
+        "projection_version": HYPOTHESIS_PROJECTION_VERSION,
+        "hypothesis": {
+            "label": draft.label,
+            "generator": draft.generator,
+            "generator_model": draft.generator_model,
+            "statement": draft.statement,
+            "proposed_mechanism": draft.proposed_mechanism,
+            "predictions": list(draft.predictions),
+            "contradicted_if": list(draft.contradicted_if),
+            "distinguishing_tests": list(draft.distinguishing_tests),
+            "required_evidence": list(draft.required_evidence),
+            "unsupported_assumptions": list(draft.unsupported_assumptions),
+        },
+        "revision": {
+            "iteration": evidence.revision_index,
+            "source_state_hash": evidence.source_state.state_identity_hash,
+            "evidence_hash": record.evidence_hash,
+        },
+        "observations": _observations(evidence),
+        "project_evidence": _project_evidence(evidence),
+        "missing_evidence": _missing_evidence(evidence),
+        "eligible_actions": _action_payloads(eligible_actions),
+        "limitations": [
+            "The hypothesis text is generated, not measured; it is not evidence.",
+            "Judgments about the statement are inputs to Python policy and never execute anything.",
+            "A single cohort is examined and the examined gene set is selection-biased.",
+        ],
+    }
+    encoded = canonical_json(projection)
+    if len(encoded) > PROJECTION_BYTE_CAP:
+        raise ProjectionError("PROJECTION_TOO_LARGE", f"{len(encoded)} bytes exceeds cap {PROJECTION_BYTE_CAP}")
+    return projection
+
+
+def projection_hash(projection: dict[str, Any]) -> str:
+    return hashlib.sha256(canonical_json(projection)).hexdigest()
+
+
+__all__ = [
+    "EVIDENCE_INCLUDED_FIELDS",
+    "EVIDENCE_PROJECTION_VERSION",
+    "HYPOTHESIS_INCLUDED_FIELDS",
+    "HYPOTHESIS_PROJECTION_VERSION",
+    "INCLUDED_FIELDS",
+    "PROJECTION_BYTE_CAP",
+    "PROJECTION_VERSION",
+    "ProjectionError",
+    "build_evidence_projection",
+    "build_hypothesis_projection",
+    "build_projection",
+    "projection_hash",
+]

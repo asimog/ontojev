@@ -1,14 +1,14 @@
-"""Live Phase 2/3 orchestrator: bounded open-access GDC sweep to real states.
+"""Live orchestrator: bounded open-access GDC sweep to canonical typed states.
 
-Sequence: INVENTORY → GDC_FAST_SEARCH (mutation lane) → STATE_GENERATION
-(mutation + expression + coverage) → optional JEV_WIDE (Phase 3) → terminal run
-event. Every request goes through the sole transport; every measured number
-comes from deterministic methods; Jev never runs during a Phase 2 sweep.
+Sequence: INVENTORY → GDC_FAST_SEARCH (provider-ranked mutation discovery) →
+STATE_GENERATION (typed mutation, expression and coverage lanes) → optional
+JEV_WIDE → optional explicit deep-candidate investigation → terminal run event.
+Every request goes through the sole transport; every measured number comes from
+deterministic methods; Jev never computes a measurement and never runs an action.
 """
 
 from __future__ import annotations
 
-import hashlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -16,8 +16,17 @@ from typing import Any
 from uuid import uuid4
 
 from cancerjev.config import Settings
+from cancerjev.domain.codecs import state_identity, write_state
+from cancerjev.domain.envelopes import StateRecord
 from cancerjev.domain.events import canonical_json, utc_now
-from cancerjev.domain.state_summary import ComputedStatisticalState
+from cancerjev.domain.measurements import (
+    Acquisition,
+    MetricRecord,
+    ObservedCount,
+    OperationalSource,
+    digest,
+)
+from cancerjev.domain.scientific import StatisticalState
 from cancerjev.gdc.endpoints import (
     cohort_project_request,
     genes_request,
@@ -46,7 +55,7 @@ from cancerjev.research.acquisition import (
     acquire_mutation_counts,
     acquire_project_frame,
     response_meta,
-    response_source,
+    response_operational_source,
 )
 from cancerjev.research.acquisition import (
     _merge_expression_availability as _merge_expression_availability,
@@ -66,6 +75,38 @@ WIDE_SCAN_RULE = (
 )
 
 
+def _metric_summary(record: MetricRecord) -> dict[str, Any]:
+    """Presentation projection of one typed metric; not a scientific model."""
+    return {"value": record.value, "unit": record.unit,
+            "availability": record.availability.value, "reason_code": record.reason_code}
+
+
+def _state_summary(state: StatisticalState, artifact: PublishedArtifact, mode: str) -> dict[str, Any]:
+    """Operational/presentation summary stored beside a registered state."""
+    projects = len(state.projects)
+    observed_mutation = sum(1 for project in state.projects
+                            if isinstance(project.mutation.affected_cases, ObservedCount))
+    observed_expression = state.cross_project.projects_with_expression_observation
+
+    def availability(count: int) -> str:
+        return "OBSERVED" if count == projects else ("PARTIAL" if count else "INSUFFICIENT")
+
+    return {
+        "entity": {"gene_id": state.entity.gene_id, "gene_symbol": state.entity.symbol},
+        "mode": mode,
+        "mutation_availability": availability(observed_mutation),
+        "expression_availability": availability(observed_expression),
+        "projects_with_mutation_observation": state.cross_project.projects_with_mutation_observation,
+        "projects_with_expression_observation": observed_expression,
+        "affected_case_total": _metric_summary(state.cross_project.affected_case_total),
+        "top_project_share": _metric_summary(state.cross_project.top_project_share),
+        "coverage_imbalance": state.cross_project.coverage_imbalance,
+        "completeness": "COMPLETE" if state.quality.acquisition is Acquisition.COMPLETE else "PARTIAL",
+        "artifact_id": artifact.artifact_id,
+        "artifact_sha256": artifact.sha256,
+    }
+
+
 @dataclass
 class Inventory:
     release: str | None
@@ -73,7 +114,7 @@ class Inventory:
     projects: list[ProjectRecord]
     selected: list[ProjectRecord]
     inventory_artifact: PublishedArtifact
-    sources: list[dict[str, Any]]
+    sources: tuple[OperationalSource, ...]
     warnings: list[str]
     scope_hash: str
 
@@ -86,7 +127,7 @@ class Selection:
     genes: dict[str, GeneRecord]
     counts: GeneCaseCounts
     coverage: ProjectCoverage
-    sources: list[dict[str, Any]]
+    sources: tuple[OperationalSource, ...]
     warnings: list[str]
     artifact: PublishedArtifact
     examined_genes_hash: str
@@ -108,6 +149,9 @@ class LiveOrchestrator:
     deep_followup_authorized: bool = False
     deep_hypotheses_requested: bool = False
     llm_generator: HypothesisGenerator | None = None
+    run_mode: str = "LIVE"
+    fixture_id: str | None = None
+    fixture_version: str | None = None
 
     # ------------------------------------------------------------- event helpers
 
@@ -150,7 +194,7 @@ class LiveOrchestrator:
         return self.artifacts.publish(relative_path, content, "application/json", purpose)
 
     _meta = staticmethod(response_meta)
-    _source = staticmethod(response_source)
+    _source = staticmethod(response_operational_source)
 
     # --------------------------------------------------------------------- run
 
@@ -165,7 +209,8 @@ class LiveOrchestrator:
         )
         budget = RunBudget(caps=caps)
         run_id = self.repository.create_run(
-            self.worker_id, mode="LIVE", fixture_id=None, fixture_version=None,
+            self.worker_id, mode=self.run_mode, fixture_id=self.fixture_id,
+            fixture_version=self.fixture_version,
             scope={
                 "purpose": "LIVE_SWEEP", "spec_id": self.research_spec.spec_id,
                 "domain": cohort.domain, "cohort": cohort.cohort_id,
@@ -183,8 +228,10 @@ class LiveOrchestrator:
             else GDCTransport(self.repository, self.artifacts, budget, run_id, emit,
                               cache_enabled=self.settings.gdc_cache_enabled)
         )
-        self._event(run_id, "RUN_STARTED", "run:started", "Live bounded GDC sweep started.", stage=None,
-data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
+        self._event(run_id, "RUN_STARTED", "run:started",
+                    ("Live bounded GDC sweep started." if self.run_mode == "LIVE"
+                     else "Synthetic fixture research run started."), stage=None,
+data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
                         "max_requests": caps.max_requests, "max_bytes": caps.max_bytes,
                         "per_response_bytes": caps.per_response_bytes,
                         "max_case_ids": caps.max_case_ids, "max_gene_ids": caps.max_gene_ids,
@@ -222,7 +269,7 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
                 lambda: self._generate_states(run_id, transport, inventory, selection),
             )
             coverage = "COMPLETE_FOR_SCOPE"
-            if any(state.summary.completeness != "COMPLETE" for state in states):
+            if any(state.state.quality.acquisition is not Acquisition.COMPLETE for state in states):
                 coverage = "PARTIAL"
             if self.jev_service is not None:
                 wide_result = self._stage(
@@ -262,7 +309,9 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
             completion_data["deep"] = deep_summary
         self._event(
             run_id, "RUN_COMPLETED", "run:completed",
-            f"Live bounded sweep completed with {len(states)} statistical states.",
+            (f"Live bounded sweep completed with {len(states)} statistical states."
+             if self.run_mode == "LIVE"
+             else f"Synthetic fixture run completed with {len(states)} statistical states."),
             data=completion_data,
         )
         return run_id
@@ -466,6 +515,7 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
                 authorize_iteration=self.deep_followup_authorized,
                 hypotheses_requested=self.deep_hypotheses_requested,
                 llm_generator=self.llm_generator,
+                mode=self.run_mode,
             )
             summaries.append(investigation.summary())
         return {"selections": list(selections), "candidate_count": len(summaries),
@@ -489,10 +539,10 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
                 "COHORT_PROJECT_NOT_FOUND",
                 f"cohort project {cohort.project_id} not present in the open GDC project inventory",
             )
-        scope_hash = hashlib.sha256(canonical_json({
+        scope_hash = digest({
             "research_spec": self.research_spec.as_dict(), "selection_rule": selection_rule,
             "project_id": selected[0].project_id, "case_count": selected[0].case_count,
-        })).hexdigest()
+        })
         inventory_payload = {
             "release": release, "release_commit": status.commit, "release_tag": status.tag,
             "research_spec": self.research_spec.as_dict(), "domain": cohort.domain,
@@ -509,8 +559,8 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
         artifact = self._publish_json(run_id, f"runs/{run_id}/inventory/projects.json", inventory_payload, "gdc-inventory")
         self.repository.register_artifact(artifact, run_id)
         sources = [
-            self._source(status_response, locator="/status", release=release),
-            self._source(project_response, locator="/projects", release=release),
+            self._source(status_response, release=release),
+            self._source(project_response, release=release),
         ]
         warnings = status.warnings + response_warnings(project_response.body, self._meta(project_response, release))
         self._event(
@@ -532,7 +582,7 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
             artifact_refs=[artifact.ref()],
         )
         return Inventory(release=release, release_commit=status.commit, projects=projects,
-                         selected=selected, inventory_artifact=artifact, sources=sources,
+                         selected=selected, inventory_artifact=artifact, sources=tuple(sources),
                          warnings=warnings, scope_hash=scope_hash)
 
     # --------------------------------------------------------------- fast search
@@ -554,8 +604,7 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
             hits = parse_top_mutated_genes(response.body, self._meta(response, inventory.release))
             discovery_by_project[project.project_id] = {hit.gene_id: hit for hit in hits}
             ranked_genes = [hit.gene_id for hit in sorted(hits, key=lambda hit: hit.rank)]
-            sources.append(self._source(response, locator=f"/analysis/top_mutated_genes_by_project[{project.project_id}]",
-                                        release=inventory.release))
+            sources.append(self._source(response, release=inventory.release))
         count_genes = ranked_genes[:acquisition.count_gene_limit]
         if not count_genes:
             raise LiveRunError("NO_DISCOVERED_GENES", f"provider discovery returned no genes for {cohort.project_id}")
@@ -573,7 +622,7 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
             raise LiveRunError("NO_DISCOVERED_GENES", "gene selection produced an empty set")
         genes_response = transport.request(genes_request(selected_gene_ids))
         gene_records = parse_genes(genes_response.body, self._meta(genes_response, inventory.release))
-        sources.append(self._source(genes_response, locator="/genes", release=inventory.release))
+        sources.append(self._source(genes_response, release=inventory.release))
         if len(gene_records) != len(selected_gene_ids):
             raise LiveRunError("GENE_IDENTITY_INCOMPLETE",
                                f"requested {len(selected_gene_ids)} genes, received {len(gene_records)}")
@@ -597,24 +646,25 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
         artifact = self._publish_json(run_id, f"runs/{run_id}/selection/examined_genes.json",
                                      selection_payload, "gdc-gene-selection")
         self.repository.register_artifact(artifact, run_id)
-        examined_genes_hash = hashlib.sha256(canonical_json(selection_payload)).hexdigest()
+        examined_genes_hash = digest(selection_payload)
         return Selection(
             discovery_by_project=discovery_by_project, count_genes=count_genes,
             selected_gene_ids=selected_gene_ids, genes=genes, counts=counts, coverage=coverage,
-            sources=sources, warnings=warnings, artifact=artifact, examined_genes_hash=examined_genes_hash,
+            sources=tuple(sources), warnings=warnings, artifact=artifact,
+            examined_genes_hash=examined_genes_hash,
         )
 
     # ---------------------------------------------------------- state generation
 
     def _acquire_project_frame(self, run_id: str, transport: AcquisitionTransport, inventory: Inventory,
                                selection: Selection, project: ProjectRecord,
-                               ) -> tuple[ProjectFrame, list[dict[str, Any]], list[str]]:
+                               ) -> tuple[ProjectFrame, tuple[OperationalSource, ...], list[str]]:
         return acquire_project_frame(transport, project, self.research_spec.acquisition, inventory.release,
                                      selection.selected_gene_ids,
                                      selection.discovery_by_project.get(project.project_id, {}))
 
     def _generate_states(self, run_id: str, transport: AcquisitionTransport, inventory: Inventory,
-                         selection: Selection) -> list[ComputedStatisticalState]:
+                         selection: Selection) -> list[StateRecord]:
         frames: list[ProjectFrame] = []
         sources = list(selection.sources)
         warnings = list(selection.warnings)
@@ -625,7 +675,7 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
             sources.extend(frame_sources)
             warnings.extend(frame_warnings)
             frames.append(frame)
-        states: list[ComputedStatisticalState] = []
+        states: list[StateRecord] = []
         cohort = self.research_spec.cohort
         gene_selection_rule = self.research_spec.gene_selection_rule()
         for rank, gene_id in enumerate(selection.selected_gene_ids, start=1):
@@ -639,53 +689,47 @@ data={"mode": "LIVE", "research_spec": spec_payload, "caps": {
                 "rank_in_lane": rank,
                 "observed_in_project_count": sum(1 for frame in frames if gene_id in frame.discovery_hits),
                 "ranking_rule": gene_selection_rule,
+                "selected_gene_ids": tuple(selection.selected_gene_ids),
             }
-            computed = compute_statistical_state(
-                run_id=run_id, state_id=state_id, created_at=utc_now(), gene=gene, frames=frames,
-                counts=selection.counts, coverage=selection.coverage, sources=sources, warnings=warnings,
+            state = compute_statistical_state(
+                gene=gene, frames=frames,
+                counts=selection.counts, coverage=selection.coverage, sources=tuple(sources),
+                warnings=warnings,
                 scope_meta={
                     "gdc_release": inventory.release, "examined_case_frame": "ALL_CASES_PAGINATED",
                     "scope_hash": inventory.scope_hash, "spec_id": self.research_spec.spec_id,
                     "research_spec": self.research_spec.as_dict(), "domain": cohort.domain,
                     "cohort": cohort.cohort_id, "project_id": cohort.project_id,
+                    "cohort_selection_rule": self.research_spec.cohort_selection_rule(),
+                    "gene_selection_rule": gene_selection_rule,
                 },
                 discovery_meta=discovery_meta,
             )
-            state = computed.boundary_representation()
+            state_hash = state_identity(state)
             artifact = self._publish_json(
-                run_id, f"runs/{run_id}/statistical_states/{state_id}.json", state, "statistical-state",
+                run_id, f"runs/{run_id}/statistical_states/{state_id}.json", write_state(state),
+                "statistical-state",
             )
-            summary = {
-                "entity": {"gene_id": gene.gene_id, "gene_symbol": gene.symbol},
-                "mode": "LIVE",
-                "mutation_availability": state["mutation"]["availability"],
-                "expression_availability": state["expression"]["availability"],
-                "projects_with_mutation_observation": state["cross_project"]["projects_with_mutation_observation"],
-                "projects_with_expression_observation": state["cross_project"]["projects_with_expression_observation"],
-                "affected_case_total": state["cross_project"]["affected_case_total"],
-                "top_project_share": state["cross_project"]["top_project_share"],
-                "coverage_imbalance": state["cross_project"]["coverage_imbalance"],
-                "completeness": state["quality"]["completeness"],
-                "artifact_id": artifact.artifact_id,
-                "artifact_sha256": artifact.sha256,
-            }
+            summary = _state_summary(state, artifact, self.run_mode)
             registrations = [
                 self.repository.artifact_registration(artifact, run_id),
                 self.repository.state_registration(
-                    state_id=state_id, run_id=run_id, state_hash=state["state_hash"],
+                    state_id=state_id, run_id=run_id, state_hash=state_hash,
                     artifact_id=artifact.artifact_id, disposition="GENERATED",
                     summary_json=canonical_json(summary).decode(), created_at=utc_now(),
                 ),
             ]
             self._event(
                 run_id, "STATISTICAL_STATE_CREATED", f"state:{state_id}",
-                f"Real StatisticalState for {gene.symbol} generated from open GDC evidence.",
+                (f"Real StatisticalState for {gene.symbol} generated from open GDC evidence."
+                 if self.run_mode == "LIVE"
+                 else f"Synthetic StatisticalState for {gene.symbol} generated from labelled fixtures."),
                 stage="STATE_GENERATION",
-                data={"state_id": state_id, "state_hash": state["state_hash"], "gene_id": gene.gene_id,
+                data={"state_id": state_id, "state_hash": state_hash, "gene_id": gene.gene_id,
                       "gene_symbol": gene.symbol, "mode": "LIVE"},
                 artifact_refs=[artifact.ref()], registrations=registrations,
             )
-            states.append(computed)
+            states.append(StateRecord(state_id, state_hash, state))
         self._event(
             run_id, "WIDE_SCAN_COMPLETED", "wide:completed",
             f"Wide evidence scan completed with {len(states)} states.",

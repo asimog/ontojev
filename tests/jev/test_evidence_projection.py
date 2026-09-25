@@ -1,142 +1,245 @@
-"""Deep evidence projection tests: deterministic, operational-id free, fail-closed."""
+"""Deep evidence projection contract: typed revision fields, fail-closed identity."""
 
 from __future__ import annotations
 
-import copy
 import json
+from dataclasses import replace
 
 import pytest
 
+from cancerjev.domain.envelopes import EvidenceRecord
+from cancerjev.domain.events import canonical_json
+from cancerjev.domain.evidence import (
+    ActionRef,
+    BaselineObservation,
+    CheckOutcome,
+    EvidenceCheck,
+    EvidenceProvenance,
+    EvidenceState,
+    InputArtifactRef,
+    MissingEvidence,
+    ProjectEvidenceRow,
+    ResearchPuzzle,
+    SourceStateBinding,
+)
+from cancerjev.domain.hypotheses import HypothesisDraft
+from cancerjev.domain.measurements import (
+    Acquisition,
+    Compatibility,
+    EntityRef,
+    MetricAvailability,
+    MetricRecord,
+    Quality,
+    ScientificSource,
+    Sufficiency,
+)
 from cancerjev.jev.projection import (
     EVIDENCE_INCLUDED_FIELDS,
     EVIDENCE_PROJECTION_VERSION,
+    HYPOTHESIS_PROJECTION_VERSION,
     ProjectionError,
     build_evidence_projection,
+    build_hypothesis_projection,
     projection_hash,
 )
 from cancerjev.jev.questions import DEEP_QUESTIONS, applicability_map, validate_definitions
 from cancerjev.science.actions import ACTION_REGISTRY
 
+RELEASE = "Data Release 46.0"
+ENTITY = EntityRef("ENSG00000141510", "TP53", RELEASE)
+ACTION = ActionRef("CHECK_EVIDENCE_INTEGRITY_V1", "1")
 ACTION_PAYLOAD = [ACTION_REGISTRY["CHECK_EVIDENCE_INTEGRITY_V1"].payload()]
+CHECK_IDS = (
+    "COHORT_FRAME_AGREEMENT",
+    "EXPRESSION_COVERAGE_ARITHMETIC",
+    "MUTATION_COUNT_SCOPE",
+    "TESTED_UNIVERSE_REPRODUCIBLE",
+    "RESPONSE_ARTIFACT_INTEGRITY",
+)
 
 
-def _observation(check_id: str, outcome: str, availability: str = "OBSERVED") -> dict:
-    return {
-        "result_id": "result-1", "method_id": "EVIDENCE_INTEGRITY_V1", "method_version": "1",
-        "check_id": check_id, "claim": "claim", "outcome": outcome, "n_effective": 1,
-        "availability": availability, "observed": {"value": 1}, "expected": {},
-        "notes": [], "missingness": {"count": 0 if availability == "OBSERVED" else 1, "reason": None},
-        "inference_status": "NOT_APPLICABLE", "limitations": [],
-    }
+def _check(check_id: str, outcome: str = "VERIFIED") -> EvidenceCheck:
+    not_observed = outcome == "NOT_OBSERVED"
+    return EvidenceCheck(
+        check_id=check_id,
+        method_id="EVIDENCE_INTEGRITY_V1",
+        method_version="1",
+        outcome=CheckOutcome(outcome),
+        claim=f"{check_id} claim",
+        input_hashes=("a" * 64,),
+        reason=None if outcome == "VERIFIED" else f"{check_id} reason",
+        n_effective=None if not_observed else 1,
+        observed=canonical_json({"value": 1}),
+        expected=canonical_json({}),
+        notes=(),
+        limitations=(),
+        missing_count=1 if not_observed else 0,
+        missing_reason="RECORDED_EVIDENCE_DOES_NOT_PERMIT_VERIFICATION" if not_observed else None,
+    )
 
 
-def _revision() -> dict:
-    return {
-        "schema_version": 2,
-        "mode": "LIVE",
-        "evidence_state_id": "evidence-1",
-        "run_id": "run-1",
-        "candidate_id": "candidate-1",
-        "created_at": "2026-09-23T00:00:00Z",
-        "previous_evidence_state_id": "evidence-0",
-        "iteration_number": 1,
-        "entity": {"gene_id": "ENSG1", "gene_symbol": "GENEONE"},
-        "source_statistical_state": {
-            "state_id": "state-1", "state_identity_hash": "a" * 64,
-            "state_artifact_id": "artifact-1", "state_artifact_sha256": "b" * 64,
-        },
-        "research_puzzle": {"origin": "DETERMINISTIC_ACTION_REGISTRY", "question": "q",
-                            "interpretation": "i", "proposed_action_ids": ["CHECK_EVIDENCE_INTEGRITY_V1"]},
-        "research_only_notice": "REAL OPEN-ACCESS GDC EVIDENCE",
-        "action": ACTION_PAYLOAD[0],
-        "deterministic_observations": [
-            _observation("COHORT_FRAME_AGREEMENT", "VERIFIED"),
-            _observation("EXPRESSION_COVERAGE_ARITHMETIC", "VERIFIED"),
-            _observation("MUTATION_COUNT_SCOPE", "VERIFIED"),
-            _observation("TESTED_UNIVERSE_REPRODUCIBLE", "VERIFIED"),
-            _observation("RESPONSE_ARTIFACT_INTEGRITY", "VERIFIED"),
-        ],
-        "project_level_evidence": [
-            {"project_id": "TCGA-LUAD",
-             "affected_case_count": {"value": 393, "unit": "cases", "availability": "OBSERVED"},
-             "examined_cases": {"value": 585, "unit": "cases", "availability": "OBSERVED"},
-             "project_case_with_ssm": {"value": 573, "unit": "cases", "availability": "OBSERVED"},
-             "cases_with_expression": {"value": 518, "unit": "cases", "availability": "OBSERVED"},
-             "missing_measurements": {"value": 67, "unit": "cases", "availability": "OBSERVED"}},
-        ],
-        "missing_evidence": [{"needed_evidence": "new_gdc_measurement", "availability": "NOT_ACQUIRED",
-                              "reason": "no acquisition"}],
-        "quality_and_fragility": {"checks_total": 5, "checks_verified": 5, "checks_contradicted": 0,
-                                  "checks_not_observed": 0, "warnings": []},
-        "provenance": {
-            "gdc_release": "Data Release 46.0", "sources": [{"endpoint": "/cases"}] * 16,
-            "methods": [], "environment_hash": "c" * 64, "action_registry_version": "1",
-            "selection_artifact_sha256": "d" * 64,
-            "input_artifacts": [{"kind": "RESPONSE_ARTIFACT", "ref": "artifact-2", "sha256": "e" * 64,
-                                 "verified": True}],
-        },
-    }
+def _quality() -> Quality:
+    return Quality(Acquisition.COMPLETE, Sufficiency.SUFFICIENT, Compatibility.VERIFIED, ())
+
+
+def _source(endpoint: str = "/cases") -> ScientificSource:
+    return ScientificSource(endpoint, "a" * 64, "b" * 64, "gdc-parser-v1", RELEASE,
+                            Acquisition.COMPLETE)
+
+
+def _provenance(*, input_ref: str = "artifact-2") -> EvidenceProvenance:
+    return EvidenceProvenance(
+        gdc_release=RELEASE, sources=(_source(),), methods=(),
+        environment_hash="c" * 64, action_registry_version="2",
+        selection_artifact_sha256="d" * 64,
+        input_artifacts=(InputArtifactRef("RESPONSE_ARTIFACT", input_ref, "e" * 64, True),),
+    )
+
+
+def _project_evidence() -> tuple[ProjectEvidenceRow, ...]:
+    return (ProjectEvidenceRow(
+        project_id="TCGA-LUAD",
+        affected_case_count=MetricRecord.observed_value(393, "cases"),
+        examined_cases=MetricRecord.observed_value(585, "cases"),
+        project_case_with_ssm=MetricRecord.observed_value(573, "cases"),
+        cases_with_expression=MetricRecord.observed_value(518, "cases"),
+        missing_measurements=MetricRecord.observed_value(67, "cases"),
+    ),)
+
+
+def _missing_evidence() -> tuple[MissingEvidence, ...]:
+    return (MissingEvidence("new_gdc_measurement", MetricAvailability.NOT_ACQUIRED,
+                            "no acquisition is authorized"),)
+
+
+def _revision(*, evidence_state_id: str = "evidence-1", evidence_hash: str = "f" * 64,
+              checks: tuple[EvidenceCheck, ...] | None = None, source_state_id: str = "state-1",
+              state_artifact_id: str = "artifact-1", input_ref: str = "artifact-2",
+              action: ActionRef | None = ACTION) -> EvidenceRecord:
+    checks = tuple(_check(check_id) for check_id in CHECK_IDS) if checks is None else checks
+    revision = EvidenceState(
+        entity=ENTITY, accepted_state_hash="a" * 64,
+        source_state=SourceStateBinding(source_state_id, "a" * 64, state_artifact_id, "b" * 64),
+        parent_evidence_hash="9" * 64, revision_index=1, action=action,
+        puzzle=ResearchPuzzle("DETERMINISTIC_ACTION_REGISTRY", "revision question",
+                              "revision interpretation",
+                              (action.action_id,) if action is not None else ()),
+        checks=checks, baseline_observations=(), project_evidence=_project_evidence(),
+        missing_evidence=_missing_evidence(), quality=_quality(), warnings=(),
+        provenance=_provenance(input_ref=input_ref),
+    )
+    return EvidenceRecord(evidence_state_id, evidence_hash, revision)
+
+
+def _baseline_record() -> EvidenceRecord:
+    observation = BaselineObservation(
+        method_id="MUTATION_AFFECTED_CASE_COUNT_V1", method_version="1",
+        observed=canonical_json({"value": 10, "unit": "cases"}), availability="OBSERVED",
+        n_effective=60, missingness_count=0, missingness_reason=None,
+        notes=("project TCGA-LUAD",), limitations=(),
+    )
+    revision = EvidenceState(
+        entity=ENTITY, accepted_state_hash="a" * 64,
+        source_state=SourceStateBinding("state-1", "a" * 64, "artifact-1", "b" * 64),
+        parent_evidence_hash=None, revision_index=0, action=None,
+        puzzle=ResearchPuzzle("STATISTICAL_STATE_BASELINE", "baseline question",
+                              "baseline interpretation", ()),
+        checks=(), baseline_observations=(observation,), project_evidence=_project_evidence(),
+        missing_evidence=_missing_evidence(), quality=_quality(), warnings=(),
+        provenance=_provenance(),
+    )
+    return EvidenceRecord("evidence-0", "f" * 64, revision)
 
 
 def test_projection_is_deterministic_and_operational_id_free():
-    revision = _revision()
-    first = build_evidence_projection(revision, ACTION_PAYLOAD, evidence_hash="f" * 64)
-    altered = copy.deepcopy(revision)
-    altered.update({"evidence_state_id": "other", "run_id": "other", "candidate_id": "other",
-                    "previous_evidence_state_id": "other", "created_at": "2999-01-01T00:00:00Z"})
-    altered["source_statistical_state"]["state_id"] = "other"
-    altered["source_statistical_state"]["state_artifact_id"] = "other"
-    altered["provenance"]["input_artifacts"][0]["ref"] = "other"
-    for observation in altered["deterministic_observations"]:
-        observation["result_id"] = "other"
-    second = build_evidence_projection(altered, ACTION_PAYLOAD, evidence_hash="f" * 64)
-    assert projection_hash(first) == projection_hash(second)
+    first = build_evidence_projection(_revision(), ACTION_PAYLOAD)
+    second = build_evidence_projection(_revision(), ACTION_PAYLOAD)
+    altered = _revision(evidence_state_id="evidence-other", source_state_id="state-other",
+                        state_artifact_id="artifact-other", input_ref="artifact-other")
+    renamed = build_evidence_projection(altered, ACTION_PAYLOAD)
+    assert first == second
+    assert projection_hash(first) == projection_hash(renamed)
     assert first["projection_version"] == EVIDENCE_PROJECTION_VERSION
-    assert set(EVIDENCE_INCLUDED_FIELDS) <= set(EVIDENCE_INCLUDED_FIELDS)
-    assert "state_id" not in first["revision"] and "evidence_state_id" not in first
+    assert first["revision"]["iteration"] == 1
+    assert first["revision"]["source_state_hash"] == "a" * 64
+    assert first["revision"]["evidence_hash"] == "f" * 64
+    assert first["revision"]["evidence_present"] is True
+    assert first["revision"]["integrity_observed"] is True
+    assert "state_id" not in first["revision"]
+    assert "evidence_state_id" not in json.dumps(first)
+    assert "artifact-2" not in json.dumps(first)
 
 
 def test_projection_tracks_scientific_changes():
-    baseline = build_evidence_projection(_revision(), ACTION_PAYLOAD, evidence_hash="f" * 64)
-    changed = _revision()
-    changed["deterministic_observations"][0]["outcome"] = "CONTRADICTED"
-    assert projection_hash(build_evidence_projection(changed, ACTION_PAYLOAD, evidence_hash="f" * 64)) != \
+    baseline = build_evidence_projection(_revision(), ACTION_PAYLOAD)
+    changed_checks = list(_check(check_id) for check_id in CHECK_IDS)
+    changed_checks[0] = _check("COHORT_FRAME_AGREEMENT", "CONTRADICTED")
+    changed = _revision(checks=tuple(changed_checks))
+    assert projection_hash(build_evidence_projection(changed, ACTION_PAYLOAD)) != \
         projection_hash(baseline)
-    reverted = _revision()
-    assert projection_hash(build_evidence_projection(reverted, ACTION_PAYLOAD, evidence_hash="0" * 64)) != \
+    rehashed = _revision(evidence_hash="0" * 64)
+    assert projection_hash(build_evidence_projection(rehashed, ACTION_PAYLOAD)) != \
         projection_hash(baseline)
 
 
 def test_projection_signals_drive_deep_applicability():
-    projection = build_evidence_projection(_revision(), ACTION_PAYLOAD, evidence_hash="f" * 64)
+    projection = build_evidence_projection(_revision(), ACTION_PAYLOAD)
     assert projection["revision"]["evidence_present"] is True
     assert projection["revision"]["integrity_observed"] is True
     rules = applicability_map(projection, DEEP_QUESTIONS)
     assert set(rules) == {definition.question_id for definition in DEEP_QUESTIONS}
     assert all(rule["applicable"] for rule in rules.values())
 
-    contradicted = _revision()
-    contradicted["deterministic_observations"][3] = _observation("TESTED_UNIVERSE_REPRODUCIBLE",
-                                                                 "NOT_OBSERVED", "NOT_OBSERVED")
-    contradicted["deterministic_observations"][4] = _observation("RESPONSE_ARTIFACT_INTEGRITY",
-                                                                 "NOT_OBSERVED", "NOT_OBSERVED")
-    projection = build_evidence_projection(contradicted, ACTION_PAYLOAD, evidence_hash="f" * 64)
+    degraded = list(_check(check_id) for check_id in CHECK_IDS)
+    degraded[3] = _check("TESTED_UNIVERSE_REPRODUCIBLE", "NOT_OBSERVED")
+    degraded[4] = _check("RESPONSE_ARTIFACT_INTEGRITY", "NOT_OBSERVED")
+    projection = build_evidence_projection(_revision(checks=tuple(degraded)), ACTION_PAYLOAD)
     rules = applicability_map(projection, DEEP_QUESTIONS)
     assert rules["revision_reliable"]["applicable"] is False
     assert rules["evidence_sufficient_for_next_step"]["applicable"] is True
 
-    contradicted_by_verdict = _revision()
-    contradicted_by_verdict["deterministic_observations"][4] = _observation(
-        "RESPONSE_ARTIFACT_INTEGRITY", "CONTRADICTED")
-    projection = build_evidence_projection(contradicted_by_verdict, ACTION_PAYLOAD, evidence_hash="f" * 64)
+    contradicted = list(degraded)
+    contradicted[4] = _check("RESPONSE_ARTIFACT_INTEGRITY", "CONTRADICTED")
+    projection = build_evidence_projection(_revision(checks=tuple(contradicted)), ACTION_PAYLOAD)
     assert applicability_map(projection, DEEP_QUESTIONS)["revision_reliable"]["applicable"] is True
 
 
-def test_projection_rejects_other_schemas():
-    revision = _revision()
-    revision["schema_version"] = 1
-    with pytest.raises(ProjectionError):
-        build_evidence_projection(revision, ACTION_PAYLOAD, evidence_hash="f" * 64)
+def test_baseline_observations_project_with_null_outcome():
+    projection = build_evidence_projection(_baseline_record(), ACTION_PAYLOAD)
+    assert projection["action"] is None
+    observation = projection["observations"][0]
+    assert observation["check_id"] == "MUTATION_AFFECTED_CASE_COUNT_V1"
+    assert observation["outcome"] is None
+    assert observation["availability"] == "OBSERVED"
+    assert projection["revision"]["evidence_present"] is True
+    assert projection["quality"]["checks_total"] == 0
+
+
+def test_action_block_and_eligible_actions_are_declared():
+    projection = build_evidence_projection(_revision(), ACTION_PAYLOAD)
+    action = projection["action"]
+    assert action["action_id"] == "CHECK_EVIDENCE_INTEGRITY_V1"
+    assert action["method_id"] == "EVIDENCE_INTEGRITY_V1"
+    assert action["method_version"]
+    assert action["unit"]
+    assert action["required_evidence"]
+    eligible = projection["eligible_actions"]
+    assert eligible[0]["action_id"] == "CHECK_EVIDENCE_INTEGRITY_V1"
+    assert eligible[0]["question"]
+    assert projection["limitations"], "the revision limitations must stay visible"
+
+
+def test_projection_byte_cap_fails_closed(monkeypatch):
+    monkeypatch.setattr("cancerjev.jev.projection.PROJECTION_BYTE_CAP", 10)
+    with pytest.raises(ProjectionError) as exc:
+        build_evidence_projection(_revision(), ACTION_PAYLOAD)
+    assert exc.value.code == "PROJECTION_TOO_LARGE"
+
+
+def test_included_fields_declare_the_deep_contract():
+    assert "revision.evidence_present" in EVIDENCE_INCLUDED_FIELDS
+    assert "observations[].outcome" in EVIDENCE_INCLUDED_FIELDS
+    assert "eligible_actions[]" in EVIDENCE_INCLUDED_FIELDS
 
 
 def test_deep_question_set_is_valid_and_carries_full_semantics():
@@ -148,24 +251,23 @@ def test_deep_question_set_is_valid_and_carries_full_semantics():
         assert definition.applicability_rule in {"revision_evidence_present", "integrity_observed"}
 
 
-def test_hypothesis_projection_excludes_the_run_specific_id():
-    from cancerjev.jev.projection import build_hypothesis_projection
-
-    revision = _revision()
-    hypothesis = {
-        "hypothesis_id": "run-specific-id", "label": "GENERATED HYPOTHESIS — NOT EVIDENCE",
-        "generator": "deterministic-template-v1", "statement": "A statement.",
-        "proposed_mechanism": "p", "predictions": ["p"], "contradicted_if": ["c"],
-        "distinguishing_tests": [], "required_evidence": ["r"], "unsupported_assumptions": ["a"],
-    }
-    first = build_hypothesis_projection(hypothesis, revision, eligible_actions=ACTION_PAYLOAD,
-                                        evidence_hash="f" * 64)
-    renamed = {**hypothesis, "hypothesis_id": "another-run-specific-id"}
-    second = build_hypothesis_projection(renamed, revision, eligible_actions=ACTION_PAYLOAD,
-                                         evidence_hash="f" * 64)
-    assert projection_hash(first) == projection_hash(second), "the review must be reusable across runs"
+def test_hypothesis_projection_carries_text_verbatim_and_excludes_run_ids():
+    draft = HypothesisDraft(
+        label="GENERATED HYPOTHESIS — NOT EVIDENCE", generator="deterministic-template-v1",
+        generator_model=None, statement="A bounded statement.",
+        proposed_mechanism="A proposed mechanism.", predictions=("prediction",),
+        contradicted_if=("contradiction",), distinguishing_tests=(),
+        required_evidence=("required",), unsupported_assumptions=("assumption",),
+    )
+    first = build_hypothesis_projection(draft, _revision(), eligible_actions=ACTION_PAYLOAD)
+    assert first["projection_version"] == HYPOTHESIS_PROJECTION_VERSION
+    assert first["hypothesis"]["statement"] == "A bounded statement."
+    assert first["hypothesis"]["label"] == draft.label
+    assert first["hypothesis"]["generator"] == "deterministic-template-v1"
+    assert first["hypothesis"]["distinguishing_tests"] == []
     assert "hypothesis_id" not in json.dumps(first)
-    changed_text = build_hypothesis_projection({**hypothesis, "statement": "A different statement."},
-                                               revision, eligible_actions=ACTION_PAYLOAD,
-                                               evidence_hash="f" * 64)
-    assert projection_hash(changed_text) != projection_hash(first), "changed text is a different review"
+    assert first["eligible_actions"][0]["action_id"] == "CHECK_EVIDENCE_INTEGRITY_V1"
+    changed = replace(draft, statement="A different statement.")
+    assert projection_hash(build_hypothesis_projection(changed, _revision(),
+                                                       eligible_actions=ACTION_PAYLOAD)) != \
+        projection_hash(first)

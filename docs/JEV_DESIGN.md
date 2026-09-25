@@ -28,20 +28,19 @@ IDs are program keys, not question meaning. Calculations and exact lookups remai
 
 ## Current implementation
 
-wide-v3 (6 Noul+1 Choice), deep-v1 (4 Noul+1 Choice), hypothesis-v2 (2 Noul+1 Choice) are IMPLEMENTED.
-Projection versions are jev-state-projection-v2, jev-evidence-projection-v1 and
-jev-hypothesis-projection-v1. Existing versions and provisional thresholds remain unchanged.
-See [questions](JEV_QUESTIONS.md). The current Deep policy has four moves including
-GENERATE_HYPOTHESES; policy never dispatches its own decision.
+wide-v3 (6 Noul+1 Choice), deep-v1 (4 Noul+1 Choice), hypothesis-v2 (2 Noul+1 Choice) are IMPLEMENTED
+and unchanged by the Stage 3 hard cutover. Projection versions are current and typed:
+jev-state-projection-v3, jev-evidence-projection-v2 and jev-hypothesis-projection-v2. Existing
+versions and provisional thresholds remain unchanged. See [questions](JEV_QUESTIONS.md). The current
+Deep policy has four moves including GENERATE_HYPOTHESES; policy never dispatches its own decision.
 
-Stage 2 validates cached-answer hydration against recorded artifacts, original question definitions,
-rosters, distributions, projection/applicability and model identity. Invalid cache yields
-UNUSABLE_CACHE abstention with no replacement call. Stage 3 keeps those typed answer variants in
-EvaluationRecord through Wide/Deep policy and cache reuse; current Wide projection consumes a typed
-state summary. Historical adapters and v2 evidence/hypothesis presentation remain. Pinned
-requested/resolved Jev identity gates cache reuse. No question/projection/policy semantics change.
-Operational IDs are excluded from projections where required. A historical ranking change or
-successful provider call does not establish incremental research value.
+The Stage 3 cutover validates cached-answer hydration against recorded artifacts, original question
+definitions, rosters, distributions, projection/applicability and model identity. Invalid cache yields
+UNUSABLE_CACHE abstention with no replacement call. Validated typed answers travel in
+EvaluationRecord through Wide/Deep policy and cache reuse; the Wide projection consumes the final
+typed StatisticalState. Pinned requested/resolved Jev identity gates cache reuse; operational ids are
+excluded from projections where required. A historical ranking change or successful provider call
+does not establish incremental research value.
 
 ## Cookbook capability map
 
@@ -108,3 +107,41 @@ Cache semantic features by scientific projection, full question definition and r
 not timestamp/run ID. Keep human labels and known cancer biology outside production selection and
 blind calibration reviewers to method/ranking where feasible. Any automatic expansion waits for
 incremental-value and resource-accounting gates.
+
+## Post-cutover capability revalidation (2026-09-25)
+
+Scope: confirm KEEP / ADOPT NOW / DEFER / REJECT for the capabilities below against the final typed
+StatisticalState (schema 4) and EvidenceState (schema 4), the actual registered action contracts
+(`CHECK_EVIDENCE_INTEGRITY_V1` on `STATISTICAL_STATE`, `CHECK_REVISION_FAITHFULNESS_V1` on
+`EVIDENCE_STATE`), and the current projections. This adds no Jev semantics and changes no version.
+
+Cross-check: the official `typesafe-ai` skill was loaded, and the live documentation index
+(`docs.typesafe.ai/llms.txt`, fetched 2026-09-25) was used to confirm the retry, fan-out,
+composite-scoring, confidence-routing, reranking, cascade and feature-discovery patterns exist with
+the semantics assumed here. The retries, speculative fan-out, composite-scoring and autoresearch
+feature-discovery pages were read directly; other pattern pages were confirmed from the live index
+and the retained cookbook map but not re-read line by line in this pass. This revalidation is
+UNVERIFIED against any future provider documentation change.
+
+| Capability | Decision | Rationale against the typed contracts |
+|---|---|---|
+| Current Wide questions (`wide-v3`) | KEEP | Validated typed answers already consume the typed projection; applicability is code-owned and inapplicable answers never drive policy. No redefinition. |
+| Current Deep questions (`deep-v1`) | KEEP | Answers bind to an immutable revision hash; the four-move policy is separate and never dispatches. No new primitives. |
+| Batching (one request per state/revision) | KEEP | Live docs continue to recommend putting all needed questions of one state in a single call; current service already does this and records per-answer validation. |
+| Fan-out (independent speculative questions) | KEEP | Applicability already implements “ignore unused answers”; branch-specific judgments remain code-filtered. No speculative acquisition. |
+| Confidence-based abstention | KEEP | Discriminating alternatives; confidence is distribution concentration, not correctness. Current policy treats low support as abstention and zero admissions as valid. |
+| Reranking | KEEP (current policy), DEFER new rankers | Current lexicographic reranking persists raw dimensions and a baseline. New learned/composite rankers require labels and ablations. |
+| Semantic features | DEFER | No typed semantic-feature contract exists outside StatisticalState; adding features before a labelled corpus and identity rules risks leaking model output into measured identity. |
+| Autoresearch feature discovery | DEFER | Requires a labelled historical corpus, held-out splits and human review; installing CatBoost or an autoresearch agent now is unjustified. |
+| Composite scoring | DEFER new weights | The current lexicographic policy with hard gates stays; weighted scores are an ablation, not a replacement, and must never compensate a hard scientific gate. |
+| Action-value judgments | DEFER | Only two integrity actions exist; an action-value Noul over them would judge integrity checks, not biological utility. Requires new eligible measurement/acquisition actions first. |
+| Hypothesis verification | KEEP critique, DEFER new review sets | `hypothesis-v2` already critiques generated text and never promotes it. Additional verification questions need reviewed entailment labels. |
+| Escalation cascades | DEFER | No generator-to-verifier-to-reasoning cascade: it introduces correlated errors, unknown paid cost and an automatic paid path. Human review remains the escalation. |
+| typed projection inputs | ADOPT NOW (already in force) | Wide/Deep/Hypothesis projections consume typed records; operational ids stay out of scientific identity. |
+| Validated answers throughout | ADOPT NOW (already in force) | Every answer is validated against its question definition, roster/distribution and applicability before policy; cache reuse revalidates. |
+| Explicit SDK retry configuration and attempt accounting | ADOPT NOW (already in force) | `RetryPolicy(max_retries=0)` is explicit, matching the live SDK docs; logical evaluations correspond to at most one HTTP attempt. A total paid-model spend gate remains PLANNED. |
+
+REJECT for all paths: model-computed measurements; model authorization or dispatch; LLM parsing of
+structured GDC evidence; inference presented as acquired evidence. These violate the measurement and
+control-flow boundaries regardless of provider capability. No question-set, projection or policy
+version changes as a result of this revalidation.

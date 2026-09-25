@@ -1,4 +1,4 @@
-"""Phase 3 wide evaluation: projections, real Jev calls, rankings, promotion.
+"""Wide evaluation: deterministic projections, real Jev calls, rankings, promotion.
 
 Sequence is owned by research: projection per state, one Jev request per state,
 fail-closed validation, deterministic rankings persisted for both the baseline
@@ -12,8 +12,8 @@ from collections.abc import Callable
 from typing import Any
 from uuid import uuid4
 
+from cancerjev.domain.envelopes import StateRecord
 from cancerjev.domain.events import canonical_json, utc_now
-from cancerjev.domain.state_summary import ComputedStatisticalState
 from cancerjev.jev.contracts import EvaluationRecord
 from cancerjev.jev.projection import ProjectionError
 from cancerjev.jev.questions import WIDE_QUESTION_SET_VERSION
@@ -30,7 +30,7 @@ from cancerjev.storage.artifacts import PublishedArtifact
 from cancerjev.storage.repositories import Repository
 
 
-def run_wide_evaluation(*, run_id: str, states: list[ComputedStatisticalState], coverage: str,
+def run_wide_evaluation(*, run_id: str, states: list[StateRecord], coverage: str,
                         repository: Repository, jev_service: JevService, emit: Callable[..., Any],
                         publish_json: PublishJson,
                         max_states: int | None = None) -> dict[str, Any]:
@@ -44,7 +44,7 @@ def run_wide_evaluation(*, run_id: str, states: list[ComputedStatisticalState], 
     skipped_state_ids: list[str] = []
     if max_states is not None and len(states) > max_states:
         evaluated_states = states[:max_states]
-        skipped_state_ids = [state.summary.state_id for state in states[max_states:]]
+        skipped_state_ids = [state.state_id for state in states[max_states:]]
         emit(
             run_id, "JEV_WIDE_STATE_CAP_ENFORCED", "jev:wide:state-cap",
             f"Configured Jev state cap {max_states} enforced; {len(skipped_state_ids)} state(s) not evaluated.",
@@ -55,25 +55,26 @@ def run_wide_evaluation(*, run_id: str, states: list[ComputedStatisticalState], 
     evaluations: list[EvaluationRecord] = []
     deferred: list[str] = []
     for state in evaluated_states:
+        symbol = state.state.entity.symbol
         try:
             evaluation = jev_service.evaluate_record(run_id=run_id, state=state, emit=emit)
         except ProjectionError as exc:
-            deferred.append(state.summary.state_id)
+            deferred.append(state.state_id)
             emit(
-                run_id, "JEV_EVALUATION_FAILED", f"jev-wide:{state.summary.state_id}:projection-failed",
-                f"Jev projection failed closed for {state.summary.gene_symbol}: {exc.code}.",
+                run_id, "JEV_EVALUATION_FAILED", f"jev-wide:{state.state_id}:projection-failed",
+                f"Jev projection failed closed for {symbol or state.state_id}: {exc.code}.",
                 stage="JEV_WIDE", level="error",
-                data={"state_id": state.summary.state_id, "error_code": exc.code, "detail": str(exc),
+                data={"state_id": state.state_id, "error_code": exc.code, "detail": str(exc),
                       "provider_attempted": False, "cache": False},
             )
             continue
         if evaluation.error_code is not None:
-            deferred.append(state.summary.state_id)
+            deferred.append(state.state_id)
         evaluations.append(evaluation)
 
-    baseline = baseline_ranking([state.summary for state in states])
+    baseline = baseline_ranking(states)
     baseline_artifact = _publish_ranking(run_id, "baseline_ranking.json", baseline, publish_json, repository)
-    jev = jev_ranking([state.summary for state in states], evaluations)
+    jev = jev_ranking(states, evaluations)
     jev_artifact = _publish_ranking(run_id, "jev_ranking.json", jev, publish_json, repository)
     emit(
         run_id, "WIDE_RANKING_COMPLETED", "jev:wide:ranking",
@@ -92,14 +93,13 @@ def run_wide_evaluation(*, run_id: str, states: list[ComputedStatisticalState], 
         },
         artifact_refs=[baseline_artifact.ref(), jev_artifact.ref()],
     )
-    promoted = _promote(run_id, [state.boundary_representation() for state in states],
-                        [evaluation.boundary_representation() for evaluation in evaluations], jev, emit, repository)
+    promoted = _promote(run_id, states, evaluations, jev, emit, repository)
     emit(
         run_id, "JEV_WIDE_COMPLETED", "jev:wide:completed",
         f"Wide Jev evaluation completed: {len(evaluations)} evaluations, admission {jev['admission']['decision']}, "
         f"{len(promoted)} promoted.",
         stage="JEV_WIDE",
-data={
+        data={
             "evaluations": len(evaluations), "deferred": len(deferred), "promoted": len(promoted),
             "coverage": coverage, "admission_decision": jev["admission"]["decision"],
             "promotion_limit": jev["admission"]["promotion_limit"],
@@ -116,41 +116,43 @@ def _publish_ranking(run_id: str, filename: str, ranking: dict[str, Any],
     return artifact
 
 
-def _promote(run_id: str, states: list[dict[str, Any]], evaluations: list[dict[str, Any]],
+def _promote(run_id: str, states: list[StateRecord], evaluations: list[EvaluationRecord],
              jev: dict[str, Any], emit: Callable[..., Any], repository: Repository) -> list[dict[str, Any]]:
-    by_state = {state["state_id"]: state for state in states}
-    by_evaluation = {evaluation["input_ref_id"]: evaluation for evaluation in evaluations}
+    by_state = {state.state_id: state for state in states}
+    by_evaluation = {evaluation.input_ref_id: evaluation for evaluation in evaluations}
     promoted: list[dict[str, Any]] = []
     for slot, state_id in enumerate(jev["admitted_state_ids"][:PROMOTION_LIMIT], start=1):
         state = by_state.get(state_id)
         evaluation = by_evaluation.get(state_id)
-        if state is None or evaluation is None or evaluation.get("error") is not None:
+        if state is None or evaluation is None or evaluation.error_code is not None:
             continue
         entry = next(entry for entry in jev["entries"] if entry["state_id"] == state_id)
         candidate_id = str(uuid4())
         now = utc_now()
+        entity = state.state.entity
         summary = {
             "promotion_reason": f"wide-policy-v2 rank {entry['rank']}",
             "policy_version": JEV_POLICY_VERSION,
-            "wide_evaluation_id": evaluation["evaluation_id"],
+            "wide_evaluation_id": evaluation.evaluation_id,
             "dimensions": entry["dimensions"],
         }
         registration = repository.candidate_registration(
             candidate_id=candidate_id, run_id=run_id, promotion_slot=slot, status="WIDE_EVALUATED",
             current_stage="JEV_WIDE", source_state_id=state_id,
-            entity_json=canonical_json(state["entity"]).decode(),
+            entity_json=canonical_json({"gene_id": entity.gene_id,
+                                        "gene_symbol": entity.symbol}).decode(),
             summary_json=canonical_json(summary).decode(), created_at=now, updated_at=now,
         )
         emit(
             run_id, "CANDIDATE_PROMOTED", f"candidate:{slot}:promoted",
-            f"Promoted {state['entity']['gene_symbol']} into slot {slot} from the wide Jev ranking.",
+            f"Promoted {entity.symbol or entity.gene_id} into slot {slot} from the wide Jev ranking.",
             stage="JEV_WIDE", candidate_id=candidate_id,
             data={"candidate_id": candidate_id, "source_state_id": state_id,
-                  "evaluation_id": evaluation["evaluation_id"], "promotion_slot": slot,
+                  "evaluation_id": evaluation.evaluation_id, "promotion_slot": slot,
                   "policy_version": JEV_POLICY_VERSION, "reason": summary["promotion_reason"],
                   "dimensions": entry["dimensions"]},
             registrations=[registration],
         )
         promoted.append({"candidate_id": candidate_id, "state_id": state_id, "slot": slot,
-                         "evaluation_id": evaluation["evaluation_id"]})
+                         "evaluation_id": evaluation.evaluation_id})
     return promoted

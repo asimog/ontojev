@@ -1,13 +1,18 @@
 # GDC discovery capture register
 
-Evidence collected 2026-09-24 UTC for baseline `42b05d40e6edafec0b8613e7dd154a60a46e4fee`.
+Status: historical evidence (UNVERIFIED in the current environment; not re-fetched). This register
+records what was requested and returned; interpretation and admission are in GDC strategy.
+
+Evidence collected 2026-09-24 UTC for the design campaign; retained as historical evidence after
+the Stage 3 hard cutover (2026-09-25). No provider response here was re-fetched or re-verified by
+the documentation pass.
 Interpretation and admission decisions: [GDC strategy](GDC_STRATEGY.md).
 Local capture root: `C:/Users/Rahul Khatri/AppData/Local/Temp/ontojev-architecture-20260924/`.
 Each numbered `NNN.body` has full bytes; `ledger.json` records canonical request parameters/body,
 full URL, method, timestamps, status, headers, byte count, body and request SHA-256, latency and outcome.
-These files are outside production data and are not portable committed fixtures. Preserve them before
-temporary-directory cleanup if implementing the fixture gate. No provider response has been represented
-as a committed test fixture.
+These files are outside production data and are not portable committed fixtures. No provider
+response has been represented as a committed test fixture; a future fixture gate must retain
+bounded captures under its own separately scoped change.
 
 Campaign wall-clock window: **2026-09-24 18:08:13.121640 UTC through 18:20:09.608368 UTC**.
 Ledger SHA-256: `fc5ddcb2d0c4981e500dac5d6b7ed04dd7676c4f6911040d21076784b2fb4225`.

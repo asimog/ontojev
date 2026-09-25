@@ -1,0 +1,14 @@
+{
+  "name": "cancerjev-browser-acceptance",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Current Stage 3 browser acceptance for the shared typed research run",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.58.2",
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}

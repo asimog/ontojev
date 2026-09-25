@@ -1,4 +1,9 @@
+"""Wide state projection contract: bounded typed fields, fail-closed identity."""
+
 from __future__ import annotations
+
+from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,23 +22,30 @@ from cancerjev.jev.questions import (
     question_set_hash,
     wide_question_set_hash,
 )
-from tests.science.test_methods import GENE, _build, _frame
+from tests.jev.test_service import GENE, PROJECT, state_record, statistical_state
 
-
-def _state(**kwargs) -> dict:
-    return _build([_frame("P1")], **kwargs)
+COHORT_FIELDS = {
+    "project_id", "examined_cases", "affected_cases", "mutation_observed",
+    "mutation_coverage_complete", "ssm_coverage_cases", "expression_observed",
+    "expression_median", "expression_sample_sd", "expression_n_finite", "expression_n_missing",
+    "expression_provider_median", "expression_provider_stddev", "coverage_imbalance",
+    "completeness", "scientific_sufficiency",
+}
 
 
 def test_projection_is_deterministic_and_compact():
-    state = _state()
-    first = build_projection(state)
-    second = build_projection(state)
+    record = state_record("state-1", statistical_state())
+    first = build_projection(record)
+    second = build_projection(record)
+    assert first == second
     assert projection_hash(first) == projection_hash(second)
     assert first["projection_version"] == PROJECTION_VERSION
     assert first["entity"]["symbol"] == "TP53"
     assert first["entity"]["cancer_census"] is True
+    assert first["scope"]["domain"] == "lung cancer"
+    assert first["scope"]["projects"] == [PROJECT]
     assert first["scope"]["expression_unit"] == "log2(UQFPKM+1)"
-    assert first["cohort"]["project_id"] == "P1"
+    assert first["cohort"]["project_id"] == PROJECT
     assert first["cohort"]["affected_cases"] == 10
     assert first["cohort"]["examined_cases"] == 60
     assert first["cohort"]["mutation_observed"] is True
@@ -44,43 +56,20 @@ def test_projection_is_deterministic_and_compact():
 
 
 def test_projection_contains_no_raw_or_operational_fields():
-    state = _state()
-    projection = build_projection(state)
-    serialized = str(projection)
-    for forbidden in ("artifact_id", "retrieved_at", "state_id", "request_hash", "_score",
-                      "provider_discovery_rank", "response_sha256"):
-        assert forbidden not in serialized
-    cohort = projection["cohort"]
-    assert set(cohort) == {
-        "project_id", "examined_cases", "affected_cases", "mutation_observed",
-        "mutation_coverage_complete", "ssm_coverage_cases", "expression_observed",
-        "expression_median", "expression_sample_sd", "expression_n_finite", "expression_n_missing",
-        "expression_provider_median", "expression_provider_stddev", "coverage_imbalance",
-        "completeness", "scientific_sufficiency",
+    projection = build_projection(state_record("state-1", statistical_state()))
+    rendered = str(projection)
+    for forbidden in ("artifact_id", "retrieved_at", "state_id", "state_hash", "request_hash",
+                      "response_sha256", "_score", "provider_discovery_rank"):
+        assert forbidden not in rendered
+
+
+def test_projection_field_contract_is_exact():
+    projection = build_projection(state_record("state-1", statistical_state()))
+    assert set(projection) == {
+        "projection_version", "entity", "scope", "cohort", "missingness", "limitations",
+        "eligible_followups",
     }
-
-
-def test_projection_preserves_missingness_and_limitations():
-    state = _build([_frame("P1", missing_expression_cells=7)], counts={"P1": {GENE.gene_id: 4}})
-    projection = build_projection(state)
-    assert projection["cohort"]["affected_cases"] == 4
-    assert projection["cohort"]["expression_n_missing"] == 7
-    assert any("7 of 60" in entry for entry in projection["missingness"])
-    assert any("no matched denominator" in limitation for limitation in projection["limitations"])
-
-
-def test_projection_rejects_multiple_projects():
-    with pytest.raises(ProjectionError) as exc:
-        build_projection(_build([_frame("P1"), _frame("P2")]))
-    assert exc.value.code == "MULTI_COHORT_STATE"
-
-
-def test_projection_byte_cap_fails_closed(monkeypatch):
-    state = _state()
-    monkeypatch.setattr("cancerjev.jev.projection.PROJECTION_BYTE_CAP", 10)
-    with pytest.raises(ProjectionError) as exc:
-        build_projection(state)
-    assert exc.value.code == "PROJECTION_TOO_LARGE"
+    assert set(projection["cohort"]) == COHORT_FIELDS
 
 
 def test_included_field_contract_is_declared():
@@ -89,46 +78,79 @@ def test_included_field_contract_is_declared():
     assert "eligible_followups[]" in INCLUDED_FIELDS
 
 
+def test_projection_preserves_missingness_and_limitations():
+    state = statistical_state(counts={PROJECT: {GENE.gene_id: 4}}, missing_expression_cells=7)
+    projection = build_projection(state_record("state-1", state))
+    assert projection["cohort"]["affected_cases"] == 4
+    assert projection["cohort"]["expression_n_missing"] == 7
+    assert any("7 of 60" in entry for entry in projection["missingness"])
+    assert any("no matched denominator" in entry for entry in projection["limitations"])
+
+
+def test_projection_rejects_multiple_projects():
+    with pytest.raises(ProjectionError) as exc:
+        build_projection(state_record("state-multi", statistical_state(projects=("P1", "P2"))))
+    assert exc.value.code == "MULTI_COHORT_STATE"
+
+
+def test_projection_byte_cap_fails_closed(monkeypatch):
+    monkeypatch.setattr("cancerjev.jev.projection.PROJECTION_BYTE_CAP", 10)
+    with pytest.raises(ProjectionError) as exc:
+        build_projection(state_record("state-1", statistical_state()))
+    assert exc.value.code == "PROJECTION_TOO_LARGE"
+
+
+def test_projection_hash_is_stable_across_operational_ids_and_discovery_metadata():
+    state = statistical_state()
+    baseline = build_projection(state_record("state-a", state))
+    renamed = build_projection(state_record("state-b", state))
+    assert projection_hash(baseline) == projection_hash(renamed)
+    reranked = statistical_state(discovery=False)
+    assert projection_hash(build_projection(state_record("state-c", reranked))) == projection_hash(baseline)
+    altered_artifacts = statistical_state(artifacts_by_endpoint={
+        "/analysis/top_cases_counts_by_genes": SimpleNamespace(
+            sha256="d" * 64, artifact_id="other-artifact"),
+    })
+    assert projection_hash(build_projection(state_record("state-d", altered_artifacts))) == \
+        projection_hash(baseline)
+
+
 def test_applicability_rules_follow_the_evidence():
-    projection = build_projection(_state())
-    rules = applicability_map(projection)
-    assert rules["warrants_deeper_investigation"]["applicable"] is True
-    assert rules["mutation_evidence_coherent"]["applicable"] is True
-    assert rules["expression_evidence_coherent"]["applicable"] is True
-    assert rules["dominant_limitation"]["applicable"] is True
+    baseline = applicability_map(build_projection(state_record("state-1", statistical_state())),
+                                 WIDE_QUESTIONS)
+    assert baseline["warrants_deeper_investigation"]["applicable"] is True
+    assert baseline["mutation_evidence_coherent"]["applicable"] is True
+    assert baseline["expression_evidence_coherent"]["applicable"] is True
+    assert baseline["dominant_limitation"]["applicable"] is True
 
-    expression_only = build_projection(_build(
-        [_frame("P1")], counts={"P1": {}},
-    ))
-    assert expression_only["cohort"]["affected_cases"] is None
-    assert expression_only["cohort"]["mutation_observed"] is False
-    rules = applicability_map(expression_only)
-    assert rules["mutation_evidence_coherent"]["applicable"] is False
-    assert rules["expression_evidence_coherent"]["applicable"] is True
+    expression_only_projection = build_projection(
+        state_record("state-expression", statistical_state(counts={PROJECT: {}})))
+    assert expression_only_projection["cohort"]["affected_cases"] is None
+    assert expression_only_projection["cohort"]["mutation_observed"] is False
+    expression_only = applicability_map(expression_only_projection, WIDE_QUESTIONS)
+    assert expression_only["mutation_evidence_coherent"]["applicable"] is False
+    assert expression_only["expression_evidence_coherent"]["applicable"] is True
 
-    mutation_only_state = _build([_frame("P1")])
-    mutation_only_state["expression"]["project_results"][0]["local"]["median"]["availability"] = "INSUFFICIENT"
-    mutation_only = build_projection(mutation_only_state)
-    rules = applicability_map(mutation_only)
-    assert rules["mutation_evidence_coherent"]["applicable"] is True
-    assert rules["expression_evidence_coherent"]["applicable"] is False
+    mutation_only_projection = build_projection(
+        state_record("state-mutation", statistical_state(expression=False)))
+    assert mutation_only_projection["cohort"]["expression_observed"] is False
+    mutation_only = applicability_map(mutation_only_projection, WIDE_QUESTIONS)
+    assert mutation_only["expression_evidence_coherent"]["applicable"] is False
+    assert mutation_only["mutation_evidence_coherent"]["applicable"] is True
 
 
 def test_question_set_hash_changes_with_wording():
-    baseline = wide_question_set_hash()
-    assert len(baseline) == 64
-    from cancerjev.jev.questions import QuestionDefinition
-
+    assert WIDE_QUESTION_SET_VERSION == "wide-v3"
+    assert len(wide_question_set_hash()) == 64
     altered = tuple(
-        QuestionDefinition(**{**definition.__dict__, "instructions": definition.instructions + " "})
+        replace(definition, instructions=definition.instructions + " ")
         for definition in WIDE_QUESTIONS
     )
-    assert question_set_hash(altered, WIDE_QUESTION_SET_VERSION) != baseline
+    assert question_set_hash(altered, WIDE_QUESTION_SET_VERSION) != wide_question_set_hash()
 
 
 def test_every_question_has_full_semantics():
     for definition in WIDE_QUESTIONS:
-        assert definition.instructions and len(definition.instructions) > 80
+        assert len(definition.instructions) > 80
         assert definition.criteria
-        assert definition.version >= 1
-        assert definition.primitive in {"NOUL", "CHOICE", "SCORE"}
+        assert definition.applicability_rule

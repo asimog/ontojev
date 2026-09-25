@@ -1,54 +1,287 @@
-"""Goldens captured before the typed transition at fb52305 (synthetic/offline).
+"""Typed scientific baseline: schema-4 round trips and explicit unavailability.
 
-Do not regenerate these to make a changed scientific identity pass. A deliberate
-new version needs separate expectations; these protect historical interpretation.
+No historical hash golden is asserted here. The baseline protects the current
+contract relationally: a canonical StatisticalState and an E0 EvidenceState
+re-read as the same typed objects, and a measurement the evidence never observed
+stays unavailable rather than becoming a zero.
 """
 
+import json
+
+from cancerjev.domain.codecs import (
+    evidence_identity,
+    read_evidence,
+    read_state,
+    state_identity,
+    write_evidence,
+    write_state,
+)
 from cancerjev.domain.events import canonical_json
-from cancerjev.domain.identity import (
-    content_hash,
-    evidence_state_identity_payload,
-    statistical_state_identity_payload,
+from cancerjev.domain.evidence import (
+    BaselineObservation,
+    EvidenceProvenance,
+    EvidenceState,
+    ProjectEvidenceRow,
+    ResearchPuzzle,
+    SourceStateBinding,
 )
-from cancerjev.domain.measurements import digest
-from cancerjev.jev.projection import build_projection, projection_hash
-from cancerjev.jev.questions import (
-    deep_question_set_hash,
-    hypothesis_question_set_hash,
-    wide_question_set_hash,
+from cancerjev.domain.measurements import (
+    Acquisition,
+    MetricAvailability,
+    MetricRecord,
+    ObservedCount,
+    ObservedScalar,
+    OperationalSource,
+    ScientificSource,
+    UnavailableMeasurement,
+    UnavailableStatus,
+    digest,
 )
-from cancerjev.research.fixtures import evidence, statistical_states
-from cancerjev.research.orchestrator import DemoOrchestrator
-from tests.science.test_methods import _build, _frame
+from cancerjev.domain.scientific import (
+    ExpressionSummaryResult,
+    Lane,
+    UnavailableLane,
+)
+from cancerjev.gdc.parsers import (
+    CaseRecord,
+    DiscoveryHit,
+    ExpressionAvailability,
+    ExpressionValues,
+    GeneCaseCounts,
+    GeneRecord,
+    ProjectCoverage,
+    ProjectRecord,
+    ProviderGene,
+    ProviderSelection,
+)
+from cancerjev.research.specs import LUAD_RESEARCH_V1
+from cancerjev.science.methods import ProjectFrame, compute_statistical_state
+
+GENE = GeneRecord(gene_id="ENSG00000141510", symbol="TP53", name="tumor protein p53",
+                  biotype="protein_coding", is_cancer_gene_census=True)
+GENE_ID = GENE.gene_id
+RELEASE = "Data Release 46.0"
+SOURCE_SET = (
+    OperationalSource(
+        ScientificSource("/analysis/top_cases_counts_by_genes", "b" * 64, "a" * 64, "gdc-parser-v1",
+                         RELEASE, Acquisition.COMPLETE),
+        "attempt-1", "artifact-1", "2026-09-25T00:00:00Z", 100, 5, 200, False),
+    OperationalSource(
+        ScientificSource("/analysis/mutated_cases_count_by_project", "b" * 64, "d" * 64, "gdc-parser-v1",
+                         RELEASE, Acquisition.COMPLETE),
+        "attempt-2", "artifact-2", "2026-09-25T00:00:00Z", 100, 5, 200, False),
+    OperationalSource(
+        ScientificSource("/gene_expression/values", "b" * 64, "e" * 64, "gdc-parser-v1",
+                         RELEASE, Acquisition.COMPLETE),
+        "attempt-3", "artifact-3", "2026-09-25T00:00:00Z", 100, 5, 200, False),
+)
 
 
-def test_pretransition_scientific_and_projection_goldens():
-    fixture = statistical_states("golden", lambda name: name)[0]
-    fixture["state_hash"] = content_hash(statistical_state_identity_payload(fixture))
-    assert fixture["state_hash"] == "1695cdd28096fbf747043fdf695059060809513a78a44fc970781d531ad95fa5"
-    revision = evidence("golden", "candidate", fixture, lambda name: name)
-    assert content_hash(evidence_state_identity_payload(revision)) == (
-        "f558ac40ded68024003b3d90cd38692099043e33f785001e27b458379fb4c2fd"
-    )
-    live = _build([_frame("TCGA-LUAD")])
-    assert live["state_hash"] == "4df87b5c2b6ebca43b21f57c1958e0f3da59fce02a709c7f9824602fea8ca38b"
-    projection = build_projection(live)
-    assert projection_hash(projection) == "b93151e63b48ba43bea5e6b1376a852a67cfb30f2dee760821e38a69472c4752"
-    assert canonical_json(projection) == canonical_json(build_projection(live))
+def scope_meta():
+    spec = LUAD_RESEARCH_V1
+    return {
+        "gdc_release": RELEASE,
+        "cohort": spec.cohort.cohort_id,
+        "project_id": spec.cohort.project_id,
+        "spec_id": spec.spec_id,
+        "domain": spec.cohort.domain,
+        "cohort_selection_rule": spec.cohort_selection_rule(),
+        "gene_selection_rule": spec.gene_selection_rule(),
+        "examined_case_frame": "ALL_CASES_PAGINATED",
+        "research_spec": {"acquisition": {
+            "case_page_size": spec.acquisition.case_page_size,
+            "case_batch_size": spec.acquisition.case_batch_size,
+            "max_cohort_cases": spec.acquisition.max_cohort_cases,
+            "discovery_gene_limit": spec.acquisition.discovery_gene_limit,
+            "count_gene_limit": spec.acquisition.count_gene_limit,
+            "candidate_gene_limit": spec.acquisition.candidate_gene_limit,
+            "expression_file_sample_size": spec.acquisition.expression_file_sample_size,
+        }},
+    }
 
 
-def test_pretransition_question_definition_goldens():
-    assert wide_question_set_hash() == "e515f2c182b8db0f50773bcd4dc5b8fc14ec8d2a7e264500f01dad3a1a5f3213"
-    assert deep_question_set_hash() == "262d5ae47ce3ac77d1df0f27bb557cd4adb81f10e5cde8ebe034eb335c6ae9f1"
-    assert hypothesis_question_set_hash() == "77f459d726ccd9455645a63d01cc8eba02cda768f07c0121767abee58b285894"
+def discovery_meta():
+    return {
+        "selected_gene_ids": (GENE_ID,),
+        "examined_genes_hash": digest([GENE_ID]),
+        "examined_genes_n": 3,
+        "rank_in_lane": 1,
+        "observed_in_project_count": 1,
+        "ranking_rule": "provider top-mutated ranking for the single examined cohort",
+        "examined_genes_ref": "selection-artifact-1",
+    }
 
 
-def test_fixture_event_type_and_stage_order_golden(runtime):
-    settings, repository, artifacts = runtime
-    emitted = []
-    run_id = DemoOrchestrator(settings, repository, artifacts, emitted.append).run()
-    assert repository.get_run(run_id)["status"] == "COMPLETED"
-    assert len(emitted) == 71
-    assert digest([(event["type"], event["stage"]) for event in emitted]) == (
-        "cdd7da750e3a10613644594a5f7e3083ad9598adf32e08cf62b62db3aeb5d89a"
-    )
+def frame(project_id="TCGA-LUAD", *, cases=6, expression=True):
+    case_records = [CaseRecord(case_id=f"{project_id}-case-{index:02d}", submitter_id=f"S-{index}",
+                               project_id=project_id, sample_types=["Primary Tumor"])
+                    for index in range(cases)]
+    if expression:
+        coverage = ExpressionAvailability(
+            cases={case.case_id: True for case in case_records}, genes={GENE_ID: True},
+            with_count=cases, without_count=0, missing_cases=[], missing_genes=[], warnings=[])
+        values = ExpressionValues(
+            values={GENE_ID: {case.case_id: float(index + 1)
+                              for index, case in enumerate(case_records)}},
+            missing_case_ids=[], missing_gene_ids=[], nonfinite_values=0, warnings=[])
+        provider = ProviderSelection(
+            genes={GENE_ID: ProviderGene(gene_id=GENE_ID, symbol="TP53", median=2.5, stddev=0.3)},
+            missing_genes=[], warnings=[])
+    else:
+        coverage = values = provider = None
+    hits = {GENE_ID: DiscoveryHit(gene_id=GENE_ID, symbol="TP53", rank=1, score=99.0)}
+    return ProjectFrame(
+        project_id=project_id,
+        project_record=ProjectRecord(project_id=project_id, name=project_id, program_name="TCGA",
+                                     primary_site=["Lung"], disease_type=["Adenocarcinoma"],
+                                     case_count=cases, file_count=cases * 5,
+                                     data_categories=["Transcriptome Profiling"]),
+        cases=case_records, frame_hash="f" * 64, expression_coverage=coverage,
+        provider_selection=provider, expression_values=values, workflows=["STAR - Counts"],
+        strategies=["RNA-Seq"], discovery_hits=hits)
+
+
+def build_state(*, frames=None, counts=None, coverage=None):
+    frames = frames or [frame()]
+    counts = counts if counts is not None else {f.project_id: {GENE_ID: 2} for f in frames}
+    coverage = coverage if coverage is not None else {f.project_id: len(f.cases) for f in frames}
+    return compute_statistical_state(
+        gene=GENE, frames=frames,
+        counts=GeneCaseCounts(projects=counts, hits_total=10, complete=True, partial_reasons=[],
+                              warnings=[]),
+        coverage=ProjectCoverage(case_with_ssm=coverage, complete=True, partial_reasons=[],
+                                 warnings=[]),
+        sources=SOURCE_SET, warnings=[], scope_meta=scope_meta(),
+        discovery_meta=discovery_meta())
+
+
+_METRIC_AVAILABILITY = {
+    "NOT_OBSERVED": MetricAvailability.NOT_OBSERVED,
+    "NOT_ACQUIRED": MetricAvailability.NOT_ACQUIRED,
+    "PARTIAL": MetricAvailability.PARTIAL,
+    "UNAVAILABLE": MetricAvailability.UNAVAILABLE,
+    "INSUFFICIENT": MetricAvailability.INSUFFICIENT,
+    "INCOMPATIBLE": MetricAvailability.UNAVAILABLE,
+    "INVALID": MetricAvailability.UNAVAILABLE,
+}
+
+
+def metric(measurement, unit="cases"):
+    if isinstance(measurement, (ObservedCount, ObservedScalar)):
+        return MetricRecord.observed_value(measurement.value, unit)
+    if isinstance(measurement, UnavailableMeasurement):
+        return MetricRecord.unavailable(unit, _METRIC_AVAILABILITY.get(
+            measurement.status.value, MetricAvailability.UNAVAILABLE), measurement.reason)
+    return MetricRecord.unavailable(unit, MetricAvailability.NOT_OBSERVED)
+
+
+def project_row(project):
+    expression = project.expression
+    if isinstance(expression, ExpressionSummaryResult):
+        cases_with_expression = MetricRecord.observed_value(len(expression.coverage.valid_ids), "cases")
+        missing_measurements = MetricRecord.observed_value(
+            len(expression.coverage.frame.examined_ids) - len(expression.coverage.valid_ids), "cases")
+    else:
+        availability = _METRIC_AVAILABILITY.get(expression.status.value, MetricAvailability.NOT_OBSERVED)
+        cases_with_expression = MetricRecord.unavailable("cases", availability, expression.reason)
+        missing_measurements = MetricRecord.unavailable("cases", availability, expression.reason)
+    return ProjectEvidenceRow(
+        project_id=project.population.frame.project_id,
+        affected_case_count=metric(project.mutation.affected_cases),
+        examined_cases=MetricRecord.observed_value(len(project.mutation.frame.examined_ids), "cases"),
+        project_case_with_ssm=metric(project.mutation.ssm_coverage_cases),
+        cases_with_expression=cases_with_expression,
+        missing_measurements=missing_measurements)
+
+
+def baseline_observation(project):
+    affected = project.mutation.affected_cases
+    return BaselineObservation(
+        "MUTATION_AFFECTED_CASE_COUNT_V1", "1",
+        canonical_json({"value": affected.value if isinstance(affected, ObservedCount) else None,
+                        "unit": "cases"}),
+        "OBSERVED" if isinstance(affected, ObservedCount) else "NOT_OBSERVED",
+        len(project.mutation.frame.examined_ids), 0, None)
+
+
+def e0(state):
+    accepted = state_identity(state)
+    return EvidenceState(
+        entity=state.entity, accepted_state_hash=accepted,
+        source_state=SourceStateBinding("state-1", accepted, "artifact-1", "c" * 64),
+        parent_evidence_hash=None, revision_index=0, action=None,
+        puzzle=ResearchPuzzle(
+            "STATISTICAL_STATE_BASELINE",
+            "What does the recorded evidence support, and what follow-up is eligible?",
+            "The baseline revision is the accepted evidence, not a judgment.",
+            ("CHECK_EVIDENCE_INTEGRITY_V1",)),
+        checks=(),
+        baseline_observations=tuple(baseline_observation(project) for project in state.projects),
+        project_evidence=tuple(project_row(project) for project in state.projects),
+        missing_evidence=(), quality=state.quality, warnings=state.missingness,
+        provenance=EvidenceProvenance(state.entity.release, state.sources, state.methods,
+                                      state.environment_hash, "2",
+                                      state.tested_context.examined_genes_hash, ()))
+
+
+def test_typed_state_round_trip_preserves_scientific_content():
+    state = build_state()
+    raw = write_state(state)
+    payload = json.loads(raw)
+    assert payload["schema_version"] == 4
+    assert payload["kind"] == "STATISTICAL_STATE"
+    assert payload["state_hash"] == state_identity(state)
+    assert read_state(raw) == state
+    assert read_state(raw, expected_hash=state_identity(state)) == state
+    assert state.research.spec_id == LUAD_RESEARCH_V1.spec_id
+    assert state.research.cohort == LUAD_RESEARCH_V1.cohort.cohort_id
+
+
+def test_typed_e0_round_trip_preserves_the_revision():
+    state = build_state()
+    base = e0(state)
+    assert base.revision_index == 0
+    assert base.action is None and base.checks == ()
+    assert base.puzzle.origin == "STATISTICAL_STATE_BASELINE"
+    raw = write_evidence(base)
+    payload = json.loads(raw)
+    assert payload["schema_version"] == 4
+    assert payload["kind"] == "EVIDENCE_STATE"
+    assert payload["evidence_hash"] == evidence_identity(base)
+    assert read_evidence(raw) == base
+    assert read_evidence(raw, expected_hash=evidence_identity(base)) == base
+
+
+def test_missing_measurements_stay_unavailable_through_round_trips():
+    state = build_state(
+        frames=[frame("P1"), frame("P2", expression=False)],
+        counts={"P1": {GENE_ID: 2}}, coverage={"P1": 6, "P2": 6})
+    p2 = state.projects[1]
+    assert isinstance(p2.mutation.affected_cases, UnavailableMeasurement)
+    assert p2.mutation.affected_cases.status == UnavailableStatus.NOT_OBSERVED
+    assert isinstance(p2.expression, UnavailableLane)
+    assert p2.expression.lane == Lane.EXPRESSION
+    assert p2.expression.status == UnavailableStatus.NOT_ACQUIRED
+
+    base = e0(state)
+    row = next(item for item in base.project_evidence if item.project_id == "P2")
+    assert row.affected_case_count.availability == MetricAvailability.NOT_OBSERVED
+    assert row.affected_case_count.value is None
+    assert row.cases_with_expression.availability == MetricAvailability.NOT_ACQUIRED
+    assert row.cases_with_expression.value is None
+    assert row.missing_measurements.value is None
+
+    state_roundtrip = read_state(write_state(state))
+    assert state_roundtrip == state
+    assert isinstance(state_roundtrip.projects[1].mutation.affected_cases, UnavailableMeasurement)
+    evidence_roundtrip = read_evidence(write_evidence(base))
+    assert evidence_roundtrip == base
+    assert evidence_roundtrip.project_evidence[1].affected_case_count.value is None
+
+
+def test_observed_counts_survive_a_round_trip_as_typed_counts():
+    state = build_state(counts={"TCGA-LUAD": {GENE_ID: 0}})
+    roundtrip = read_state(write_state(state), expected_hash=state_identity(state))
+    affected = roundtrip.projects[0].mutation.affected_cases
+    assert isinstance(affected, ObservedCount) and affected.value == 0
+    assert roundtrip.cross_project.affected_case_total.value == 0

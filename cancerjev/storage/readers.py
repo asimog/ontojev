@@ -1,20 +1,21 @@
 """Validated scientific reads; SQL decoding alone is not scientific acceptance.
 
-Historical JSON is exposed only through explicitly named presentation boundaries.
-The artifact envelope's schema version is distinct from its scientific payload.
+Readers return canonical typed scientific objects bound to verified operational
+ids, hashes and artifacts. Only genuinely presentation-bound artifacts (hypothesis
+drafts, evaluation vectors, dossiers) are exposed as validated JSON.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from cancerjev.domain._json import decode, obj, string, version
+from cancerjev.domain._json import decode, obj, optional_string, string, version
 from cancerjev.domain.codecs import read_evidence, read_state
-from cancerjev.domain.evidence import EvidenceStateV3
+from cancerjev.domain.envelopes import EvidenceRecord, StateRecord
+from cancerjev.domain.evidence import EvidenceState
 from cancerjev.domain.hypotheses import DRAFT_FIELDS, HypothesisDraft, read_hypothesis_draft
-from cancerjev.domain.legacy_codecs import LegacyArtifact
 from cancerjev.domain.measurements import ContractError
-from cancerjev.domain.scientific import StatisticalStateV3
+from cancerjev.domain.scientific import StatisticalState
 from cancerjev.jev.contracts import JevContractError, ValidatedAnswers, read_answers
 from cancerjev.jev.projection import projection_hash
 from cancerjev.jev.questions import (
@@ -52,9 +53,17 @@ class VerifiedArtifact:
 class StoredState:
     state_id: str
     run_id: str
-    scientific_hash: str
+    state_hash: str
     artifact: VerifiedArtifact
-    state: StatisticalStateV3 | LegacyArtifact
+    record: StateRecord
+
+    def __post_init__(self) -> None:
+        if (self.record.state_id, self.record.state_hash) != (self.state_id, self.state_hash):
+            raise ScientificReadError("RECORD_BINDING_MISMATCH", "state record binding")
+
+    @property
+    def state(self) -> StatisticalState:
+        return self.record.state
 
 
 @dataclass(frozen=True)
@@ -64,7 +73,16 @@ class StoredEvidence:
     iteration: int
     parent_id: str | None
     artifact: VerifiedArtifact
-    evidence: EvidenceStateV3 | LegacyArtifact
+    record: EvidenceRecord
+
+    def __post_init__(self) -> None:
+        if (self.record.evidence_state_id, self.record.revision.revision_index) != (
+                self.evidence_state_id, self.iteration):
+            raise ScientificReadError("RECORD_BINDING_MISMATCH", "evidence record binding")
+
+    @property
+    def evidence(self) -> EvidenceState:
+        return self.record.revision
 
 
 def require_equal(actual: object, expected: object, label: str) -> None:
@@ -101,22 +119,14 @@ def read_state_record(repository: Repository, artifacts: ArtifactStore, state_id
     artifact = read_artifact(repository, artifacts, row["artifact_id"], run_id=row["run_id"])
     try:
         state = read_state(artifact.content, expected_hash=row["state_hash"])
-        payload = artifact.boundary_representation()
-        if isinstance(state, LegacyArtifact):
-            require_equal(payload["state_id"], state_id, "state id")
-            require_equal(payload["run_id"], row["run_id"], "state run")
-            if "entity" in row["summary"]:
-                entity = obj(payload["entity"])
-                for key, value in row["summary"]["entity"].items():
-                    require_equal(entity.get(key), value, f"state entity {key}")
-        else:
-            require_equal(state.entity.gene_id, row["summary"]["entity"]["gene_id"], "state entity")
+        require_equal(state.entity.gene_id, row["summary"]["entity"]["gene_id"], "state entity")
     except ContractError as exc:
         code = "EVIDENCE_STATE_HASH_MISMATCH" if "hash" in str(exc).lower() else exc.code
         raise ScientificReadError(code, str(exc)) from exc
     except (KeyError, TypeError) as exc:
         raise ScientificReadError("RECORD_BINDING_MISMATCH", state_id) from exc
-    return StoredState(state_id, row["run_id"], row["state_hash"], artifact, state)
+    return StoredState(state_id, row["run_id"], row["state_hash"], artifact,
+                       StateRecord(state_id, row["state_hash"], state))
 
 
 def read_candidate_state(repository: Repository, artifacts: ArtifactStore,
@@ -126,13 +136,7 @@ def read_candidate_state(repository: Repository, artifacts: ArtifactStore,
         raise ScientificReadError("CANDIDATE_MISSING", candidate_id)
     state = read_state_record(repository, artifacts, candidate["source_state_id"])
     require_equal(state.run_id, candidate["run_id"], "candidate run")
-    payload = state.artifact.boundary_representation()
-    if isinstance(state.state, LegacyArtifact):
-        entity = obj(payload["entity"])
-        for key, value in candidate["entity"].items():
-            require_equal(entity.get(key), value, f"candidate entity {key}")
-    else:
-        require_equal(state.state.entity.gene_id, candidate["entity"]["gene_id"], "candidate gene")
+    require_equal(state.state.entity.gene_id, candidate["entity"]["gene_id"], "candidate gene")
     return state
 
 
@@ -146,32 +150,11 @@ def read_evidence_record(repository: Repository, artifacts: ArtifactStore,
     artifact = read_artifact(repository, artifacts, row["artifact_id"], run_id=row["run_id"])
     try:
         evidence = read_evidence(artifact.content, expected_hash=row["evidence_hash"])
-        payload = artifact.boundary_representation()
-        if isinstance(evidence, LegacyArtifact):
-            for key in ("evidence_state_id", "candidate_id", "run_id"):
-                require_equal(payload[key], row[key], key)
-            require_equal(payload["iteration_number"], row["iteration"], "revision iteration")
-            require_equal(payload.get("previous_evidence_state_id"),
-                          row["previous_evidence_state_id"], "revision parent")
-            if evidence.schema_version == 2:
-                state = read_candidate_state(repository, artifacts, row["candidate_id"])
-                require_equal(state.run_id, row["run_id"], "revision run")
-                require_equal(payload["entity"], state.artifact.boundary_representation()["entity"],
-                              "revision entity")
-                require_equal(payload["source_statistical_state"], {
-                    "state_id": state.state_id, "state_identity_hash": state.scientific_hash,
-                    "state_artifact_id": state.artifact.artifact_id,
-                    "state_artifact_sha256": state.artifact.sha256,
-                }, "revision accepted state")
-                if evidence.check_summary is not None and row["iteration"] > 0:
-                    for key, value in (("checks_verified", evidence.check_summary.verified),
-                                       ("checks_contradicted", evidence.check_summary.contradicted),
-                                       ("checks_not_observed", evidence.check_summary.not_observed)):
-                        require_equal(row["summary"][key], value, f"revision summary {key}")
-        else:
-            state = read_candidate_state(repository, artifacts, row["candidate_id"])
-            require_equal(evidence.accepted_state_hash, state.scientific_hash, "accepted state")
-            require_equal(evidence.revision_index, row["iteration"], "revision iteration")
+        state = read_candidate_state(repository, artifacts, row["candidate_id"])
+        require_equal(state.run_id, row["run_id"], "revision run")
+        require_equal(evidence.accepted_state_hash, state.state_hash, "accepted state")
+        require_equal(evidence.revision_index, row["iteration"], "revision iteration")
+        require_equal(evidence.entity.gene_id, state.state.entity.gene_id, "revision entity")
         parent_id = row["previous_evidence_state_id"]
         if row["iteration"] == 0:
             require_equal(parent_id, None, "baseline parent")
@@ -182,12 +165,14 @@ def read_evidence_record(repository: Repository, artifacts: ArtifactStore,
                                           _ancestors=_ancestors | {evidence_state_id})
             require_equal(parent.candidate_id, row["candidate_id"], "parent candidate")
             require_equal(parent.iteration + 1, row["iteration"], "parent iteration")
+            require_equal(evidence.parent_evidence_hash, parent.record.evidence_hash, "parent identity")
     except ContractError as exc:
         raise ScientificReadError(exc.code, str(exc)) from exc
     except (KeyError, TypeError) as exc:
         raise ScientificReadError("RECORD_BINDING_MISMATCH", evidence_state_id) from exc
     return StoredEvidence(evidence_state_id, row["candidate_id"], row["iteration"],
-                          row["previous_evidence_state_id"], artifact, evidence)
+                          row["previous_evidence_state_id"], artifact,
+                          EvidenceRecord(evidence_state_id, row["evidence_hash"], evidence))
 
 
 def read_revision_chain(repository: Repository, artifacts: ArtifactStore,
@@ -202,14 +187,6 @@ def read_revision_chain(repository: Repository, artifacts: ArtifactStore,
     for index, revision in enumerate(revisions):
         require_equal(revision.iteration, index, "contiguous revision chain")
         require_equal(revision.parent_id, parent.evidence_state_id if parent else None, "parent chain")
-        if isinstance(revision.evidence, EvidenceStateV3):
-            parent_hash = None
-            if parent is not None:
-                parent_row = repository.get_evidence_state(parent.evidence_state_id)
-                if parent_row is None:
-                    raise ScientificReadError("EVIDENCE_STATE_MISSING", parent.evidence_state_id)
-                parent_hash = parent_row["evidence_hash"]
-            require_equal(revision.evidence.parent_evidence_hash, parent_hash, "parent identity")
         parent = revision
     require_equal(candidate["latest_evidence_state_id"],
                   parent.evidence_state_id if parent else None, "authoritative latest revision")
@@ -238,8 +215,12 @@ def read_hypothesis_record(repository: Repository, artifacts: ArtifactStore, hyp
         require_equal(row["candidate_id"], candidate_id, "hypothesis candidate")
         revision = read_evidence_record(repository, artifacts, row["evidence_state_id"])
         require_equal(revision.candidate_id, candidate_id, "hypothesis revision candidate")
-        draft = read_hypothesis_draft({key: payload[key] for key in DRAFT_FIELDS},
-                                      allowed_action_ids=allowed_action_ids)
+        draft = read_hypothesis_draft(
+            {key: payload[key] for key in DRAFT_FIELDS},
+            allowed_action_ids=allowed_action_ids,
+            label=string(payload["label"]), generator=string(payload["generator"]),
+            generator_model=optional_string(payload.get("generator_model")),
+        )
         require_equal(payload["proposed_action_ids"], list(draft.distinguishing_tests),
                       "hypothesis proposed actions")
         if payload.get("factual_observation_refs") != []:
@@ -275,13 +256,14 @@ def read_evaluation_record(repository: Repository, artifacts: ArtifactStore,
             DEEP_QUESTION_SET_VERSION: ("DEEP", "EVIDENCE_STATE", DEEP_QUESTIONS),
             HYPOTHESIS_QUESTION_SET_VERSION: ("HYPOTHESIS", "HYPOTHESIS", HYPOTHESIS_QUESTIONS),
         }
-        version = string(payload["question_set_version"])
-        if version not in definitions_by_version:
-            raise ScientificReadError("UNSUPPORTED_QUESTION_VERSION", version)
-        purpose, input_kind, definitions = definitions_by_version[version]
+        question_version = string(payload["question_set_version"])
+        if question_version not in definitions_by_version:
+            raise ScientificReadError("UNSUPPORTED_QUESTION_VERSION", question_version)
+        purpose, input_kind, definitions = definitions_by_version[question_version]
         require_equal(payload["purpose"], purpose, "question purpose")
         require_equal(payload["input_ref_kind"], input_kind, "question input kind")
-        require_equal(payload["question_hash"], question_set_hash(definitions, version), "question hash")
+        require_equal(payload["question_hash"], question_set_hash(definitions, question_version),
+                      "question hash")
         if input_kind == "STATISTICAL_STATE":
             input_state = repository.get_state(row["input_ref_id"])
             if input_state is None:
@@ -292,7 +274,8 @@ def read_evaluation_record(repository: Repository, artifacts: ArtifactStore,
             revision_row = repository.get_evidence_state(revision_id)
             if revision_row is None:
                 raise ScientificReadError("EVIDENCE_STATE_MISSING", revision_id)
-            require_equal(payload["source_evidence_hash"], revision_row["evidence_hash"], "judged evidence identity")
+            require_equal(payload["source_evidence_hash"], revision_row["evidence_hash"],
+                          "judged evidence identity")
             require_equal(row["candidate_id"], revision_row["candidate_id"], "judged candidate")
             if input_kind == "EVIDENCE_STATE":
                 require_equal(row["input_ref_id"], revision_id, "judged revision id")
@@ -300,8 +283,10 @@ def read_evaluation_record(repository: Repository, artifacts: ArtifactStore,
                 hypothesis_row = repository.get_hypothesis(row["input_ref_id"])
                 if hypothesis_row is None:
                     raise ScientificReadError("HYPOTHESIS_MISSING", row["input_ref_id"])
-                require_equal(hypothesis_row["evidence_state_id"], revision_id, "hypothesis review revision")
-                require_equal(hypothesis_row["candidate_id"], row["candidate_id"], "hypothesis review candidate")
+                require_equal(hypothesis_row["evidence_state_id"], revision_id,
+                              "hypothesis review revision")
+                require_equal(hypothesis_row["candidate_id"], row["candidate_id"],
+                              "hypothesis review candidate")
         error = payload["error"]
         if error is not None:
             error_code = string(obj(error)["code"])
@@ -316,7 +301,8 @@ def read_evaluation_record(repository: Repository, artifacts: ArtifactStore,
                                               string(payload["question_definitions_ref"]),
                                               run_id=row["run_id"])
             require_equal(question_artifact.boundary_representation(), {
-                "question_set_version": version, "question_set_hash": payload["question_hash"],
+                "question_set_version": question_version,
+                "question_set_hash": payload["question_hash"],
                 "questions": [{"question_id": q.question_id, "primitive": q.primitive,
                                "version": q.version, "instructions": q.instructions,
                                "criteria": q.criteria, "applicability_rule": q.applicability_rule}
@@ -327,7 +313,7 @@ def read_evaluation_record(repository: Repository, artifacts: ArtifactStore,
             # Wide cache reuse may reference an earlier run's projection row.
             if metadata is None and purpose == "WIDE":
                 projection_row = repository.find_projection(row["input_ref_id"],
-                                                             string(payload["projection_version"]))
+                                                            string(payload["projection_version"]))
                 if projection_row is not None:
                     metadata = repository.artifact(projection_row["artifact_id"])
             if metadata is None:
@@ -335,8 +321,10 @@ def read_evaluation_record(repository: Repository, artifacts: ArtifactStore,
             projection = read_artifact(repository, artifacts, metadata["artifact_id"])
             projected = projection.boundary_representation()
             require_equal(projection_hash(projected), payload["projection_hash"], "projection identity")
-            require_equal(projected["projection_version"], payload["projection_version"], "projection version")
-            require_equal(applicability_map(projected, definitions), payload["applicability"], "applicability")
+            require_equal(projected["projection_version"], payload["projection_version"],
+                          "projection version")
+            require_equal(applicability_map(projected, definitions), payload["applicability"],
+                          "applicability")
     except (ContractError, JevContractError, KeyError, TypeError) as exc:
         raise ScientificReadError("INVALID_EVALUATION", str(exc)) from exc
     return StoredEvaluation(evaluation_id, row["purpose"], row["input_ref_id"], answers, error_code, artifact)
@@ -351,7 +339,7 @@ def read_dossier_record(repository: Repository, artifacts: ArtifactStore,
     try:
         payload = artifact.boundary_representation()
         schema = version(payload)
-        if schema not in (1, 2):
+        if schema != 2:
             raise ScientificReadError("UNSUPPORTED_SCHEMA_VERSION", "dossier version")
         for key in ("dossier_id", "candidate_id", "run_id"):
             require_equal(payload[key], row[key], f"dossier {key}")

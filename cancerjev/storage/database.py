@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 IMMUTABLE_TABLES = (
     "run_events", "artifacts", "statistical_states", "evidence_states",

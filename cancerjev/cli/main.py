@@ -27,7 +27,7 @@ def parser() -> argparse.ArgumentParser:
         mode.add_argument("--fixture", choices=["demo"])
         mode.add_argument("--live", action="store_true", help="real bounded open-access GDC sweep")
         command.add_argument("--jev", action="store_true",
-                             help="Phase 3 wide Jev evaluation over real states (requires TYPESAFE_API_KEY)")
+                             help="wide Jev evaluation over real states (requires TYPESAFE_API_KEY)")
         command.add_argument("--deep-candidate", action="append", default=None,
                              help="explicitly selected candidate for the deterministic deep investigation "
                                   "(repeatable: gene symbol, gene:<SYMBOL>, state:<STATE_ID> for a "
