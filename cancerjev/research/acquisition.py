@@ -107,6 +107,25 @@ class BatchedMutationCounts:
     warnings: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ExpressionGeneBatch:
+    batch_index: int
+    gene_ids: tuple[str, ...]
+    availability: ExpressionAvailability
+    values: ExpressionValues | None
+    sources: tuple[OperationalSource, ...]
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BatchedExpressionAcquisition:
+    batches: tuple[ExpressionGeneBatch, ...]
+    workflows: tuple[str, ...]
+    strategies: tuple[str, ...]
+    sources: tuple[OperationalSource, ...]
+    warnings: tuple[str, ...]
+
+
 def response_meta(response: GDCResponse, release: str | None) -> ResponseMeta:
     return ResponseMeta(
         endpoint=response.endpoint, method=response.method, request_hash=response.request_hash,
@@ -470,6 +489,90 @@ def acquire_expression(transport: AcquisitionTransport, project: ProjectRecord,
     return ExpressionAcquisition(availability, provider, values, tuple(provenance.workflows),
                                  tuple(provenance.strategies), provider_summary_unavailable_reason,
                                  tuple(sources), tuple(warnings))
+
+
+def acquire_batched_expression(
+    transport: AcquisitionTransport,
+    project: ProjectRecord,
+    acquisition: AcquisitionSpec,
+    release: str | None,
+    cohort: CohortAcquisition,
+    gene_ids: list[str],
+    gene_batch_size: int,
+) -> BatchedExpressionAcquisition:
+    """Acquire the fixed Stage 5 matrix in disjoint gene and case batches.
+
+    File/workflow provenance is acquired once. Every two-dimensional batch is
+    parsed against its exact requested identifiers before gene batches are
+    merged over the complete cohort frame.
+    """
+    if not 1 <= gene_batch_size <= 100:
+        raise LiveRunError("INVALID_EXPRESSION_GENE_BATCH", "gene batch size must be 1..100")
+    case_ids = [case.case_id for case in cohort.cases]
+    files_response = transport.request(
+        files_expression_request(project.project_id, acquisition.expression_file_sample_size)
+    )
+    provenance = parse_files_provenance(files_response.body, response_meta(files_response, release))
+    file_source = response_operational_source(files_response, release=release)
+    if provenance.non_open_records:
+        raise LiveRunError("CONTROLLED_RECORD_RETURNED",
+                           f"{project.project_id}: {provenance.non_open_records} non-open file records")
+    all_sources: list[OperationalSource] = [file_source]
+    all_warnings: list[str] = list(provenance.warnings)
+    result_batches: list[ExpressionGeneBatch] = []
+    case_batches = [case_ids[index:index + acquisition.case_batch_size]
+                    for index in range(0, len(case_ids), acquisition.case_batch_size)]
+    for gene_index in range(0, len(gene_ids), gene_batch_size):
+        batch_ids = gene_ids[gene_index:gene_index + gene_batch_size]
+        availability_parts: list[tuple[list[str], ExpressionAvailability]] = []
+        value_parts: list[tuple[list[str], ExpressionValues | None]] = []
+        batch_sources: list[OperationalSource] = []
+        batch_warnings: list[str] = []
+        for batch_case_ids in case_batches:
+            availability_response = transport.request(
+                expression_availability_request(batch_case_ids, batch_ids)
+            )
+            availability = parse_expression_availability(
+                availability_response.body, response_meta(availability_response, release),
+                expected_cases=batch_case_ids, expected_genes=batch_ids,
+            )
+            availability_parts.append((batch_case_ids, availability))
+            availability_source = response_operational_source(availability_response, release=release)
+            batch_sources.append(availability_source)
+            batch_warnings.extend(availability.warnings)
+            if any(availability.cases.get(case_id) is True for case_id in batch_case_ids):
+                values_response = transport.request(
+                    expression_values_request(batch_case_ids, batch_ids)
+                )
+                values = parse_expression_values(
+                    values_response.body, response_meta(values_response, release),
+                    expected_cases=batch_case_ids, expected_genes=batch_ids,
+                )
+                value_parts.append((batch_case_ids, values))
+                batch_sources.append(response_operational_source(values_response, release=release))
+                batch_warnings.extend(values.warnings)
+            else:
+                value_parts.append((batch_case_ids, None))
+        merged_availability = _merge_expression_availability(
+            case_ids, batch_ids, availability_parts)
+        merged_values: ExpressionValues | None = _merge_expression_values(
+            case_ids, batch_ids, value_parts)
+        if not any(merged_availability.cases.get(case_id) is True for case_id in case_ids):
+            merged_values = None
+            batch_warnings.append(
+                f"{project.project_id}: no examined case has expression values for gene batch "
+                f"{gene_index // gene_batch_size}"
+            )
+        result_batches.append(ExpressionGeneBatch(
+            gene_index // gene_batch_size, tuple(batch_ids), merged_availability, merged_values,
+            tuple(batch_sources), tuple(batch_warnings),
+        ))
+        all_sources.extend(batch_sources)
+        all_warnings.extend(batch_warnings)
+    return BatchedExpressionAcquisition(
+        tuple(result_batches), tuple(provenance.workflows), tuple(provenance.strategies),
+        tuple(all_sources), tuple(all_warnings),
+    )
 
 
 def acquire_project_frame(transport: AcquisitionTransport, project: ProjectRecord,

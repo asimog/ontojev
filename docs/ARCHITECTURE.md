@@ -2,7 +2,7 @@
 
 Current architecture after the Stage 3 hard cutover (2026-09-25). Facts are labeled
 IMPLEMENTED, PLANNED or UNVERIFIED. [Implementation status](IMPLEMENTATION_STATUS.md) owns
-current facts; [the roadmap](DISCOVERY_ROADMAP.md) separates the next Stage 5 work from design.
+current facts; [the roadmap](DISCOVERY_ROADMAP.md) separates the next Stage 7 work from design.
 
 ## IMPLEMENTED: one typed runtime chain
 
@@ -29,6 +29,13 @@ Systematic pre-Wide funnel (Stage 4, `python -m cancerjev discover --live`):
   -> fixed /genes universe enumeration (protein_coding, gene_id asc, ≤10 strict pages)
   -> ≤100-gene indexed count batches (coverage once) -> typed per-gene outcomes
   -> deterministic reduction (≤10 survivors) -> immutable MutationDiscoveryResult (schema 1)
+
+Independent pre-Wide arms:
+
+  Stage 5: fixed universe/case-frame expression acquisition -> local summaries and tails
+           -> immutable ExpressionDiscoveryResult (schema 1)
+  Stage 6: Stage 4 survivors/release/case frame -> bounded complete CNV occurrences
+           -> category/caller/conflict summaries -> immutable CnvDiscoveryResult (schema 1)
 ```
 
 - `research/live.py` runs the shared `LiveOrchestrator`; `research/orchestrator.py` runs the
@@ -38,8 +45,9 @@ Systematic pre-Wide funnel (Stage 4, `python -m cancerjev discover --live`):
 - Domain records are unsuffixed (`StatisticalState`, `EvidenceState`, `ResearchSpec`,
   `Candidate`, `HypothesisDraft`). Operational ids and hashes travel in `StateRecord` /
   `EvidenceRecord` / `HypothesisRecord` envelopes and never enter scientific identity.
-- Serialized schemas are StatisticalState 4, EvidenceState 4, ResearchSpec 4 and
-  MutationDiscoveryResult 1; SQLite is schema 5. Older/unknown schemas are rejected fail-closed.
+- Serialized schemas are StatisticalState 4, EvidenceState 4, ResearchSpec 6,
+  MutationDiscoveryResult 1, ExpressionDiscoveryResult 1 and CnvDiscoveryResult 1; SQLite is schema 5.
+  Older/unknown schemas are rejected fail-closed.
   There are no migrations and no
   legacy readers; historical databases and artifacts are retained, not rewritten.
 - Question sets remain `wide-v3`, `deep-v1` and `hypothesis-v2`; they were not redefined by the
@@ -110,22 +118,25 @@ absence into zero, authorize acquisition or confer causality.
   artifact/event/repository path. It generates no StatisticalState, no Wide candidate and no Jev
   call; the provider top-mutated ranking stays a labelled comparator. No Stage-4 orchestrator
   object exists and none is approved.
+- `research/expression_discovery.py` owns the independently invoked Stage 5 expression arm;
+  `research/cnv_discovery.py` owns the independently invoked Stage 6 survivor-only CNV arm.
+  Both persist immutable typed results without creating a StatisticalState, candidate or Jev call.
 
-## Roadmap: smallest discovery composition (Stage 5 next)
+## Roadmap: smallest discovery composition (Stage 7 next)
 
 ```text
 bounded enumerated gene universe (IMPLEMENTED, Stage 4)
  -> cheap indexed evidence (IMPLEMENTED, Stage 4)
  -> deterministic reduction (IMPLEMENTED, Stage 4)
- -> richer survivor acquisition -> typed lane results -> typed StatisticalState
- -> deterministic discovery dimensions -> optional semantic judgments
+ -> richer survivor acquisition (IMPLEMENTED, Stage 6) -> typed lane results
+ -> deterministic held-data actions -> typed StatisticalState
+ -> optional semantic judgments
  -> bounded Python admission -> existing investigation loop
 ```
 
-The mutation-lane funnel above is implemented and verified; the remaining rows are Stage 5+
-design. Mutation-conditioned reduction cannot claim expression-only/CNV-only sensitivity. An
-independent expression arm requires explicit enablement, workload reservation and evaluation.
-Proposed lane and action contracts are design, not current runtime behavior; see
+The mutation funnel and separately invoked expression and survivor-only CNV arms are implemented
+and offline verified. Mutation-conditioned reduction still cannot claim CNV-only sensitivity.
+Stage 7 action/cutover contracts remain design, not current runtime behavior; see
 [GDC strategy](GDC_STRATEGY.md) and [the roadmap](DISCOVERY_ROADMAP.md).
 
 `ResearchSpec` composes intent, cohort, universe selection, enabled lane specifications,
@@ -136,7 +147,7 @@ absolute safety caps stay in code.
 
 ## Verification status (2026-09-25)
 
-- IMPLEMENTED and offline-verified: 534 offline pytest tests pass; `ruff check cancerjev apps
+- IMPLEMENTED and offline-verified: 555 offline pytest tests pass; `ruff check cancerjev apps
   tests` is clean; scoped strict `mypy` (the explicit file list in `pyproject.toml`) passes.
 - UNVERIFIED in this environment: browser acceptance at `tests/browser/` (own Playwright
   config/package; CI runs it as a separate job); live GDC, TypeSafe/Jev and OpenRouter

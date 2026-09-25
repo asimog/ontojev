@@ -3,6 +3,17 @@
 Status: historical evidence (UNVERIFIED in the current environment; not re-fetched). This register
 records what was requested and returned; interpretation and admission are in GDC strategy.
 
+## Stage 6 bounded shape probe (2026-09-25)
+
+A later anonymous, bounded `/cnv_occurrences` probe verified the deployed Stage 6 response shape
+for TCGA-LUAD/TP53. The committed two-row fixture and metadata are
+`tests/contracts/fixtures/gdc/cnv_occurrences_tp53.{body,meta.json}`; the fixture SHA-256 is
+`33a06444d2ebb4fa16d9531cfacd9c45d6d7ef365deff6206113d3b822ba4063`. It contains provider
+category `Loss`, ASCAT3 caller context and missing tumor-sample IDs. A separate 250-row bounded
+shape inspection observed ASCAT2, ASCAT3 and AscatNGS plus Loss, Gain and Amplification; its body
+was not retained and no scientific completeness claim is made. This later probe is not part of
+the 69-attempt historical campaign indexed below and is not a full Stage 6 live run.
+
 Evidence collected 2026-09-24 UTC for the design campaign; retained as historical evidence after
 the Stage 3 hard cutover (2026-09-25). No provider response here was re-fetched or re-verified by
 the documentation pass.
@@ -10,9 +21,9 @@ Interpretation and admission decisions: [GDC strategy](GDC_STRATEGY.md).
 Local capture root: `C:/Users/Rahul Khatri/AppData/Local/Temp/ontojev-architecture-20260924/`.
 Each numbered `NNN.body` has full bytes; `ledger.json` records canonical request parameters/body,
 full URL, method, timestamps, status, headers, byte count, body and request SHA-256, latency and outcome.
-These files are outside production data and are not portable committed fixtures. No provider
-response has been represented as a committed test fixture; a future fixture gate must retain
-bounded captures under its own separately scoped change.
+These files are outside production data and are not portable committed fixtures. The historical
+campaign bodies are not committed fixtures; the later Stage 6 fixture above is separately scoped
+and bounded.
 
 Campaign wall-clock window: **2026-09-24 18:08:13.121640 UTC through 18:20:09.608368 UTC**.
 Ledger SHA-256: `fc5ddcb2d0c4981e500dac5d6b7ed04dd7676c4f6911040d21076784b2fb4225`.

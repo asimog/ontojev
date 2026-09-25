@@ -12,8 +12,10 @@ from cancerjev.research.specs import (
     LUAD_RESEARCH_V1,
     RESEARCH_SPEC_SCHEMA_VERSION,
     AcquisitionSpec,
+    CnvDiscoverySpec,
     CohortSpec,
     DiscoverySpec,
+    ExpressionDiscoverySpec,
     ResearchSpec,
     ScientificLimits,
     research_spec_from_dict,
@@ -99,13 +101,26 @@ def test_discovery_spec_rejects_non_fixed_contracts(overrides, message):
         _discovery(**overrides)
 
 
-def test_luad_spec_round_trips_through_schema_four():
+@pytest.mark.parametrize("overrides,message", [
+    ({"gene_batch_size": 99}, "gene_batch_size must be 100"),
+    ({"minimum_tail_n": 19}, "minimum_tail_n must be 20"),
+    ({"quantile_rule": "NEAREST"}, "unsupported expression quantile rule"),
+    ({"iqr_multiplier": 3.0}, "iqr_multiplier must be 1.5"),
+    ({"input_unit": "COUNTS"}, "unsupported expression unit/transform"),
+])
+def test_expression_discovery_spec_rejects_semantic_drift(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        ExpressionDiscoverySpec(**overrides)
+
+
+def test_luad_spec_round_trips_through_schema_six():
     emitted = LUAD_RESEARCH_V1.as_dict()
-    assert emitted["schema_version"] == RESEARCH_SPEC_SCHEMA_VERSION == 4
+    assert emitted["schema_version"] == RESEARCH_SPEC_SCHEMA_VERSION == 6
     assert emitted["kind"] == "RESEARCH_SPEC"
     assert set(emitted) == {
         "schema_version", "kind", "spec_id", "intent", "cohort", "discovery", "acquisition",
-        "limits", "allowed_actions", "wide_policy", "deep_policy",
+        "limits", "allowed_actions", "wide_policy", "deep_policy", "expression_discovery",
+        "cnv_discovery",
     }
     assert emitted["discovery"] == {
         "universe_method": "GENE_ID_ASC_INDEXED_PREFIX_V1", "biotype": "protein_coding",
@@ -123,7 +138,9 @@ def test_reader_rejects_legacy_unknown_and_extra_fields():
 
     for legacy in (
         {**payload, "schema_version": 3},
+        {**payload, "schema_version": 4},
         {**payload, "schema_version": 5},
+        {**payload, "schema_version": 7},
         {**payload, "schema_version": 2},
     ):
         with pytest.raises(ValueError, match="unsupported research spec version/kind"):
@@ -167,6 +184,18 @@ def test_spec_rejects_unsupported_composition():
         _spec(acquisition={"case_page_size": 1})
     with pytest.raises(ValueError, match="invalid scientific limits"):
         _spec(limits={"max_survivors": 10})
+
+
+@pytest.mark.parametrize("overrides,message", [
+    ({"selection_rule": "ARBITRARY_GENES"}, "unsupported CNV selection rule"),
+    ({"page_size": 249}, "CNV page_size must be 250"),
+    ({"max_pages_per_gene": 11}, "CNV max_pages_per_gene must be 10"),
+    ({"max_genes": 11}, "CNV max_genes must be 10"),
+    ({"category_field": "cnv.cnv_change"}, "unsupported CNV category field"),
+])
+def test_cnv_discovery_spec_rejects_semantic_drift(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        CnvDiscoverySpec(**overrides)
 
 
 def test_scientific_limits_have_supported_bounds():
@@ -213,7 +242,7 @@ def test_selection_rules_name_the_explicit_cohort_and_bounded_provider_ranking()
     assert "never selects systematic survivors" in discovery_rule
 
 
-def test_no_lane_composition_or_cnv_is_representable():
+def test_no_generic_lane_composition_or_arbitrary_cnv_is_representable():
     for name in ("ResearchSpecV2", "GeneUniverseSpec", "MutationLaneSpec",
                  "ExpressionLaneSpec", "CnvLaneSpec", "CandidateUniverse"):
         assert not hasattr(specs_module, name)

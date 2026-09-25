@@ -21,6 +21,7 @@ MAX_CASES_PAGE = 250
 MAX_FILES_PAGE = 5
 MAX_PROJECTS_PAGE = 100
 MAX_DISCOVERY_HITS = 20
+MAX_CNV_OCCURRENCES_PAGE = 250
 
 GENES_UNIVERSE_BIOTYPE = "protein_coding"
 GENES_UNIVERSE_SORT = "gene_id:asc"
@@ -62,6 +63,7 @@ _ENDPOINT_LIST = (
     EndpointSpec("gene_expression_availability", "POST", "/gene_expression/availability"),
     EndpointSpec("gene_expression_gene_selection", "POST", "/gene_expression/gene_selection"),
     EndpointSpec("gene_expression_values", "POST", "/gene_expression/values"),
+    EndpointSpec("cnv_occurrences", "GET", "/cnv_occurrences", retryable=True),
     EndpointSpec("projects_mapping", "GET", "/projects/_mapping", retryable=True, runtime=False),
 )
 
@@ -319,6 +321,40 @@ def expression_values_request(case_ids: list[str], gene_ids: list[str]) -> GDCRe
         body={"case_ids": list(case_ids), "gene_ids": list(gene_ids), "tsv_units": "uqfpkm", "format": "tsv"},
         accept="text/tab-separated-values",
         logical_query_id="expression:values",
+    )
+
+
+def cnv_occurrences_request(project_id: str, gene_id: str, *, offset: int = 0,
+                            size: int = MAX_CNV_OCCURRENCES_PAGE) -> GDCRequest:
+    """Fixed complete-query page for one declared project/gene survivor."""
+    _validate_ids([project_id], limit=1, label="project_id")
+    _validate_ids([gene_id], limit=1, label="gene_id")
+    _validate_bounded_int(size, minimum=1, maximum=MAX_CNV_OCCURRENCES_PAGE,
+                          label="CNV occurrence size")
+    _validate_bounded_int(offset, minimum=0, maximum=None, label="CNV occurrence offset")
+    return _request(
+        resolve_endpoint("GET", "/cnv_occurrences"),
+        {
+            "size": size,
+            "from": offset,
+            "sort": "cnv_occurrence_id:asc",
+            "filters": _filter_json({"op": "and", "content": [
+                {"op": "in", "content": {
+                    "field": "case.project.project_id", "value": [project_id]}},
+                {"op": "in", "content": {
+                    "field": "cnv.consequence.gene.gene_id", "value": [gene_id]}},
+            ]}),
+            "fields": ",".join((
+                "cnv_occurrence_id", "case.case_id", "case.project.project_id",
+                "case.observation.copy_number", "case.observation.sample.tumor_sample_uuid",
+                "case.observation.src_file_id",
+                "case.observation.variant_calling.variant_caller", "cnv.cnv_id",
+                "cnv.cnv_change", "cnv.cnv_change_5_category",
+                "cnv.consequence.gene.gene_id",
+            )),
+        },
+        logical_query_id=f"cnv-occurrences:{project_id}:{gene_id}",
+        page=(offset // size) + 1,
     )
 
 

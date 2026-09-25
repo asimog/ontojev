@@ -1,9 +1,9 @@
 # Discovery implementation roadmap and deliverable index
 
-Current roadmap after the Stage 3 hard cutover and the Stage 4 systematic-discovery
-implementation (2026-09-25). Stages 0–4 are IMPLEMENTED and verified. **The independent
-expression arm is the next Stage 5 task.** Stages 5–9 are PLANNED; proposed lane, typed-state
-and acquisition-capable action contracts below are design, **not current runtime behavior**.
+Current roadmap after the Stage 6 survivor-only CNV implementation (2026-09-25). Stages 0–6 are
+IMPLEMENTED and offline verified. **Descriptive held-data actions and cutover are the next Stage 7
+task.** Stages 7–9 are PLANNED; proposed action and inferential contracts below are design,
+**not current runtime behavior**.
 [Implementation status](IMPLEMENTATION_STATUS.md) owns current facts;
 [architecture](ARCHITECTURE.md) owns the current runtime chain.
 
@@ -16,18 +16,18 @@ and acquisition-capable action contracts below are design, **not current runtime
 | 2: integrity of consumption | Hash+schema validation of dossier inputs, cache answers, candidate evidence; typed hypothesis drafts | IMPLEMENTED: corrupt/missing revisions never `OBSERVED`; invalid cache never drives policy; unknown test IDs rejected |
 | 3: typed lane composition | Typed acquisition/lane records, canonical `StatisticalState`/`EvidenceState`, consumer handoffs | IMPLEMENTED and offline-verified; offline suite passes; bounded live acceptance PASSED (2026-09-25) |
 | 4: bounded broad universe | Explicit release/filter/ordered 1,000-gene prefix over `/genes`, ≤100-gene indexed count batches, deterministic ≤10-survivor reduction | IMPLEMENTED (2026-09-25): strict page guards (duplicate/offset/total/order/biotype/slice), explicit zero vs absent vs partial, one disposition per requested gene, reducer `MUTATION_LUAD_AFFECTED_COUNT_DESC_V1`, persisted schema-1 result; live acceptance 1,000/1,000 with 10 survivors |
-| 5: independent expression arm | Optional explicitly budgeted case-labelled descriptors and within-gene extremes | **NEXT (PLANNED)**: complete declared population/missingness; not tumor-normal/causal; no sample-matching claim; lane-specific recall/coverage |
-| 6: narrow CNV lane | Fixed builders and strict occurrence parser; complete survivor queries only | PLANNED: real fixtures for generic Loss, missing sample ID, mixed callers; conflict/dedup policy; no neutral/negative inference |
+| 5: independent expression arm | Optional explicitly budgeted case-labelled descriptors and within-gene extremes | **IMPLEMENTED (offline verified)**: separate `discover-expression --live`; same release-bound 1,000-gene universe; ≤100-gene × ≤250-case strict batches; complete declared population/missingness; local summaries and Tukey tails only; no tumor-normal, causal or sample-matching claim; live acceptance UNVERIFIED |
+| 6: narrow CNV lane | Fixed builders and strict occurrence parser; complete survivor queries only | **IMPLEMENTED (offline verified)**: Stage 4 artifact/release/frame binding; ≤10 survivors × ≤10 strict 250-row pages; real-shape fixture for generic Loss, missing sample ID and caller context; unique positive cases per category with explicit conflicts; no neutral/negative inference; full live acceptance UNVERIFIED |
 | 7: descriptive actions and cutover | Reuse the investigation loop; expression-tail/CNV-category actions; typed versioned projections; no new semantic questions | PLANNED: held-data methods and authorization enforced; explicit model attempt/token budget; unchanged judgments/policies |
 | 8: prospective evaluation | Blinded grouped labels, fixed development/holdout, ablations and resource comparison | PLANNED: blocked on a labelled historical corpus and human review; no ranking-only value claim |
 | 9: conditional inferential extensions | Matched mutation-expression/CNV-expression, survival, later scRNA | DEFERRED: separate source/matching/reference/censoring/statistical review; not unlocked by finishing earlier engineering stages |
 
-Stage 4 is IMPLEMENTED as part of the existing architecture (no new engine). Stages 5–7 remain
+Stages 4–6 are IMPLEMENTED as separate bounded pre-Wide tasks in the existing architecture. Stage 7 remains
 FIX AS PART OF NEW ARCHITECTURE work. A total paid-model spend gate remains a
 prerequisite for scaling paid model work, not for offline contract implementation. Retain the
 small deterministic baseline throughout.
 
-## IMPLEMENTED: mutation-lane funnel (Stage 4); PLANNED: expression/CNV feature definitions
+## IMPLEMENTED: mutation funnel (Stage 4), expression arm (Stage 5) and survivor CNV arm (Stage 6)
 
 Universe: release-bound first 1,000 protein-coding Ensembl IDs by ascending ID at offset 0 —
 IMPLEMENTED in `research/discovery.py` with a fixed, non-configurable builder. The prefix is
@@ -39,22 +39,23 @@ genes observed in the campaign, not genome-wide coverage or an unbiased random s
 
 Initial reduction: rank complete observed LUAD affected-case counts descending, tie by gene ID;
 retain ≤10 survivors with reasons. Missing/incomplete counts are not eligible zeroes. This is a
-mutation-conditioned funnel, not comprehensive multi-lane discovery. A parallel expression arm
-must be explicitly scheduled before reduction if expression-only findings are desired; otherwise
-report that blind spot. CNV broad occurrence acquisition is rejected: even 100 genes reported
-21,032 rows.
+mutation-conditioned funnel, not comprehensive multi-lane discovery. The separately scheduled
+Stage 5 expression arm now describes every gene in the same release-bound universe independently;
+it does not change mutation survivors or combine lanes. Stage 6 queries complete bounded CNV
+occurrences only for the Stage 4 survivors and does not combine lanes. Broad CNV occurrence
+acquisition is rejected: even 100 genes reported 21,032 rows.
 
 | Feature | Exact meaning / population / reference | Availability and claim boundary |
 |---|---|---|
 | Mutation indexed recurrence count | Unique affected-case count supplied for gene/LUAD by validated aggregate | Count, NOT callable recurrence fraction; explicit zero preserved, missing bucket `NOT_OBSERVED` |
 | Expression location/dispersion | Median/sample SD/min/max of finite `log2(UQFPKM+1)` for one gene over the declared returned case-labelled frame | Descriptive cohort slice; missing rows/columns explicit; SD n≥2 |
-| Expression extreme | Proposed within-gene empirical tail: values below Q1−1.5×IQR or above Q3+1.5×IQR; Q1/Q3 via declared linear interpolation `h=(n−1)p`; count/list IDs | Experimental descriptor, n≥20 complete declared valid frame; IQR=0 → `DEGENERATE_REFERENCE`, no tail ranking; not differential expression, patient diagnosis or p-value |
+| Expression extreme | Within-gene empirical tail: values below Q1−1.5×IQR or above Q3+1.5×IQR; Q1/Q3 via declared linear interpolation `h=(n−1)p`; count/list IDs | IMPLEMENTED experimental descriptor, n≥20 complete declared valid frame; IQR=0 → `DEGENERATE_REFERENCE`, no tail ranking; not differential expression, patient diagnosis or p-value |
 | CNV gain/loss/amplification/deletion | Provider label on a complete bounded gene/case occurrence query; unique cases per explicit category and caller context | Amplification means provider category only; generic Loss distinct from Homozygous Deletion; absent ≠ neutral; do not sum overlapping case categories |
 | Cross-lane presence overlap | Set intersection of positive indexed case IDs for the same gene, only if both complete query frames exist | Descriptive presence, not matched assay effect/coherence; insufficient for expression sample matching |
 | Quality conflict | Explicit contradictory duplicate IDs/calls or failed invariants | Deterministic data conflict, not biological contradiction |
 | Biological coherence/conflict | Requires a predefined matched association/effect proposition and compatible reference | NOT ADMITTED |
 
-The n≥20 tail descriptor guard is a proposed stability policy, not proof of power or normality.
+The n≥20 tail descriptor guard is an implemented stability policy, not proof of power or normality.
 Feature version, quantile convention, selected/valid/missing IDs and reference frame enter
 identity. No imputation, reference pooling, normal controls or causal interpretation is assumed.
 Discovery metrics are selected on the same data and cannot be repackaged as confirmatory
@@ -75,7 +76,7 @@ may supply an endpoint or query.
 | Existing integrity and revision-faithfulness checks | Current typed-input contract; unchanged check semantics | KEEP; no acquisition/model/new biology |
 | `SUMMARIZE_EXPRESSION_TAIL_V1` | Held typed case-labelled values; does the declared distribution contain empirical tail observations? Exact quantile/tail rule above; case counts/IDs and coverage | Proposed descriptive measurement action only after an explicit action-contract change; n≥20, IQR>0, declared complete input frame; zero GDC reservation; no p/q |
 | `SUMMARIZE_CNV_CATEGORIES_V1` | Held complete typed occurrences; count distinct cases for each provider category, retain conflicts and caller/source refs | Proposed descriptive measurement action after contract change; complete filter-bound query, dedup invariant; no neutral denominator; zero new acquisition |
-| `ACQUIRE_SURVIVOR_CNV_V1` | Fixed bounded gene/project query → typed evidence outcome | LATER acquisition contract; reserve remaining pages/bytes/attempts pessimistically, refuse if the worst-case plan exceeds the remaining envelope; never broaden to finish |
+| `ACQUIRE_SURVIVOR_CNV_V1` | Fixed bounded gene/project query → typed evidence outcome | REJECT as a Stage 7 action: Stage 6 already performs separately invoked, fixed-plan acquisition; the action registry must not hide or repeat that side effect |
 | `STRATIFY_BY_PROJECT_V1`, `LEAVE_ONE_PROJECT_OUT_V1` | Project stratification / leave-one-project-out | NOT APPLICABLE to the single TCGA-LUAD cohort; not registered |
 | `CHECK_MISSINGNESS_V1` | Recompute case-level missingness from retained responses and reconcile against the recorded state | PLANNED contract review only; partly redundant with `EXPRESSION_COVERAGE_ARITHMETIC`; needs a demonstrated non-redundant operation from held evidence |
 | `OUTLIER_SENSITIVITY_V1`, `COMPARE_MODALITIES_V1` | Sensitivity/modality comparison proposals | Unapproved placeholders; not registered |

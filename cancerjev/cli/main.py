@@ -59,6 +59,24 @@ def parser() -> argparse.ArgumentParser:
     )
     discover.add_argument("--live", action="store_true",
                           help="real bounded open-access GDC systematic discovery")
+    discover_expression = commands.add_parser(
+        "discover-expression",
+        help="bounded Stage 5 expression discovery over the fixed indexed gene universe",
+    )
+    discover_expression.add_argument(
+        "--live", action="store_true",
+        help="real bounded open-access GDC independent expression discovery",
+    )
+    discover_cnv = commands.add_parser(
+        "discover-cnv",
+        help="bounded Stage 6 CNV occurrence discovery for one Stage 4 survivor result",
+    )
+    discover_cnv.add_argument("--live", action="store_true",
+                              help="real bounded open-access GDC CNV discovery")
+    discover_cnv.add_argument(
+        "--stage4-run", required=True,
+        help="completed Stage 4 run whose immutable survivor result is the only CNV gene input",
+    )
     show = commands.add_parser("show")
     show.add_argument("run_id")
     show.add_argument("--events", action="store_true")
@@ -156,6 +174,121 @@ def _discover(settings: Settings, repository: Repository, artifacts: ArtifactSto
                "gdc_cache_hits": totals["cache_hits"]})
 
 
+def _discover_expression(
+    settings: Settings, repository: Repository, artifacts: ArtifactStore,
+) -> None:
+    from cancerjev.research.expression_discovery import run_expression_discovery
+    from cancerjev.research.specs import LUAD_RESEARCH_V1
+
+    spec = LUAD_RESEARCH_V1
+    caps = BudgetCaps(
+        max_requests=settings.gdc_max_requests,
+        max_bytes=settings.gdc_max_bytes,
+        per_response_bytes=settings.gdc_per_response_bytes,
+        timeout_seconds=settings.gdc_timeout_seconds,
+    )
+    run_id = repository.create_run(
+        "expression-discovery-worker", mode="LIVE", fixture_id=None, fixture_version=None,
+        scope={"purpose": "EXPRESSION_DISCOVERY", "spec_id": spec.spec_id,
+               "domain": spec.cohort.domain, "cohort": spec.cohort.cohort_id,
+               "project_id": spec.cohort.project_id,
+               "expression_discovery": asdict(spec.expression_discovery),
+               "selection_rule": spec.discovery_selection_rule()},
+    )
+
+    def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+        event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
+                                        message=message, **kwargs)
+        render_event(event)
+
+    emit("RUN_STARTED", "run:started", "Bounded expression discovery run started.",
+         data={"mode": "LIVE", "purpose": "EXPRESSION_DISCOVERY",
+               "research_spec": spec.as_dict()})
+    transport = GDCTransport(repository, artifacts, RunBudget(caps=caps), run_id, emit,
+                             cache_enabled=settings.gdc_cache_enabled)
+    try:
+        result = run_expression_discovery(
+            run_id, transport, repository, artifacts, emit, spec)
+    except (TransportError, ParserError, LiveRunError, ContractError) as exc:
+        code = getattr(exc, "code", type(exc).__name__)
+        emit("RUN_FAILED", "run:failed", f"Expression discovery failed: {code}.",
+             level="error", data={"status": "FAILED", "reason_code": str(code),
+                                  "detail": str(exc)})
+        return
+    totals = repository.gdc_run_totals(run_id)
+    emit("RUN_COMPLETED", "run:completed",
+         f"Expression discovery completed for {len(result.entries)} gene(s).",
+         data={"status": "COMPLETED", "reason_code": "EXPRESSION_DISCOVERY_COMPLETE",
+               "coverage": "COMPLETE_FOR_SCOPE", "genes": len(result.entries),
+               "gdc_attempts": totals["attempts"], "gdc_bytes": totals["bytes"],
+               "gdc_cache_hits": totals["cache_hits"]})
+
+
+def _discover_cnv(
+    settings: Settings, repository: Repository, artifacts: ArtifactStore, stage4_run_id: str,
+) -> None:
+    from cancerjev.domain.codecs import discovery_identity, read_discovery
+    from cancerjev.research.cnv_discovery import run_cnv_discovery
+    from cancerjev.research.specs import LUAD_RESEARCH_V1
+
+    source_run = repository.get_run(stage4_run_id)
+    if source_run is None or source_run["status"] != "COMPLETED":
+        raise SystemExit("--stage4-run must identify a completed Stage 4 run")
+    events = repository.events(stage4_run_id, 0, 500)["items"]
+    completed = [event for event in events if event["type"] == "DISCOVERY_COMPLETED"]
+    if len(completed) != 1:
+        raise SystemExit("--stage4-run must contain exactly one DISCOVERY_COMPLETED event")
+    artifact_id = completed[0]["data"].get("artifact_id")
+    if not isinstance(artifact_id, str):
+        raise SystemExit("Stage 4 completion event has no result artifact")
+    metadata = repository.artifact(artifact_id)
+    if metadata is None:
+        raise SystemExit("Stage 4 result artifact registration is missing")
+    raw = artifacts.read(metadata["relative_path"], metadata["sha256"])
+    mutation_result = read_discovery(raw)
+    mutation_hash = discovery_identity(mutation_result)
+    spec = LUAD_RESEARCH_V1
+    caps = BudgetCaps(
+        max_requests=settings.gdc_max_requests, max_bytes=settings.gdc_max_bytes,
+        per_response_bytes=settings.gdc_per_response_bytes,
+        timeout_seconds=settings.gdc_timeout_seconds,
+    )
+    run_id = repository.create_run(
+        "cnv-discovery-worker", mode="LIVE", fixture_id=None, fixture_version=None,
+        scope={"purpose": "CNV_DISCOVERY", "spec_id": spec.spec_id,
+               "cohort": spec.cohort.cohort_id, "project_id": spec.cohort.project_id,
+               "stage4_run_id": stage4_run_id, "mutation_discovery_hash": mutation_hash,
+               "cnv_discovery": asdict(spec.cnv_discovery)},
+    )
+
+    def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+        event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
+                                        message=message, **kwargs)
+        render_event(event)
+
+    emit("RUN_STARTED", "run:started", "Bounded CNV discovery run started.",
+         data={"mode": "LIVE", "purpose": "CNV_DISCOVERY",
+               "stage4_run_id": stage4_run_id, "mutation_discovery_hash": mutation_hash,
+               "research_spec": spec.as_dict()})
+    transport = GDCTransport(repository, artifacts, RunBudget(caps=caps), run_id, emit,
+                             cache_enabled=settings.gdc_cache_enabled)
+    try:
+        result = run_cnv_discovery(
+            run_id, transport, repository, artifacts, emit, spec, mutation_result)
+    except (TransportError, ParserError, LiveRunError, ContractError) as exc:
+        code = getattr(exc, "code", type(exc).__name__)
+        emit("RUN_FAILED", "run:failed", f"CNV discovery failed: {code}.", level="error",
+             data={"status": "FAILED", "reason_code": str(code), "detail": str(exc)})
+        return
+    totals = repository.gdc_run_totals(run_id)
+    emit("RUN_COMPLETED", "run:completed",
+         f"CNV discovery completed for {len(result.entries)} survivor(s).",
+         data={"status": "COMPLETED", "reason_code": "CNV_DISCOVERY_COMPLETE",
+               "coverage": "COMPLETE_OR_EXPLICITLY_UNAVAILABLE_PER_SURVIVOR",
+               "genes": len(result.entries), "gdc_attempts": totals["attempts"],
+               "gdc_bytes": totals["bytes"], "gdc_cache_hits": totals["cache_hits"]})
+
+
 def main(argv: list[str] | None = None) -> None:
     load_local_env()
     args = parser().parse_args(argv)
@@ -184,8 +317,8 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(f"Unknown action id: {deep_action}. Registered: {', '.join(sorted(ACTION_REGISTRY))}")
     if args.command in {"run", "worker"} and not live and getattr(args, "fixture", None) != "demo":
         raise SystemExit("Choose --fixture demo for the offline demonstration or --live for a real open-access GDC sweep.")
-    if args.command == "discover" and not live:
-        raise SystemExit("discover requires --live (Stage 4 systematic discovery is a real bounded open-access GDC task).")
+    if args.command in {"discover", "discover-expression", "discover-cnv"} and not live:
+        raise SystemExit(f"{args.command} requires --live (systematic discovery is a real bounded open-access GDC task).")
     settings = Settings.from_env()
     repository, artifacts = _services(settings)
     if args.command == "show":
@@ -233,6 +366,22 @@ def main(argv: list[str] | None = None) -> None:
             with ResearchOwnership(settings.lock_path):
                 repository.recover_interrupted()
                 _discover(settings, repository, artifacts)
+        except OwnershipError as exc:
+            raise SystemExit(str(exc)) from exc
+        return
+    if args.command == "discover-expression":
+        try:
+            with ResearchOwnership(settings.lock_path):
+                repository.recover_interrupted()
+                _discover_expression(settings, repository, artifacts)
+        except OwnershipError as exc:
+            raise SystemExit(str(exc)) from exc
+        return
+    if args.command == "discover-cnv":
+        try:
+            with ResearchOwnership(settings.lock_path):
+                repository.recover_interrupted()
+                _discover_cnv(settings, repository, artifacts, args.stage4_run)
         except OwnershipError as exc:
             raise SystemExit(str(exc)) from exc
         return

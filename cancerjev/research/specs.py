@@ -2,16 +2,11 @@
 
 One canonical ``ResearchSpec`` owns the reproducible configuration of a research
 run: the explicit single cohort, bounded acquisition sizes, the systematic Stage 4
-discovery configuration (bounded indexed gene-universe enumeration and mutation
-batching), the implemented composition (mutation counts plus the local expression
-summary), the registered deterministic actions, the policy identities and the
-scientific limits.
-
-Unsupported runtime configurations are not representable: an independent
-expression arm and CNV acquisition have no field in schema 4 and are rejected
-explicitly here and by the strict reader. The systematic discovery configuration
-is a fixed deterministic contract, not a caller-controlled query builder. JSON
-exists only as a boundary representation.
+mutation configuration, the fixed Stage 5 independent expression configuration,
+the fixed Stage 6 survivor-only CNV configuration, the implemented composition,
+registered deterministic actions, policy identities and scientific limits.
+Discovery configuration is fixed rather than a caller-controlled query builder.
+JSON exists only as a boundary representation.
 """
 
 from __future__ import annotations
@@ -19,8 +14,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from cancerjev.domain._json import integer, obj, string, string_tuple
-from cancerjev.domain.discovery import DISCOVERY_UNIVERSE_METHOD, DiscoverySpec
+from cancerjev.domain._json import integer, number, obj, string, string_tuple
+from cancerjev.domain.discovery import (
+    DISCOVERY_UNIVERSE_METHOD,
+    CnvDiscoverySpec,
+    DiscoverySpec,
+    ExpressionDiscoverySpec,
+)
 from cancerjev.domain.measurements import count, require, strings, text
 from cancerjev.gdc.endpoints import (
     MAX_CASE_IDS,
@@ -30,14 +30,15 @@ from cancerjev.gdc.endpoints import (
     MAX_GENE_IDS,
 )
 
-RESEARCH_SPEC_SCHEMA_VERSION = 4
+RESEARCH_SPEC_SCHEMA_VERSION = 6
 IMPLEMENTED_ACTIONS = frozenset({"CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1"})
 IMPLEMENTED_WIDE_POLICY = "wide-policy-v2"
 IMPLEMENTED_DEEP_POLICY = "deep-policy-v2"
 UNIVERSE_PAGE_CAP = 10
 
 __all__ = [
-    "AcquisitionSpec", "CohortSpec", "DiscoverySpec", "LUAD_RESEARCH_V1", "LUAD_DISCOVERY_V1",
+    "AcquisitionSpec", "CohortSpec", "CnvDiscoverySpec", "DiscoverySpec", "ExpressionDiscoverySpec",
+    "LUAD_RESEARCH_V1", "LUAD_DISCOVERY_V1",
     "RESEARCH_SPEC_SCHEMA_VERSION", "ResearchSpec", "ScientificLimits", "UNIVERSE_PAGE_CAP",
     "research_spec_from_dict",
 ]
@@ -112,6 +113,8 @@ class ResearchSpec:
     acquisition: AcquisitionSpec
     limits: ScientificLimits
     allowed_actions: tuple[str, ...]
+    expression_discovery: ExpressionDiscoverySpec = ExpressionDiscoverySpec()
+    cnv_discovery: CnvDiscoverySpec = CnvDiscoverySpec()
     wide_policy: str = IMPLEMENTED_WIDE_POLICY
     deep_policy: str = IMPLEMENTED_DEEP_POLICY
 
@@ -121,6 +124,9 @@ class ResearchSpec:
         require(isinstance(self.cohort, CohortSpec), "invalid cohort spec")
         require(isinstance(self.discovery, DiscoverySpec), "invalid discovery spec")
         require(isinstance(self.acquisition, AcquisitionSpec), "invalid acquisition spec")
+        require(isinstance(self.expression_discovery, ExpressionDiscoverySpec),
+                "invalid expression discovery spec")
+        require(isinstance(self.cnv_discovery, CnvDiscoverySpec), "invalid CNV discovery spec")
         require(isinstance(self.limits, ScientificLimits), "invalid scientific limits")
         strings(self.allowed_actions, "allowed actions")
         require(bool(self.allowed_actions), "a research spec requires at least one allowed action")
@@ -162,9 +168,9 @@ class ResearchSpec:
 
 
 def research_spec_from_dict(value: object) -> ResearchSpec:
-    """Strict schema-4 boundary. Never interpret a legacy spec as the current one."""
+    """Strict schema-6 boundary. Never interpret a legacy spec as the current one."""
     d = obj(value, "schema_version kind spec_id intent cohort discovery acquisition limits "
-                   "allowed_actions wide_policy deep_policy")
+                   "allowed_actions wide_policy deep_policy expression_discovery cnv_discovery")
     require(integer(d["schema_version"]) == RESEARCH_SPEC_SCHEMA_VERSION
             and d["kind"] == "RESEARCH_SPEC", "unsupported research spec version/kind")
     c = obj(d["cohort"], "cohort_id domain project_id")
@@ -172,6 +178,9 @@ def research_spec_from_dict(value: object) -> ResearchSpec:
     a = obj(d["acquisition"], "case_page_size case_batch_size max_cohort_cases discovery_gene_limit "
                               "count_gene_limit candidate_gene_limit expression_file_sample_size")
     limits = obj(d["limits"], "max_survivors max_promotions max_revisions")
+    expression = obj(d["expression_discovery"], "selection_rule gene_batch_size minimum_tail_n "
+                     "quantile_rule iqr_multiplier input_unit transform")
+    cnv = obj(d["cnv_discovery"], "selection_rule page_size max_pages_per_gene max_genes category_field")
     return ResearchSpec(
         string(d["spec_id"]), string(d["intent"]),
         CohortSpec(string(c["cohort_id"]), string(c["domain"]), string(c["project_id"])),
@@ -184,7 +193,19 @@ def research_spec_from_dict(value: object) -> ResearchSpec:
                         integer(a["expression_file_sample_size"])),
         ScientificLimits(integer(limits["max_survivors"]), integer(limits["max_promotions"]),
                          integer(limits["max_revisions"])),
-        string_tuple(d["allowed_actions"]), string(d["wide_policy"]), string(d["deep_policy"]),
+        string_tuple(d["allowed_actions"]),
+        expression_discovery=ExpressionDiscoverySpec(
+            string(expression["selection_rule"]), integer(expression["gene_batch_size"]),
+            integer(expression["minimum_tail_n"]), string(expression["quantile_rule"]),
+            number(expression["iqr_multiplier"]), string(expression["input_unit"]),
+            string(expression["transform"]),
+        ),
+        cnv_discovery=CnvDiscoverySpec(
+            string(cnv["selection_rule"]), integer(cnv["page_size"]),
+            integer(cnv["max_pages_per_gene"]), integer(cnv["max_genes"]),
+            string(cnv["category_field"]),
+        ),
+        wide_policy=string(d["wide_policy"]), deep_policy=string(d["deep_policy"]),
     )
 
 

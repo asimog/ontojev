@@ -60,10 +60,9 @@ Core means preferred when relevant, not a requirement to load every skill on eve
 | `ngs-fastq-qc` | General QC/provenance design reference: preserve inputs, separate assay artifacts from biology, retain limitations | No FASTQ acquisition, trimming or processing |
 | `typesafe-ai` | Jev projections, questions/primitives, Wide/Deep judgments, hypothesis critique, semantic features, reranking, confidence routing and calibration | Mandatory relevant guidance plus current live docs; exact questions stay in code/statistics; no automatic paid calls |
 
-Roadmap Stages 0–3 (scientific contracts, verified consumption, typed lane composition) are
-IMPLEMENTED and offline-verified. Stage 4 (bounded broad universe) is the next separately
-authorized task; Stages 5–8 (expression arm, narrow CNV lane, descriptive actions, prospective
-evaluation) are PLANNED and use mutation/expression/CNV plus TypeSafe guidance; Stage 9
+Roadmap Stages 0–6 (through the bounded broad universe, independent expression arm and
+survivor-only CNV lane) are IMPLEMENTED and offline-verified. Stages 7–8 (descriptive actions
+and prospective evaluation) are PLANNED and use mutation/expression/CNV plus TypeSafe guidance; Stage 9
 (conditional inferential extensions) is deferred. See [roadmap](DISCOVERY_ROADMAP.md),
 [contracts](DOMAIN_MODELS.md), [GDC strategy](GDC_STRATEGY.md), [budgets](GDC_BUDGETS.md),
 [invariants](SCIENTIFIC_INVARIANTS.md) and [testing](TESTING.md). Skill guidance does not

@@ -193,7 +193,8 @@ current unless labeled otherwise; none preserves a historical architecture instr
   the single-cohort production scope. `CHECK_MISSINGNESS_V1` is partly redundant with the
   `EXPRESSION_COVERAGE_ARITHMETIC` check of `CHECK_EVIDENCE_INTEGRITY_V1`; before registration it
   needs a non-redundant, independently reproducible operation from retained evidence.
-- PLANNED: a bounded independent expression arm and a narrow CNV lane require their own official
+- IMPLEMENTED offline / live UNVERIFIED: the bounded independent expression arm uses the existing
+  official expression contracts and fixed request envelope. PLANNED: a narrow CNV lane requires its own official
   mapping review, fixed request plans, immutable fixtures and acceptance gates.
 - UNVERIFIED: no demonstrated sample-matchable mutation-negative or CNV-neutral reference set
   exists in the admitted endpoints; recurrence rates, association tests and survival effects
@@ -209,9 +210,9 @@ current unless labeled otherwise; none preserves a historical architecture instr
 
 ## Next sequence
 
-Indexed systematic discovery is the next separately authorized Stage 4 task: bounded ordered
-gene universe, cheap indexed mutation reduction, immutable fixtures and its own acceptance gate.
-Stages 5–9 (independent expression arm, narrow CNV lane, descriptive actions, prospective
+Stages 4–6 are implemented as separately invoked bounded discovery tasks. Stage 6 survivor-only
+CNV discovery is offline verified; the bounded anonymous shape probe does not establish full live
+acceptance. Stages 7–9 (descriptive actions, prospective
 evaluation, conditional inferential extensions) remain as indexed in the
 [roadmap](DISCOVERY_ROADMAP.md). Engineering success cannot establish Jev incremental value; a
 labelled, human-reviewed corpus is required.

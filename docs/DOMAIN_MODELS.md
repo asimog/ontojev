@@ -9,7 +9,9 @@ chain; [persistence](PERSISTENCE.md) owns storage.
 
 | Record | Role and protected invariant |
 |---|---|
-| `ResearchSpec` (schema 4) | Sole canonical research configuration: `spec_id`, intent, `CohortSpec` (cohort/domain/project), fixed `DiscoverySpec` (universe method/biotype/order/offset/limit/batch), bounded `AcquisitionSpec` limits, `ScientificLimits`, allowed registered action IDs, and the fixed `wide-policy-v2` / `deep-policy-v2` versions. Unsupported configurations are rejected or not representable |
+| `ResearchSpec` (schema 6) | Sole canonical research configuration: `spec_id`, intent, `CohortSpec`, fixed mutation `DiscoverySpec`, fixed `ExpressionDiscoverySpec`, fixed survivor-only `CnvDiscoverySpec`, bounded acquisition limits, scientific limits, allowed registered action IDs and fixed policy versions. Unsupported configurations are rejected or not representable |
+| `ExpressionDiscoveryEntry` / `ExpressionDiscoveryResult` (schema 1) | One typed expression outcome and empirical-tail availability per gene in the release-bound systematic universe; complete case-frame accounting, workflow/strategy provenance, fixed request envelope and no model/ranking input |
+| `CnvDiscoveryEntry` / `CnvDiscoveryResult` (schema 1) | One typed complete-or-unavailable occurrence outcome per Stage 4 survivor; exact mutation-result/release/frame binding; unique positive cases by provider five-category label, caller/source context, explicit case conflicts and missing sample IDs; no neutral inference or model input |
 | `StatisticalState` (schema 4) | Typed entity, annotation, research scope, universe, tested context, per-project lane results, quality and separate scientific/operational sources |
 | `EvidenceState` (schema 4) | Accepted state hash, parent evidence hash, E0/E1/E2 index, `ActionRef`, immutable checks, derived `CheckSummary`, quality and sources |
 | `Candidate` | Run-local promoted/selected candidate binding (projection row plus `CandidateEvidence` in `research/deep.py`): candidate id, entity, promotion slot, accepted state binding, lifecycle |
@@ -76,8 +78,8 @@ effects. A future inferential effect requires its own admitted unit/method contr
 Disabled/unacquired lanes have explicit outcomes, not empty successful results. A provider
 `cnv_change_5_category=Loss` is `LOSS_UNSPECIFIED`, not heterozygous deletion; unknown
 categories are `UNSUPPORTED_CATEGORY`, never neutral; conflicting case calls remain conflicts.
-No CNV provider parser, complete-query acquisition or category-count descriptor is admitted by
-constructing the record. CNV acquisition and descriptors remain PLANNED (Stage 6).
+Stage 6 admits only strict, bounded, complete survivor queries and positive-case category
+summaries. It does not add a neutral denominator, broad CNV universe or cross-lane association.
 
 ## Actions, candidates and hypotheses
 
@@ -106,8 +108,9 @@ constructing the record. CNV acquisition and descriptors remain PLANNED (Stage 6
 ## Serialization, versioning and identity
 
 - IMPLEMENTED: `domain/codecs.py` reads and writes StatisticalState schema 4, EvidenceState
-  schema 4 and MutationDiscoveryResult schema 1 only. `research/specs.py` reads and writes
-  ResearchSpec schema 4 only. Older or unknown versions fail with a typed unsupported-version
+  schema 4, MutationDiscoveryResult schema 1, ExpressionDiscoveryResult schema 1 and
+  CnvDiscoveryResult schema 1 only. `research/specs.py` reads and writes ResearchSpec schema 6
+  only. Older or unknown versions fail with a typed unsupported-version
   error; there is no fixture fallback, dictionary identity path, or legacy reader.
 - IMPLEMENTED: strict JSON boundary primitives in `domain/_json.py` reject duplicate keys,
   non-finite numbers, kind/version mismatch, missing/extra fields and inconsistent identities.

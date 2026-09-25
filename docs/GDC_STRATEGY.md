@@ -4,7 +4,7 @@ Status legend: rows describing the current runtime allowlist/parsers are IMPLEME
 LATER / REJECT are design verdicts for future separately authorized work (PLANNED or deferred, not
 current runtime); capture measurements are historical evidence that this environment did not
 re-run (UNVERIFIED here).
-Investigated 2026-09-24; current after the Stage 3 hard cutover (2026-09-25). ADMIT NOW means
+Investigated 2026-09-24; current after the Stage 6 implementation (2026-09-25). ADMIT NOW means
 suitable for a proposed future implementation phase **after its acceptance gates**, not already
 runtime-allowlisted. HTTP 200 is not scientific admission.
 [Capture register](GDC_DISCOVERY_CAPTURES.md) preserves requests, hashes and measurements.
@@ -12,8 +12,8 @@ runtime-allowlisted. HTTP 200 is not scientific admission.
 IMPLEMENTED runtime endpoints are: `/status`, `/projects`, `/cases`, `/genes`,
 `/analysis/top_mutated_genes_by_project`, `/analysis/top_cases_counts_by_genes`,
 `/analysis/mutated_cases_count_by_project` (unfiltered only), `/files` (open metadata only),
-`/gene_expression/{availability,gene_selection,values}`, plus per-endpoint `_mapping` used for
-contract verification only. SSM/SSM-occurrence, CNV/CNV-occurrence, segment CNV, survival and
+`/gene_expression/{availability,gene_selection,values}` and `/cnv_occurrences`, plus per-endpoint
+`_mapping` used for contract verification only. SSM/SSM-occurrence, gene/segment CNV, survival and
 scRNA endpoints are **not** allowlisted or implemented. `research/acquisition.py` separates
 existing cohort, mutation-count and expression calls from selection policy; builders, fields,
 parsers, request order, pagination, batch semantics and caps are unchanged. No new endpoint was
@@ -23,7 +23,9 @@ filter, `gene_id:asc`, offset/size only, page ≤10 per `genes:universe` query i
 strict page parser; `/analysis/top_cases_counts_by_genes` gains deterministic ≤100-gene batch
 requests (project SSM coverage acquired once). Live contract reverified 2026-09-25: pagination
 `{count,total,size,from,pages}`, protein-coding total 19,843, aggregation shape and explicit-zero
-vs absent-bucket behavior match the retained captures.
+vs absent-bucket behavior match the retained captures. Stage 6 adds only the fixed
+project-and-single-gene `/cnv_occurrences` builder for Stage 4 survivors, with strict 250-row
+pages and a ten-page per-gene cap.
 
 ## Investigation and reproducibility
 
@@ -60,8 +62,8 @@ Capture numbers refer to the register. Runtime means current allowlist, not futu
 | SSM coverage | 023 | per-project `case_with_ssm` | Indexed SSM-data coverage, not per-gene callable-negative set | Separate from mutation numerator | ADMIT NOW context only; runtime current |
 | SSMs | mapping 006; 015 | variant ID, GRCh38 coordinates, alleles; occurrence project filter | Variant ≠ case; transcript rows are not independent mutations | Small partial search; explicit paging required | LATER variant enrichment; NOT ADMITTED as complete mutation burden |
 | SSM occurrences | mapping 007; 016/052 | case + ssm IDs, transcript gene IDs; TP53/project filter | 299 occurrences reported; multiple callers same sample observed; dedup by case/gene for case counts | Leaf observation fields work; broad `case.observation` gave a warning | LATER detailed lane; sample ID present, negative callability absent |
-| Gene CNVs | mapping 008; 017 | `cnv_id` + `consequence.gene.gene_id`, project filter | TP53 had 3 indexed category entities, not 3 cases | GRCh38, `gene_level_cn`; categories Loss/Gain/Amplification | ADMIT NOW identity/category context for a narrow lane; runtime NEW |
-| CNV occurrences | mapping 009; 018/050/051/055/067/068 | case + cnv + gene IDs, source file, caller | TP53 264 distinct occurrences/cases: 236 Loss, 25 Gain, 3 Amplification; no negative denominator | Complete two-page TP53 query; ASCAT3 source file confirmed; requested tumor sample ID absent | ADMIT NOW bounded positive occurrence descriptors; NEW parser/builder required |
+| Gene CNVs | mapping 008; 017 | `cnv_id` + `consequence.gene.gene_id`, project filter | TP53 had 3 indexed category entities, not 3 cases | GRCh38, `gene_level_cn`; categories Loss/Gain/Amplification | not runtime-allowlisted; occurrence lane does not require this endpoint |
+| CNV occurrences | mapping 009; 018/050/051/055/067/068 plus 2026-09-25 shape probe | case + cnv + gene IDs, source file, caller | TP53 264 reported occurrences; no negative denominator | Strict pages; real fixture preserves generic Loss, ASCAT3 and missing sample ID; 250-row probe observed ASCAT2/ASCAT3/AscatNGS | IMPLEMENTED for bounded Stage 4 survivors only; full live Stage 6 workload UNVERIFIED |
 | CNV 100 workload | 067 | first 100 universe genes + LUAD | 21,032 occurrence total; two sample hits only | Full scan would need 85 pages of 250, exceeding 10; facets count occurrences, not assured unique cases | REJECT full broad occurrence scan; reduce first; full 1,000 cost UNMEASURED |
 | Segment CNVs | mapping 010; 019 | segment ID, chromosome, start/end/length | 30,681 LUAD entities; no direct gene join admitted | Position/category response; projection to genes needs overlap/build policy | LATER; no segment discovery lane now |
 | Segment occurrences | mapping 011; 020/053 | case/segment/source file IDs, copy number | 32,385 reported; only 2 inspected; no complete cohort distribution | Leaf fields work; missing sample mapping | LATER; full scan outside the current page budget |
@@ -99,8 +101,7 @@ for survivors. Neither latency nor body size estimates are provider guarantees.
 
 ## Admitted field-to-result trace
 
-Proposed parser names describe required future functions, not implemented symbols. Existing
-parser symbols are named explicitly. Every result also binds response/request hashes, release,
+Parser names distinguish implemented symbols from later proposals. Every result also binds response/request hashes, release,
 method and population.
 
 | Result fields | Endpoint and provider field | Parser/interpretation | Deterministic method / typed result |
@@ -114,8 +115,8 @@ method and population.
 | expression values/missing IDs | values TSV header case IDs and `gene_id` rows | existing `parse_expression_values`; finite nonnegative UQFPKM; label joins | `EXPRESSION_LOG2_SUMMARY_V1` on `log2(x+1)`, explicit n and missingness |
 | provider selection summaries | `gene_selection[].log2_uqfpkm_median/stddev` | existing `parse_gene_selection` | `EXPRESSION_PROVIDER_SUMMARY_V1` metadata, unavailable for multi-batch cohort summary |
 | file/workflow context | `files.access`, `analysis.workflow_type`, cases/samples/aliquots | existing `parse_files_provenance` for sampled context; NEW link-preserving parser for matching | provenance only; no inferred cell-level workflow |
-| CNV category evidence | `cnv_occurrence_id`, `case.case_id`, `cnv.cnv_id`, `cnv.consequence[].gene.gene_id`, `cnv.cnv_change/_5_category` | NEW strict occurrence parser, required IDs/category; dedup and exact filter membership | `CNV_INDEXED_POSITIVE_CASES_V1` proposed: unique cases per category over a complete query |
-| CNV contextual values | `case.observation[].copy_number`, `src_file_id`, `variant_calling.variant_caller`, `sample_ploidy_integer` | NEW optional-value variants; missing ≠ invalid; sample UUID may be absent | provider observation, not a cross-caller numerical effect |
+| CNV category evidence | `cnv_occurrence_id`, `case.case_id`, `cnv.cnv_id`, `cnv.consequence[].gene.gene_id`, `cnv.cnv_change/_5_category` | implemented `parse_cnv_occurrences_page`; required IDs/category, dedup/order and exact filter membership | `CNV_INDEXED_POSITIVE_CASES_V1`: unique positive cases per category over a complete query |
+| CNV contextual values | `case.observation[].copy_number`, `src_file_id`, `variant_calling.variant_caller`, tumor sample UUID | implemented optional context; missing ≠ invalid; multiple observations are ambiguous and rejected | provider observation, not a cross-caller numerical effect |
 | quality/completeness | `pagination` `count,total,from`; warnings; transport terminal status; missing sets | shared validated envelope + lane-specific completion checks | `Quality`/`Coverage`; warnings about requested scientific fields prevent admission |
 | derived extremes | parsed expression values and frame/universe above | no new provider field | proposed `EXPRESSION_WITHIN_GENE_EXTREME_V1` in the roadmap; descriptive only |
 
@@ -136,12 +137,12 @@ separate. Mutation-negative and CNV-neutral sets are not established. Mutation-e
 CNV-expression association actions are INELIGIBLE until exact sample selection,
 negative/reference semantics and a common analyzable population are independently validated.
 
-## Required future fixtures (PLANNED)
+## Fixture status and remaining fixtures
 
-Retain bounded public captures with request specifications and hashes for: sorted universe
+IMPLEMENTED: a bounded public CNV occurrence fixture retains generic Loss, caller context and a
+missing tumor-sample UUID; synthetic contract/replay cases cover mixed callers, category
+conflicts, duplicates, pagination and cap refusal. Remaining planned captures include sorted universe
 paging/duplicates/changed totals; explicit mutation zero versus absent bucket and truncated
-aggregation; expression omitted genes/cases across batches; CNV Loss in the five-category field,
-mixed callers, duplicate/conflicting calls and missing sample UUID; source file with tumor+normal
-samples; nonempty survival with missing follow-up/censoring cases. Add synthetic malformed
-variants separately labelled SYNTHETIC. No fixture or test was changed by this documentation
-pass.
+aggregation; expression omitted genes/cases across batches; a source file with tumor+normal
+samples; and nonempty survival with missing follow-up/censoring cases. Add synthetic malformed
+variants separately labelled SYNTHETIC.

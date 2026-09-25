@@ -476,10 +476,10 @@ def _expression_quality(observation: ExpressionObservation) -> Quality:
                    (EXPRESSION_SD_METHOD.missingness_rule, EXPRESSION_SD_METHOD.limitations[0]))
 
 
-def _expression_result(frame: ProjectFrame, population_frame: PopulationFrame, gene: GeneRecord,
-                       observation: ExpressionObservation, release: str,
-                       sources: tuple[OperationalSource, ...],
-                       ) -> ExpressionSummaryResult | UnavailableLane:
+def expression_result(frame: ProjectFrame, population_frame: PopulationFrame, gene: GeneRecord,
+                      observation: ExpressionObservation, release: str,
+                      sources: tuple[OperationalSource, ...],
+                      ) -> ExpressionSummaryResult | UnavailableLane:
     if observation.local is None:
         status = (UnavailableStatus.NOT_ACQUIRED if observation.local_availability == "NOT_ACQUIRED"
                   else UnavailableStatus.NOT_OBSERVED)
@@ -614,7 +614,8 @@ def compute_statistical_state(
             provider_unavailable_reason=frame.provider_summary_unavailable_reason,
         )
         missingness.extend(observation.missingness)
-        expression_result = _expression_result(frame, population_frame, gene, observation, release, sources)
+        expression_summary = expression_result(
+            frame, population_frame, gene, observation, release, sources)
         if observation.local is not None and observation.local.median is not None:
             medians.append(observation.local.median)
             projects_with_expression += 1
@@ -625,7 +626,7 @@ def compute_statistical_state(
         discovery = (ProviderDiscoveryMetadata(hit.rank, hit.score, "MUTATION_DISCOVERY_V1",
                                                "selection metadata only")
                      if hit is not None else None)
-        project_states.append(ProjectState(population, mutation_result, expression_result,
+        project_states.append(ProjectState(population, mutation_result, expression_summary,
                                            _provider_expression(observation), discovery))
         evidence_rows.append(ProjectEvidence(
             frame.project_id, isinstance(affected, ObservedCount),

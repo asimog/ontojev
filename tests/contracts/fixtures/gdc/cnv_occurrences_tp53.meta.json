@@ -1,0 +1,11 @@
+{
+  "body_sha256": "33a06444d2ebb4fa16d9531cfacd9c45d6d7ef365deff6206113d3b822ba4063",
+  "completeness": "COMPLETE",
+  "endpoint": "/cnv_occurrences",
+  "fixture_kind": "REAL PUBLIC GDC BOUNDED SHAPE PROBE",
+  "http_status": 200,
+  "method": "GET",
+  "note": "Anonymous two-row TCGA-LUAD/TP53 response captured 2026-09-25; exact capture instant was not retained; repository newline is included in the fixture hash.",
+  "probe_name": "cnv_occurrences_tp53",
+  "retrieved_at": "2026-09-25T00:00:00Z"
+}

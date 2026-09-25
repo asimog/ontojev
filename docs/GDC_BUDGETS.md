@@ -19,6 +19,8 @@ workload or cost measurement.
 | Production cohort ceiling | 1,000 | `LUAD_RESEARCH_V1`; a general `AcquisitionSpec` must fit `page_size × 10` |
 | Production gene selection | discovery 20, count limit 100, candidate 10 | provider-ranked slice: labelled baseline/comparator path, unchanged |
 | Stage 4 systematic discovery | 10 `/genes` pages ×100 (gene_id asc, protein_coding) + 1 coverage + 10 count batches ×100 + 1 comparator | fixed `LUAD_DISCOVERY_V1` contract; 27 attempts / 2,817,301 bytes measured live (2026-09-25); no cap enlarged |
+| Stage 5 independent expression | status + project + ≤4 cohort pages + 10 `/genes` pages + 1 file-provenance request + up to 10 gene batches × 4 case batches × (availability + values) = ≤97 requests | fixed `ExpressionDiscoverySpec`; unchanged 150-request/64-MiB caps; offline replay verified, live bytes/attempts UNVERIFIED |
+| Stage 6 survivor-only CNV | status + ≤10 Stage 4 survivors × ≤10 `/cnv_occurrences` pages of 250 rows = ≤101 requests | fixed `CnvDiscoverySpec`; exact Stage 4 artifact/release/frame binding; an over-cap gene becomes typed unavailable with no partial evidence; unchanged 150-request/64-MiB caps; offline replay and bounded endpoint-shape probe verified, full live workload UNVERIFIED |
 | Wide states per invocation | `Settings.jev_max_states` ≤1,000 | capped prefix in `run_wide_evaluation`; not an underlying HTTP-attempt ledger |
 | Promotion slots | 3 | ranking and operator selection share the cap |
 | Follow-ups per candidate | 3 | `deep.FOLLOWUP_LIMIT`; the current registry/revision cap is tighter |

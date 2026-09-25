@@ -10,6 +10,7 @@ from cancerjev.gdc.parsers import (
     ParserError,
     ResponseMeta,
     parse_cases,
+    parse_cnv_occurrences_page,
     parse_expression_availability,
     parse_expression_values,
     parse_files_provenance,
@@ -123,6 +124,21 @@ def test_real_genes_capture():
     assert gene.symbol == "TP53"
     assert gene.biotype == "protein_coding"
     assert gene.is_cancer_gene_census is True
+
+
+def test_real_cnv_occurrence_capture_preserves_loss_and_missing_sample_context():
+    body, meta = load("cnv_occurrences_tp53")
+    cases = {"cbfef004-b437-4d51-9d88-a2db50aa6481",
+             "205759a6-6391-491b-9857-0080c3a5871e"}
+    page = parse_cnv_occurrences_page(
+        body, meta, expected_project="TCGA-LUAD", expected_gene="ENSG00000141510",
+        expected_cases=cases, expected_offset=0, expected_size=2,
+    )
+    assert page.total == 264 and page.pages == 132
+    assert {item.raw_category for item in page.occurrences} == {"Loss"}
+    assert {item.caller for item in page.occurrences} == {"ASCAT3"}
+    assert all(item.sample_id is None for item in page.occurrences)
+    assert {item.copy_number for item in page.occurrences} == {1.0, 3.0}
 
 
 def test_real_discovery_capture_keeps_ranking_metadata_separate():

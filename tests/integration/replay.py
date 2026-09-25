@@ -81,13 +81,15 @@ def coverage_body() -> bytes:
                   "aggregations": {"projects": {"buckets": buckets}}})
 
 
-def genes_body() -> bytes:
-    return _json({"data": {"hits": [
+def genes_body(*, size: int = 10, offset: int = 0) -> bytes:
+    hits = [
         {"gene_id": GENES[0], "symbol": "GENEONE", "name": "Gene One", "biotype": "protein_coding",
          "is_cancer_gene_census": True},
         {"gene_id": GENES[1], "symbol": "GENETWO", "name": "Gene Two", "biotype": "protein_coding",
          "is_cancer_gene_census": False},
-    ], "pagination": {"count": 2, "total": 2, "size": 10, "from": 0, "pages": 1}}})
+    ][offset:offset + size]
+    return _json({"data": {"hits": hits, "pagination": {
+        "count": len(hits), "total": 2, "size": size, "from": offset, "pages": 1}}})
 
 
 def case_ids(project_id: str, projects: dict[str, int]) -> list[str]:
@@ -145,11 +147,13 @@ def gene_selection_body(case_ids_requested: list[str], gene_ids: list[str]) -> b
     ]})
 
 
-def values_body(case_ids_requested: list[str], gene_ids: list[str], *, drop_columns: int = 0) -> bytes:
+def values_body(case_ids_requested: list[str], gene_ids: list[str], *, drop_columns: int = 0,
+                constant_value: float | None = None) -> bytes:
     returned = case_ids_requested[: len(case_ids_requested) - drop_columns] if drop_columns else case_ids_requested
     lines = ["gene_id\t" + "\t".join(returned)]
     for gene_index, gene_id in enumerate(gene_ids):
-        cells = [f"{3.0 + gene_index + (index % 7) * 0.5:.4f}" for index in range(len(returned))]
+        cells = [f"{(constant_value if constant_value is not None else 3.0 + gene_index + (index % 7) * 0.5):.4f}"
+                 for index in range(len(returned))]
         lines.append(gene_id + "\t" + "\t".join(cells))
     return ("\n".join(lines) + "\n").encode()
 
@@ -163,7 +167,8 @@ class ReplayTransport:
                   drop_value_columns: int = 0, project_case_counts: dict[str, int] | None = None,
                   duplicate_case_across_pages: bool = False,
                   inconsistent_case_total_after_first: bool = False,
-                  inconsistent_case_offset_after_first: bool = False) -> None:
+                  inconsistent_case_offset_after_first: bool = False,
+                  constant_expression_value: float | None = None) -> None:
         self.artifacts = artifacts
         self.run_id = run_id
         self.controlled_files = controlled_files
@@ -174,6 +179,7 @@ class ReplayTransport:
         self.duplicate_case_across_pages = duplicate_case_across_pages
         self.inconsistent_case_total_after_first = inconsistent_case_total_after_first
         self.inconsistent_case_offset_after_first = inconsistent_case_offset_after_first
+        self.constant_expression_value = constant_expression_value
         self.requests: list[GDCRequest] = []
         self.published: list[Any] = []
         self.repository = repository
@@ -197,7 +203,8 @@ class ReplayTransport:
         elif name == "mutated_cases_count_by_project":
             body = coverage_body()
         elif name == "genes":
-            body = genes_body()
+            params = dict(request.params)
+            body = genes_body(size=int(params["size"]), offset=int(params.get("from", 0)))
         elif name == "cases":
             params = dict(request.params)
             offset = int(params["from"])
@@ -236,7 +243,8 @@ class ReplayTransport:
             project = self._project_of(request.body["case_ids"])
             assert project not in self.empty_expression_projects, "guard failed: values requested without values"
             body = values_body(request.body["case_ids"], request.body["gene_ids"],
-                               drop_columns=self.drop_value_columns)
+                               drop_columns=self.drop_value_columns,
+                               constant_value=self.constant_expression_value)
         else:  # pragma: no cover - guards against silent fixture drift
             raise AssertionError(f"replay transport has no fixture for {name}")
         media = "text/tab-separated-values" if request.accept != "application/json" else "application/json"

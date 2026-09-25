@@ -19,9 +19,17 @@ from cancerjev.domain._json import (
     string_tuple,
 )
 from cancerjev.domain.discovery import (
+    CnvCategorySummary,
+    CnvDiscoveryEntry,
+    CnvDiscoveryResult,
+    CnvDiscoverySpec,
     DiscoveryComparator,
     DiscoveryDisposition,
     DiscoverySpec,
+    ExpressionDiscoveryEntry,
+    ExpressionDiscoveryResult,
+    ExpressionDiscoverySpec,
+    ExpressionTailDescriptor,
     MutationDiscoveryEntry,
     MutationDiscoveryResult,
 )
@@ -72,6 +80,7 @@ from cancerjev.domain.measurements import (
 )
 from cancerjev.domain.scientific import (
     AcquisitionScope,
+    CnvCategory,
     CnvOccurrence,
     CnvOccurrenceResult,
     CrossProjectSummary,
@@ -93,6 +102,8 @@ from cancerjev.domain.scientific import (
 STATE_SCHEMA_VERSION = 4
 EVIDENCE_SCHEMA_VERSION = 4
 DISCOVERY_SCHEMA_VERSION = 1
+EXPRESSION_DISCOVERY_SCHEMA_VERSION = 1
+CNV_DISCOVERY_SCHEMA_VERSION = 1
 
 
 # --------------------------------------------------------------- shared readers
@@ -659,3 +670,154 @@ def read_discovery(data: bytes, *, expected_hash: str | None = None) -> Mutation
         raise
     except (ValueError, TypeError, KeyError, OverflowError) as exc:
         raise ContractError("invalid mutation discovery result") from exc
+
+
+# --------------------------------------------------- expression discovery codec
+
+
+def _expression_discovery_spec(value: object) -> ExpressionDiscoverySpec:
+    d = obj(value, "selection_rule gene_batch_size minimum_tail_n quantile_rule iqr_multiplier "
+                   "input_unit transform")
+    return ExpressionDiscoverySpec(
+        string(d["selection_rule"]), integer(d["gene_batch_size"]),
+        integer(d["minimum_tail_n"]), string(d["quantile_rule"]),
+        number(d["iqr_multiplier"]), string(d["input_unit"]), string(d["transform"]),
+    )
+
+
+def _tail_descriptor(value: object) -> ExpressionTailDescriptor:
+    d = obj(value, "availability reason q1 q3 lower_fence upper_fence lower_case_ids "
+                   "upper_case_ids valid_n method")
+
+    def optional_number(raw: object) -> float | None:
+        return None if raw is None else number(raw)
+
+    return ExpressionTailDescriptor(
+        MetricAvailability(string(d["availability"])), optional_string(d["reason"]),
+        optional_number(d["q1"]), optional_number(d["q3"]),
+        optional_number(d["lower_fence"]), optional_number(d["upper_fence"]),
+        string_tuple(d["lower_case_ids"]), string_tuple(d["upper_case_ids"]),
+        integer(d["valid_n"]), _method_identity(d["method"]),
+    )
+
+
+def _expression_discovery_entry(value: object) -> ExpressionDiscoveryEntry:
+    d = obj(value, "entity outcome tail")
+    return ExpressionDiscoveryEntry(
+        _entity(d["entity"]), _expression(d["outcome"]), _tail_descriptor(d["tail"]),
+    )
+
+
+def expression_discovery_identity(result: ExpressionDiscoveryResult) -> str:
+    payload = _jsonable(asdict(result))
+    assert isinstance(payload, dict)
+    payload.pop("sources")
+    return digest({"schema_version": EXPRESSION_DISCOVERY_SCHEMA_VERSION,
+                   "kind": "EXPRESSION_DISCOVERY_RESULT", **payload})
+
+
+def write_expression_discovery(result: ExpressionDiscoveryResult) -> bytes:
+    payload = _jsonable(asdict(result))
+    assert isinstance(payload, dict)
+    return canonical_bytes({"schema_version": EXPRESSION_DISCOVERY_SCHEMA_VERSION,
+                            "kind": "EXPRESSION_DISCOVERY_RESULT", **payload,
+                            "expression_discovery_hash": expression_discovery_identity(result)})
+
+
+def read_expression_discovery(
+    data: bytes, *, expected_hash: str | None = None,
+) -> ExpressionDiscoveryResult:
+    try:
+        d = decode(data)
+        _unsupported(d, EXPRESSION_DISCOVERY_SCHEMA_VERSION, "EXPRESSION_DISCOVERY_RESULT")
+        obj(d, "schema_version kind spec_id cohort_id project_id release expression_discovery "
+               "universe population entries workflows strategies sources warnings limitations "
+               "request_plan_max expression_discovery_hash")
+        result = ExpressionDiscoveryResult(
+            string(d["spec_id"]), string(d["cohort_id"]), string(d["project_id"]),
+            string(d["release"]), _expression_discovery_spec(d["expression_discovery"]),
+            _universe(d["universe"]), _frame(d["population"]),
+            tuple(_expression_discovery_entry(item) for item in seq(d["entries"])),
+            string_tuple(d["workflows"]), string_tuple(d["strategies"]),
+            tuple(_operational_source(item) for item in seq(d["sources"])),
+            string_tuple(d["warnings"]), string_tuple(d["limitations"]),
+            integer(d["request_plan_max"]),
+        )
+        _binding(expression_discovery_identity(result), d["expression_discovery_hash"], expected_hash)
+        return result
+    except ContractError:
+        raise
+    except (ValueError, TypeError, KeyError, OverflowError) as exc:
+        raise ContractError("invalid expression discovery result") from exc
+
+
+# ---------------------------------------------------------- CNV discovery codec
+
+
+def _cnv_discovery_spec(value: object) -> CnvDiscoverySpec:
+    d = obj(value, "selection_rule page_size max_pages_per_gene max_genes category_field")
+    return CnvDiscoverySpec(
+        string(d["selection_rule"]), integer(d["page_size"]),
+        integer(d["max_pages_per_gene"]), integer(d["max_genes"]),
+        string(d["category_field"]),
+    )
+
+
+def _cnv_category_summary(value: object) -> CnvCategorySummary:
+    d = obj(value, "raw_category category case_ids")
+    return CnvCategorySummary(
+        string(d["raw_category"]), CnvCategory(string(d["category"])),
+        string_tuple(d["case_ids"]),
+    )
+
+
+def _cnv_discovery_entry(value: object) -> CnvDiscoveryEntry:
+    d = obj(value, "entity outcome categories conflicting_case_ids callers "
+                   "missing_sample_occurrence_ids")
+    return CnvDiscoveryEntry(
+        _entity(d["entity"]), _cnv(d["outcome"]),
+        tuple(_cnv_category_summary(item) for item in seq(d["categories"])),
+        string_tuple(d["conflicting_case_ids"]), string_tuple(d["callers"]),
+        string_tuple(d["missing_sample_occurrence_ids"]),
+    )
+
+
+def cnv_discovery_identity(result: CnvDiscoveryResult) -> str:
+    payload = _jsonable(asdict(result))
+    assert isinstance(payload, dict)
+    payload.pop("sources")
+    return digest({"schema_version": CNV_DISCOVERY_SCHEMA_VERSION,
+                   "kind": "CNV_DISCOVERY_RESULT", **payload})
+
+
+def write_cnv_discovery(result: CnvDiscoveryResult) -> bytes:
+    payload = _jsonable(asdict(result))
+    assert isinstance(payload, dict)
+    return canonical_bytes({"schema_version": CNV_DISCOVERY_SCHEMA_VERSION,
+                            "kind": "CNV_DISCOVERY_RESULT", **payload,
+                            "cnv_discovery_hash": cnv_discovery_identity(result)})
+
+
+def read_cnv_discovery(data: bytes, *, expected_hash: str | None = None) -> CnvDiscoveryResult:
+    try:
+        d = decode(data)
+        _unsupported(d, CNV_DISCOVERY_SCHEMA_VERSION, "CNV_DISCOVERY_RESULT")
+        obj(d, "schema_version kind spec_id cohort_id project_id release mutation_discovery_hash "
+               "survivor_ids cnv_discovery population summary_method entries sources warnings "
+               "limitations request_plan_max cnv_discovery_hash")
+        result = CnvDiscoveryResult(
+            string(d["spec_id"]), string(d["cohort_id"]), string(d["project_id"]),
+            string(d["release"]), string(d["mutation_discovery_hash"]),
+            string_tuple(d["survivor_ids"]), _cnv_discovery_spec(d["cnv_discovery"]),
+            _frame(d["population"]), _method_identity(d["summary_method"]),
+            tuple(_cnv_discovery_entry(item) for item in seq(d["entries"])),
+            tuple(_operational_source(item) for item in seq(d["sources"])),
+            string_tuple(d["warnings"]), string_tuple(d["limitations"]),
+            integer(d["request_plan_max"]),
+        )
+        _binding(cnv_discovery_identity(result), d["cnv_discovery_hash"], expected_hash)
+        return result
+    except ContractError:
+        raise
+    except (ValueError, TypeError, KeyError, OverflowError) as exc:
+        raise ContractError("invalid CNV discovery result") from exc

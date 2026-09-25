@@ -168,6 +168,31 @@ class FilesProvenance:
     warnings: list[str]
 
 
+@dataclass(frozen=True)
+class CnvOccurrenceRecord:
+    occurrence_id: str
+    cnv_id: str
+    case_id: str
+    gene_id: str
+    raw_change: str
+    raw_category: str
+    source_file_id: str | None
+    caller: str | None
+    sample_id: str | None
+    copy_number: float | None
+
+
+@dataclass(frozen=True)
+class CnvOccurrencesPage:
+    occurrences: tuple[CnvOccurrenceRecord, ...]
+    total: int
+    count: int
+    size: int
+    offset: int
+    pages: int
+    warnings: list[str]
+
+
 def _load_json(body: bytes, meta: ResponseMeta) -> dict[str, Any]:
     if meta.completeness != "COMPLETE":
         raise ParserError("INCOMPLETE_RESPONSE", f"{meta.endpoint} completeness={meta.completeness}")
@@ -496,6 +521,110 @@ def parse_genes_page(body: bytes, meta: ResponseMeta, *, expected_offset: int,
                           f"genes: provider size {size} differs from requested {expected_size}")
     return GenesPage(genes=records, total=total, count=count, size=expected_size,
                      offset=offset, pages=values["pages"], warnings=_warnings(document))
+
+
+def parse_cnv_occurrences_page(
+    body: bytes,
+    meta: ResponseMeta,
+    *,
+    expected_project: str,
+    expected_gene: str,
+    expected_cases: set[str],
+    expected_offset: int,
+    expected_size: int,
+) -> CnvOccurrencesPage:
+    """Strict one-gene CNV occurrence page with exact filter membership."""
+    document = _load_json(body, meta)
+    occurrences: list[CnvOccurrenceRecord] = []
+    seen: set[str] = set()
+    previous_id: str | None = None
+    for hit in _hits(document, "cnv_occurrences"):
+        occurrence_id = _require(hit, "cnv_occurrence_id", (str,), "cnv_occurrences")
+        if occurrence_id in seen:
+            raise ParserError("DUPLICATE_ID", f"cnv_occurrences: duplicate {occurrence_id}")
+        if previous_id is not None and occurrence_id <= previous_id:
+            raise ParserError(
+                "UNEXPECTED_ORDER",
+                f"cnv_occurrences: {occurrence_id} does not ascend after {previous_id}",
+            )
+        previous_id = occurrence_id
+        seen.add(occurrence_id)
+        project_id = _require(hit, "case.project.project_id", (str,), "cnv_occurrences")
+        case_id = _require(hit, "case.case_id", (str,), "cnv_occurrences")
+        if project_id != expected_project:
+            raise ParserError("UNEXPECTED_IDENTIFIER",
+                              f"cnv_occurrences: unrequested project {project_id}")
+        if case_id not in expected_cases:
+            raise ParserError("UNEXPECTED_IDENTIFIER",
+                              f"cnv_occurrences: case {case_id} outside Stage 4 frame")
+        consequences = _require(hit, "cnv.consequence", (list,), "cnv_occurrences")
+        gene_ids: list[str] = []
+        for consequence in consequences:
+            if not isinstance(consequence, dict):
+                raise ParserError("MALFORMED_JSON",
+                                  "cnv_occurrences: consequence is not an object")
+            gene_id = _optional(consequence, "gene.gene_id", (str,), "cnv_occurrences")
+            if gene_id is not None:
+                gene_ids.append(gene_id)
+        if expected_gene not in gene_ids:
+            raise ParserError("UNEXPECTED_IDENTIFIER",
+                              f"cnv_occurrences: occurrence excludes requested gene {expected_gene}")
+        observations = _optional(hit, "case.observation", (list,), "cnv_occurrences") or []
+        if len(observations) > 1:
+            raise ParserError("AMBIGUOUS_OBSERVATION",
+                              f"cnv_occurrences: {occurrence_id} has multiple observations")
+        observation: dict[str, Any]
+        if observations:
+            if not isinstance(observations[0], dict):
+                raise ParserError("MALFORMED_JSON",
+                                  "cnv_occurrences: observation is not an object")
+            observation = observations[0]
+        else:
+            observation = {}
+        occurrences.append(CnvOccurrenceRecord(
+            occurrence_id=occurrence_id,
+            cnv_id=_require(hit, "cnv.cnv_id", (str,), "cnv_occurrences"),
+            case_id=case_id,
+            gene_id=expected_gene,
+            raw_change=_require(hit, "cnv.cnv_change", (str,), "cnv_occurrences"),
+            raw_category=_require(
+                hit, "cnv.cnv_change_5_category", (str,), "cnv_occurrences"),
+            source_file_id=_optional(observation, "src_file_id", (str,), "cnv_occurrences"),
+            caller=_optional(
+                observation, "variant_calling.variant_caller", (str,), "cnv_occurrences"),
+            sample_id=_optional(
+                observation, "sample.tumor_sample_uuid", (str,), "cnv_occurrences"),
+            copy_number=_finite(observation.get("copy_number"), "cnv_occurrences copy_number"),
+        ))
+    pagination = _require(document, "data.pagination", (dict,), "cnv_occurrences")
+    values: dict[str, int] = {}
+    for name in ("total", "count", "size", "from", "pages"):
+        value = pagination.get(name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ParserError("INVALID_PAGINATION",
+                              f"cnv_occurrences: pagination {name} must be non-negative integer")
+        values[name] = value
+    if values["size"] < 1:
+        raise ParserError("INVALID_PAGINATION", "cnv_occurrences: size must be positive")
+    if values["count"] != len(occurrences):
+        raise ParserError("INVALID_PAGINATION", "cnv_occurrences: count/records mismatch")
+    if values["from"] != expected_offset:
+        raise ParserError("INVALID_PAGINATION", "cnv_occurrences: offset mismatch")
+    if values["size"] != expected_size:
+        raise ParserError("INVALID_PAGINATION", "cnv_occurrences: size mismatch")
+    expected_pages = math.ceil(values["total"] / expected_size) if values["total"] else 0
+    if values["pages"] != expected_pages:
+        raise ParserError("INVALID_PAGINATION", "cnv_occurrences: pages/total mismatch")
+    if expected_offset + values["count"] > values["total"]:
+        raise ParserError("INVALID_PAGINATION", "cnv_occurrences: page exceeds total")
+    if expected_offset + values["count"] < values["total"] \
+            and values["count"] != expected_size:
+        raise ParserError("INVALID_PAGINATION",
+                          "cnv_occurrences: short page before reported total")
+    return CnvOccurrencesPage(
+        tuple(occurrences), values["total"], values["count"], values["size"],
+        values["from"], values["pages"], _warnings(document),
+    )
 
 
 def parse_top_mutated_genes(body: bytes, meta: ResponseMeta) -> list[DiscoveryHit]:
