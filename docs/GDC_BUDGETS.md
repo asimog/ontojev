@@ -17,7 +17,8 @@ workload or cost measurement.
 | GDC socket timeout | ≤30 s | operation timeout, not a whole-campaign deadline |
 | Cases/projects/files/discovery page size | 250 / 100 / 5 / 20 | endpoint builder validation |
 | Production cohort ceiling | 1,000 | `LUAD_RESEARCH_V1`; a general `AcquisitionSpec` must fit `page_size × 10` |
-| Production gene selection | discovery 20, count limit 100, candidate 10 | current provider-ranked slice, not a 1,000-gene universe |
+| Production gene selection | discovery 20, count limit 100, candidate 10 | provider-ranked slice: labelled baseline/comparator path, unchanged |
+| Stage 4 systematic discovery | 10 `/genes` pages ×100 (gene_id asc, protein_coding) + 1 coverage + 10 count batches ×100 + 1 comparator | fixed `LUAD_DISCOVERY_V1` contract; 27 attempts / 2,817,301 bytes measured live (2026-09-25); no cap enlarged |
 | Wide states per invocation | `Settings.jev_max_states` ≤1,000 | capped prefix in `run_wide_evaluation`; not an underlying HTTP-attempt ledger |
 | Promotion slots | 3 | ranking and operator selection share the cap |
 | Follow-ups per candidate | 3 | `deep.FOLLOWUP_LIMIT`; the current registry/revision cap is tighter |

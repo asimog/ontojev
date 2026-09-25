@@ -17,7 +17,13 @@ contract verification only. SSM/SSM-occurrence, CNV/CNV-occurrence, segment CNV,
 scRNA endpoints are **not** allowlisted or implemented. `research/acquisition.py` separates
 existing cohort, mutation-count and expression calls from selection policy; builders, fields,
 parsers, request order, pagination, batch semantics and caps are unchanged. No new endpoint was
-admitted by the Stage 3 cutover.
+admitted by the Stage 3 cutover. Stage 4 reuses the same allowlist for systematic discovery:
+`/genes` gains a **fixed** universe-enumeration builder (`genes_universe_request`: protein_coding
+filter, `gene_id:asc`, offset/size only, page ≤10 per `genes:universe` query id, 100/page) with a
+strict page parser; `/analysis/top_cases_counts_by_genes` gains deterministic ≤100-gene batch
+requests (project SSM coverage acquired once). Live contract reverified 2026-09-25: pagination
+`{count,total,size,from,pages}`, protein-coding total 19,843, aggregation shape and explicit-zero
+vs absent-bucket behavior match the retained captures.
 
 ## Investigation and reproducibility
 

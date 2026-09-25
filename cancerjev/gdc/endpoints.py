@@ -16,10 +16,14 @@ from cancerjev.domain.events import canonical_json
 
 MAX_CASE_IDS = 250
 MAX_GENE_IDS = 100
+MAX_GENE_PAGE = 100
 MAX_CASES_PAGE = 250
 MAX_FILES_PAGE = 5
 MAX_PROJECTS_PAGE = 100
 MAX_DISCOVERY_HITS = 20
+
+GENES_UNIVERSE_BIOTYPE = "protein_coding"
+GENES_UNIVERSE_SORT = "gene_id:asc"
 
 GENE_CASE_COUNTS_FIELDS_NOTE = "endpoint rejects fields/format parameters"
 
@@ -228,6 +232,32 @@ def genes_request(gene_ids: list[str]) -> GDCRequest:
             "fields": "gene_id,symbol,name,biotype,is_cancer_gene_census",
         },
         logical_query_id="genes:identity",
+    )
+
+
+def genes_universe_request(offset: int, size: int) -> GDCRequest:
+    """Fixed bounded universe enumeration; not a caller-controlled query builder.
+
+    The systematic-discovery contract is deterministic: protein_coding genes,
+    gene_id ascending, one page at ``offset``. Only ``offset`` and ``size`` vary
+    and both are validated; no arbitrary filter or field is expressible.
+    """
+    _validate_bounded_int(offset, minimum=0, maximum=None, label="genes universe offset")
+    _validate_bounded_int(size, minimum=1, maximum=MAX_GENE_PAGE, label="genes universe page size")
+    return _request(
+        resolve_endpoint("GET", "/genes"),
+        {
+            "size": size,
+            "from": offset,
+            "sort": GENES_UNIVERSE_SORT,
+            "filters": _filter_json({
+                "op": "in",
+                "content": {"field": "biotype", "value": [GENES_UNIVERSE_BIOTYPE]},
+            }),
+            "fields": "gene_id,symbol,biotype",
+        },
+        logical_query_id="genes:universe",
+        page=(offset // size) + 1,
     )
 
 

@@ -39,6 +39,7 @@ All are descriptive; none computes inferential p/q values or establishes biologi
 | Method | Contract and limitation |
 |---|---|
 | `MUTATION_AFFECTED_CASE_COUNT_V1` | Gene/project provider unique-case aggregation, unit cases. A missing bucket is `NOT_OBSERVED`, not zero. Provider deduplication is not locally rederived from occurrences in the current runtime. |
+| `MUTATION_LUAD_AFFECTED_COUNT_DESC_V1` | Stage 4 systematic reduction over the fixed indexed prefix: eligibility is a complete observed affected-case count; ordering count descending with gene_id ascending tie break; at most `max_survivors` retained; incomplete/absent observations are never eligible zeroes; every requested gene carries exactly one disposition. |
 | `PROJECT_SSM_COVERAGE_V1` | Retains project total and `case_with_ssm` separately; never treats the latter as a callable-negative denominator. Present zero is observed zero; absent project is `NOT_OBSERVED`. |
 | `EXPRESSION_LOG2_SUMMARY_V1` | Returned case-labelled UQFPKM, `log2(x+1)`, median/min/max for at least one finite value, sample SD for at least two; otherwise explicit insufficiency. Missing columns are counted and not imputed. |
 | `EXPRESSION_PROVIDER_SUMMARY_V1` | Retains provider median/SD as separate corroborating context; estimator convention is UNVERIFIED. Multi-batch summaries are not combined into cohort statistics. |

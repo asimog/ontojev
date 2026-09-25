@@ -35,7 +35,7 @@ from cancerjev.gdc.parsers import (
     parse_gene_selection,
     parse_mutated_cases_count,
 )
-from cancerjev.gdc.transport import GDCResponse
+from cancerjev.gdc.transport import GDCResponse, TransportError, TransportErrorCode
 from cancerjev.research.specs import AcquisitionSpec
 from cancerjev.science.methods import ProjectFrame
 
@@ -76,6 +76,34 @@ class MutationAcquisition:
     counts: GeneCaseCounts
     coverage: ProjectCoverage
     sources: tuple[OperationalSource, ...]
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MutationCountBatch:
+    """One validated ≤100-gene indexed count batch with its own provenance."""
+
+    batch_index: int
+    gene_ids: tuple[str, ...]
+    counts: GeneCaseCounts
+    source: OperationalSource
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BatchedMutationCounts:
+    """Systematic-discovery mutation counts: disjoint batches plus one coverage record.
+
+    ``budget_exhausted_batch`` names the first batch that was never acquired
+    because the run budget was exhausted; every batch at or after it is
+    un-acquired and its genes must be recorded as unavailable.
+    """
+
+    batches: tuple[MutationCountBatch, ...]
+    coverage: ProjectCoverage
+    coverage_source: OperationalSource
+    requested_batch_count: int
+    budget_exhausted_batch: int | None
     warnings: tuple[str, ...]
 
 
@@ -126,17 +154,64 @@ def _sum_if_complete(values: list[int | None]) -> int | None:
     return sum(value for value in values if value is not None) if all(value is not None for value in values) else None
 
 
+def _acquire_count_batch(transport: AcquisitionTransport, gene_ids: list[str],
+                         release: str | None) -> tuple[GeneCaseCounts, OperationalSource]:
+    response = transport.request(gene_case_counts_request(gene_ids))
+    counts = parse_gene_case_counts(response.body, response_meta(response, release))
+    return counts, response_operational_source(response, release=release)
+
+
+def _acquire_coverage(transport: AcquisitionTransport,
+                      release: str | None) -> tuple[ProjectCoverage, OperationalSource]:
+    response = transport.request(mutated_cases_count_request())
+    coverage = parse_mutated_cases_count(response.body, response_meta(response, release))
+    return coverage, response_operational_source(response, release=release)
+
+
 def acquire_mutation_counts(transport: AcquisitionTransport, gene_ids: list[str],
                             release: str | None) -> MutationAcquisition:
     """Existing indexed count contracts, independent of candidate selection policy."""
-    response = transport.request(gene_case_counts_request(gene_ids))
-    counts = parse_gene_case_counts(response.body, response_meta(response, release))
-    count_source = response_operational_source(response, release=release)
-    response = transport.request(mutated_cases_count_request())
-    coverage = parse_mutated_cases_count(response.body, response_meta(response, release))
-    coverage_source = response_operational_source(response, release=release)
+    counts, count_source = _acquire_count_batch(transport, gene_ids, release)
+    coverage, coverage_source = _acquire_coverage(transport, release)
     return MutationAcquisition(counts, coverage, (count_source, coverage_source),
                                tuple(counts.warnings + coverage.warnings))
+
+
+def acquire_batched_mutation_counts(transport: AcquisitionTransport, universe_ids: list[str],
+                                    batch_size: int, release: str | None) -> BatchedMutationCounts:
+    """Indexed mutation counts for a systematic universe in deterministic ≤100-gene batches.
+
+    Batches preserve universe order and are disjoint; each response is validated
+    independently before any merge. Project SSM coverage is invariant for the
+    scope and is acquired exactly once. Only a run-budget exhaustion is absorbed
+    (remaining batches are recorded as un-acquired); any other transport or
+    parser failure propagates and aborts the stage fail-closed.
+    """
+    coverage, coverage_source = _acquire_coverage(transport, release)
+    warnings: list[str] = list(coverage.warnings)
+    batches: list[MutationCountBatch] = []
+    budget_exhausted_batch: int | None = None
+    requested_batch_count = (len(universe_ids) + batch_size - 1) // batch_size
+    for index in range(0, len(universe_ids), batch_size):
+        batch_ids = list(universe_ids[index:index + batch_size])
+        try:
+            counts, source = _acquire_count_batch(transport, batch_ids, release)
+        except TransportError as exc:
+            if exc.code in (TransportErrorCode.REQUEST_BUDGET_EXHAUSTED,
+                            TransportErrorCode.BYTE_BUDGET_EXHAUSTED):
+                budget_exhausted_batch = index // batch_size
+                warnings.append(
+                    f"mutation count budget exhausted before batch {budget_exhausted_batch}: {exc.code}"
+                )
+                break
+            raise
+        batches.append(MutationCountBatch(
+            batch_index=index // batch_size, gene_ids=tuple(batch_ids), counts=counts,
+            source=source, warnings=tuple(counts.warnings),
+        ))
+        warnings.extend(counts.warnings)
+    return BatchedMutationCounts(tuple(batches), coverage, coverage_source, requested_batch_count,
+                                 budget_exhausted_batch, tuple(warnings))
 
 
 def _merge_expression_availability(

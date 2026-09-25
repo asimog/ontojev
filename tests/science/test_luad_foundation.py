@@ -168,13 +168,13 @@ def test_luad_spec_is_the_single_production_spec():
     assert "_score is provider selection metadata" in spec.gene_selection_rule()
 
 
-def test_spec_boundary_reader_is_strict_schema_3():
+def test_spec_boundary_reader_is_strict_schema_4():
     payload = LUAD_RESEARCH_V1.as_dict()
-    assert payload["schema_version"] == RESEARCH_SPEC_SCHEMA_VERSION == 3
+    assert payload["schema_version"] == RESEARCH_SPEC_SCHEMA_VERSION == 4
     assert research_spec_from_dict(json.loads(json.dumps(payload))) == LUAD_RESEARCH_V1
 
     legacy = dict(payload)
-    legacy["schema_version"] = 2
+    legacy["schema_version"] = 3
     with pytest.raises(ContractError):
         research_spec_from_dict(legacy)
     legacy = dict(payload)

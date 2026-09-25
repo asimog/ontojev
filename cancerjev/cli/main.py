@@ -4,12 +4,16 @@ import argparse
 import json
 import os
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 from cancerjev.cli.console import render_event, render_json_event
 from cancerjev.config import Settings, load_local_env
+from cancerjev.domain.measurements import ContractError
 from cancerjev.gdc.capture import CaptureSink, run_contract_probe
-from cancerjev.gdc.transport import BudgetCaps, GDCTransport, RunBudget
+from cancerjev.gdc.parsers import ParserError
+from cancerjev.gdc.transport import BudgetCaps, GDCTransport, RunBudget, TransportError
+from cancerjev.research.acquisition import LiveRunError
 from cancerjev.research.live import LiveOrchestrator
 from cancerjev.research.orchestrator import DemoOrchestrator
 from cancerjev.storage.artifacts import ArtifactStore
@@ -49,6 +53,12 @@ def parser() -> argparse.ArgumentParser:
                                   "requires --deep-candidate --deep-followup")
     probe = commands.add_parser("probe", help="bounded anonymous GDC contract capture")
     probe.add_argument("--capture-dir", default=None)
+    discover = commands.add_parser(
+        "discover",
+        help="bounded Stage 4 systematic mutation discovery over the fixed indexed gene universe",
+    )
+    discover.add_argument("--live", action="store_true",
+                          help="real bounded open-access GDC systematic discovery")
     show = commands.add_parser("show")
     show.add_argument("run_id")
     show.add_argument("--events", action="store_true")
@@ -101,6 +111,51 @@ def _probe(settings: Settings, repository: Repository, artifacts: ArtifactStore,
     print(f"[PROBE] captures written to {directory} ({summary['captures']} requests, {summary['bytes']} bytes)", flush=True)
 
 
+def _discover(settings: Settings, repository: Repository, artifacts: ArtifactStore) -> None:
+    from cancerjev.research.discovery import run_mutation_discovery
+    from cancerjev.research.specs import LUAD_RESEARCH_V1
+
+    spec = LUAD_RESEARCH_V1
+    caps = BudgetCaps(
+        max_requests=settings.gdc_max_requests,
+        max_bytes=settings.gdc_max_bytes,
+        per_response_bytes=settings.gdc_per_response_bytes,
+        timeout_seconds=settings.gdc_timeout_seconds,
+    )
+    run_id = repository.create_run(
+        "discovery-worker", mode="LIVE", fixture_id=None, fixture_version=None,
+        scope={"purpose": "SYSTEMATIC_DISCOVERY", "spec_id": spec.spec_id,
+               "domain": spec.cohort.domain, "cohort": spec.cohort.cohort_id,
+               "project_id": spec.cohort.project_id, "discovery": asdict(spec.discovery),
+               "selection_rule": spec.discovery_selection_rule()},
+    )
+
+    def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+        event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
+                                        message=message, **kwargs)
+        render_event(event)
+
+    emit("RUN_STARTED", "run:started", "Bounded systematic discovery run started.",
+         data={"mode": "LIVE", "purpose": "SYSTEMATIC_DISCOVERY", "research_spec": spec.as_dict()})
+    budget = RunBudget(caps=caps)
+    transport = GDCTransport(repository, artifacts, budget, run_id, emit,
+                             cache_enabled=settings.gdc_cache_enabled)
+    try:
+        result = run_mutation_discovery(run_id, transport, repository, artifacts, emit, spec)
+    except (TransportError, ParserError, LiveRunError, ContractError) as exc:
+        code = getattr(exc, "code", type(exc).__name__)
+        emit("RUN_FAILED", "run:failed", f"Systematic discovery failed: {code}.",
+             level="error", data={"status": "FAILED", "reason_code": str(code), "detail": str(exc)})
+        return
+    totals = repository.gdc_run_totals(run_id)
+    emit("RUN_COMPLETED", "run:completed",
+         f"Systematic discovery completed with {len(result.survivor_ids)} survivor(s).",
+         data={"status": "COMPLETED", "reason_code": "DISCOVERY_COMPLETE",
+               "coverage": "COMPLETE_FOR_SCOPE", "survivor_ids": list(result.survivor_ids),
+               "gdc_attempts": totals["attempts"], "gdc_bytes": totals["bytes"],
+               "gdc_cache_hits": totals["cache_hits"]})
+
+
 def main(argv: list[str] | None = None) -> None:
     load_local_env()
     args = parser().parse_args(argv)
@@ -129,6 +184,8 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(f"Unknown action id: {deep_action}. Registered: {', '.join(sorted(ACTION_REGISTRY))}")
     if args.command in {"run", "worker"} and not live and getattr(args, "fixture", None) != "demo":
         raise SystemExit("Choose --fixture demo for the offline demonstration or --live for a real open-access GDC sweep.")
+    if args.command == "discover" and not live:
+        raise SystemExit("discover requires --live (Stage 4 systematic discovery is a real bounded open-access GDC task).")
     settings = Settings.from_env()
     repository, artifacts = _services(settings)
     if args.command == "show":
@@ -168,6 +225,14 @@ def main(argv: list[str] | None = None) -> None:
             with ResearchOwnership(settings.lock_path):
                 repository.recover_interrupted()
                 _probe(settings, repository, artifacts, args.capture_dir)
+        except OwnershipError as exc:
+            raise SystemExit(str(exc)) from exc
+        return
+    if args.command == "discover":
+        try:
+            with ResearchOwnership(settings.lock_path):
+                repository.recover_interrupted()
+                _discover(settings, repository, artifacts)
         except OwnershipError as exc:
             raise SystemExit(str(exc)) from exc
         return

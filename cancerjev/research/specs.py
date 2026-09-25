@@ -1,14 +1,17 @@
 """Typed, reproducible scientific scope for live research runs.
 
 One canonical ``ResearchSpec`` owns the reproducible configuration of a research
-run: the explicit single cohort, bounded acquisition sizes, the implemented
-composition (mutation counts plus the local expression summary), the registered
-deterministic actions, the policy identities and the scientific limits.
+run: the explicit single cohort, bounded acquisition sizes, the systematic Stage 4
+discovery configuration (bounded indexed gene-universe enumeration and mutation
+batching), the implemented composition (mutation counts plus the local expression
+summary), the registered deterministic actions, the policy identities and the
+scientific limits.
 
-Unsupported runtime configurations are not representable: indexed genome-wide
-discovery, an independent expression arm and CNV acquisition have no field in
-schema 3 and are rejected explicitly here and by the strict reader. JSON exists
-only as a boundary representation.
+Unsupported runtime configurations are not representable: an independent
+expression arm and CNV acquisition have no field in schema 4 and are rejected
+explicitly here and by the strict reader. The systematic discovery configuration
+is a fixed deterministic contract, not a caller-controlled query builder. JSON
+exists only as a boundary representation.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from cancerjev.domain._json import integer, obj, string, string_tuple
+from cancerjev.domain.discovery import DISCOVERY_UNIVERSE_METHOD, DiscoverySpec
 from cancerjev.domain.measurements import count, require, strings, text
 from cancerjev.gdc.endpoints import (
     MAX_CASE_IDS,
@@ -26,10 +30,17 @@ from cancerjev.gdc.endpoints import (
     MAX_GENE_IDS,
 )
 
-RESEARCH_SPEC_SCHEMA_VERSION = 3
+RESEARCH_SPEC_SCHEMA_VERSION = 4
 IMPLEMENTED_ACTIONS = frozenset({"CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1"})
 IMPLEMENTED_WIDE_POLICY = "wide-policy-v2"
 IMPLEMENTED_DEEP_POLICY = "deep-policy-v2"
+UNIVERSE_PAGE_CAP = 10
+
+__all__ = [
+    "AcquisitionSpec", "CohortSpec", "DiscoverySpec", "LUAD_RESEARCH_V1", "LUAD_DISCOVERY_V1",
+    "RESEARCH_SPEC_SCHEMA_VERSION", "ResearchSpec", "ScientificLimits", "UNIVERSE_PAGE_CAP",
+    "research_spec_from_dict",
+]
 
 
 @dataclass(frozen=True)
@@ -97,6 +108,7 @@ class ResearchSpec:
     spec_id: str
     intent: str
     cohort: CohortSpec
+    discovery: DiscoverySpec
     acquisition: AcquisitionSpec
     limits: ScientificLimits
     allowed_actions: tuple[str, ...]
@@ -107,6 +119,7 @@ class ResearchSpec:
         text(self.spec_id, "spec_id")
         text(self.intent, "research intent")
         require(isinstance(self.cohort, CohortSpec), "invalid cohort spec")
+        require(isinstance(self.discovery, DiscoverySpec), "invalid discovery spec")
         require(isinstance(self.acquisition, AcquisitionSpec), "invalid acquisition spec")
         require(isinstance(self.limits, ScientificLimits), "invalid scientific limits")
         strings(self.allowed_actions, "allowed actions")
@@ -137,20 +150,34 @@ class ResearchSpec:
             "_score is provider selection metadata and is never a mutation count or effect size"
         )
 
+    def discovery_selection_rule(self) -> str:
+        return (
+            f"systematic discovery: the release-bound first {self.discovery.universe_limit} "
+            f"{self.discovery.biotype} Ensembl gene IDs by ascending gene_id from offset "
+            f"{self.discovery.offset} ({DISCOVERY_UNIVERSE_METHOD}); this is the first "
+            "deterministic prefix of the indexed protein-coding universe, not the entire genome "
+            "and not an unbiased random sample; the provider top-mutated ranking is a separate "
+            "labelled comparator and never selects systematic survivors"
+        )
+
 
 def research_spec_from_dict(value: object) -> ResearchSpec:
-    """Strict schema-3 boundary. Never interpret a legacy spec as the current one."""
-    d = obj(value, "schema_version kind spec_id intent cohort acquisition limits allowed_actions "
-                   "wide_policy deep_policy")
+    """Strict schema-4 boundary. Never interpret a legacy spec as the current one."""
+    d = obj(value, "schema_version kind spec_id intent cohort discovery acquisition limits "
+                   "allowed_actions wide_policy deep_policy")
     require(integer(d["schema_version"]) == RESEARCH_SPEC_SCHEMA_VERSION
             and d["kind"] == "RESEARCH_SPEC", "unsupported research spec version/kind")
     c = obj(d["cohort"], "cohort_id domain project_id")
+    disc = obj(d["discovery"], "universe_method biotype order offset universe_limit mutation_batch_size")
     a = obj(d["acquisition"], "case_page_size case_batch_size max_cohort_cases discovery_gene_limit "
                               "count_gene_limit candidate_gene_limit expression_file_sample_size")
     limits = obj(d["limits"], "max_survivors max_promotions max_revisions")
     return ResearchSpec(
         string(d["spec_id"]), string(d["intent"]),
         CohortSpec(string(c["cohort_id"]), string(c["domain"]), string(c["project_id"])),
+        DiscoverySpec(string(disc["universe_method"]), string(disc["biotype"]), string(disc["order"]),
+                      integer(disc["offset"]), integer(disc["universe_limit"]),
+                      integer(disc["mutation_batch_size"])),
         AcquisitionSpec(integer(a["case_page_size"]), integer(a["case_batch_size"]),
                         integer(a["max_cohort_cases"]), integer(a["discovery_gene_limit"]),
                         integer(a["count_gene_limit"]), integer(a["candidate_gene_limit"]),
@@ -161,17 +188,28 @@ def research_spec_from_dict(value: object) -> ResearchSpec:
     )
 
 
+LUAD_DISCOVERY_V1 = DiscoverySpec(
+    universe_method=DISCOVERY_UNIVERSE_METHOD,
+    biotype="protein_coding",
+    order="GENE_ID_ASC",
+    offset=0,
+    universe_limit=1000,
+    mutation_batch_size=100,
+)
+
 LUAD_RESEARCH_V1 = ResearchSpec(
     spec_id="LUAD_RESEARCH_V1",
     intent=(
         "Bounded, deterministic-first examination of one explicit lung-adenocarcinoma cohort for a "
-        "provider-ranked gene set, with narrow Jev judgment and no cross-cohort pooling."
+        "provider-ranked gene set, with narrow Jev judgment and no cross-cohort pooling; Stage 4 "
+        "systematic discovery runs over the fixed indexed protein-coding prefix."
     ),
     cohort=CohortSpec(
         cohort_id="TCGA-LUAD",
         domain="lung cancer",
         project_id="TCGA-LUAD",
     ),
+    discovery=LUAD_DISCOVERY_V1,
     acquisition=AcquisitionSpec(
         case_page_size=250,
         case_batch_size=250,

@@ -18,6 +18,13 @@ from cancerjev.domain._json import (
     string,
     string_tuple,
 )
+from cancerjev.domain.discovery import (
+    DiscoveryComparator,
+    DiscoveryDisposition,
+    DiscoverySpec,
+    MutationDiscoveryEntry,
+    MutationDiscoveryResult,
+)
 from cancerjev.domain.evidence import (
     ActionRef,
     BaselineObservation,
@@ -85,6 +92,7 @@ from cancerjev.domain.scientific import (
 
 STATE_SCHEMA_VERSION = 4
 EVIDENCE_SCHEMA_VERSION = 4
+DISCOVERY_SCHEMA_VERSION = 1
 
 
 # --------------------------------------------------------------- shared readers
@@ -108,6 +116,32 @@ def _universe(value: object) -> TestedUniverse:
     return TestedUniverse(string_tuple(d["ordered_ids"]), string(d["source"]), string(d["release"]),
                           string(d["filter_description"]), string(d["order"]), integer(d["offset"]),
                           integer(d["requested_limit"]), integer(d["reported_total"]), boolean(d["complete"]))
+
+
+def _discovery_spec(value: object) -> DiscoverySpec:
+    d = obj(value, "universe_method biotype order offset universe_limit mutation_batch_size")
+    return DiscoverySpec(string(d["universe_method"]), string(d["biotype"]), string(d["order"]),
+                         integer(d["offset"]), integer(d["universe_limit"]),
+                         integer(d["mutation_batch_size"]))
+
+
+def _disposition(value: object) -> DiscoveryDisposition:
+    return DiscoveryDisposition(string(value))
+
+
+def _comparator(value: object) -> DiscoveryComparator | None:
+    if value is None:
+        return None
+    d = obj(value, "rule provider_gene_ids survivor_overlap")
+    return DiscoveryComparator(string(d["rule"]), string_tuple(d["provider_gene_ids"]),
+                               string_tuple(d["survivor_overlap"]))
+
+
+def _entry(value: object) -> MutationDiscoveryEntry:
+    d = obj(value, "entity outcome disposition reason rank")
+    return MutationDiscoveryEntry(_entity(d["entity"]), _mutation(d["outcome"]),
+                                  _disposition(d["disposition"]), string(d["reason"]),
+                                  None if d["rank"] is None else integer(d["rank"]))
 
 
 def _source(value: object) -> ScientificSource:
@@ -584,3 +618,44 @@ def read_evidence(data: bytes, *, expected_hash: str | None = None) -> EvidenceS
         raise
     except (ValueError, TypeError, KeyError, OverflowError) as exc:
         raise ContractError("invalid evidence state") from exc
+
+
+# -------------------------------------------------------------- discovery codec
+
+
+def discovery_identity(result: MutationDiscoveryResult) -> str:
+    payload = _jsonable(asdict(result))
+    assert isinstance(payload, dict)
+    # Operational attempt/cache/artifact links never contribute to identity.
+    payload.pop("sources")
+    return digest({"schema_version": DISCOVERY_SCHEMA_VERSION, "kind": "MUTATION_DISCOVERY_RESULT",
+                   **payload})
+
+
+def write_discovery(result: MutationDiscoveryResult) -> bytes:
+    payload = _jsonable(asdict(result))
+    assert isinstance(payload, dict)
+    return canonical_bytes({"schema_version": DISCOVERY_SCHEMA_VERSION,
+                            "kind": "MUTATION_DISCOVERY_RESULT", **payload,
+                            "discovery_hash": discovery_identity(result)})
+
+
+def read_discovery(data: bytes, *, expected_hash: str | None = None) -> MutationDiscoveryResult:
+    try:
+        d = decode(data)
+        _unsupported(d, DISCOVERY_SCHEMA_VERSION, "MUTATION_DISCOVERY_RESULT")
+        obj(d, "schema_version kind spec_id cohort_id project_id release discovery universe reducer "
+               "entries survivor_ids sources warnings limitations comparator discovery_hash")
+        result = MutationDiscoveryResult(
+            string(d["spec_id"]), string(d["cohort_id"]), string(d["project_id"]), string(d["release"]),
+            _discovery_spec(d["discovery"]), _universe(d["universe"]), _method_identity(d["reducer"]),
+            tuple(_entry(item) for item in seq(d["entries"])), string_tuple(d["survivor_ids"]),
+            tuple(_operational_source(item) for item in seq(d["sources"])),
+            string_tuple(d["warnings"]), string_tuple(d["limitations"]), _comparator(d["comparator"]),
+        )
+        _binding(discovery_identity(result), d["discovery_hash"], expected_hash)
+        return result
+    except ContractError:
+        raise
+    except (ValueError, TypeError, KeyError, OverflowError) as exc:
+        raise ContractError("invalid mutation discovery result") from exc

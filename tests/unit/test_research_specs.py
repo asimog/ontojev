@@ -13,10 +13,24 @@ from cancerjev.research.specs import (
     RESEARCH_SPEC_SCHEMA_VERSION,
     AcquisitionSpec,
     CohortSpec,
+    DiscoverySpec,
     ResearchSpec,
     ScientificLimits,
     research_spec_from_dict,
 )
+
+
+def _discovery(**overrides) -> DiscoverySpec:
+    values = {
+        "universe_method": "GENE_ID_ASC_INDEXED_PREFIX_V1",
+        "biotype": "protein_coding",
+        "order": "GENE_ID_ASC",
+        "offset": 0,
+        "universe_limit": 1000,
+        "mutation_batch_size": 100,
+    }
+    values.update(overrides)
+    return DiscoverySpec(**values)
 
 
 def _acquisition(**overrides) -> AcquisitionSpec:
@@ -39,6 +53,7 @@ def _spec(**overrides) -> ResearchSpec:
         "intent": "Bounded test intent.",
         "cohort": CohortSpec(cohort_id="TEST-COHORT", domain="test domain",
                              project_id="TEST-PROJECT"),
+        "discovery": _discovery(),
         "acquisition": _acquisition(),
         "limits": ScientificLimits(),
         "allowed_actions": ("CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1"),
@@ -68,13 +83,33 @@ def test_acquisition_spec_rejects_values_above_admitted_endpoint_bounds(override
         _acquisition(**overrides)
 
 
-def test_luad_spec_round_trips_through_schema_three():
+@pytest.mark.parametrize("overrides,message", [
+    ({"universe_method": "GENE_ID_ASC_INDEXED_PREFIX_V2"}, "universe_method must be"),
+    ({"biotype": "all"}, "biotype must be protein_coding"),
+    ({"order": "SYMBOL_ASC"}, "order must be GENE_ID_ASC"),
+    ({"offset": 100}, "offset must be 0"),
+    ({"universe_limit": 1001}, "universe_limit must be 1..1000"),
+    ({"mutation_batch_size": 101}, "mutation_batch_size must be 1..100"),
+    ({"universe_limit": 1001, "mutation_batch_size": 50}, "universe_limit must be 1..1000"),
+    ({"universe_limit": 600, "mutation_batch_size": 50},
+     "universe_limit must fit within 10 mutation pages"),
+])
+def test_discovery_spec_rejects_non_fixed_contracts(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        _discovery(**overrides)
+
+
+def test_luad_spec_round_trips_through_schema_four():
     emitted = LUAD_RESEARCH_V1.as_dict()
-    assert emitted["schema_version"] == RESEARCH_SPEC_SCHEMA_VERSION == 3
+    assert emitted["schema_version"] == RESEARCH_SPEC_SCHEMA_VERSION == 4
     assert emitted["kind"] == "RESEARCH_SPEC"
     assert set(emitted) == {
-        "schema_version", "kind", "spec_id", "intent", "cohort", "acquisition", "limits",
-        "allowed_actions", "wide_policy", "deep_policy",
+        "schema_version", "kind", "spec_id", "intent", "cohort", "discovery", "acquisition",
+        "limits", "allowed_actions", "wide_policy", "deep_policy",
+    }
+    assert emitted["discovery"] == {
+        "universe_method": "GENE_ID_ASC_INDEXED_PREFIX_V1", "biotype": "protein_coding",
+        "order": "GENE_ID_ASC", "offset": 0, "universe_limit": 1000, "mutation_batch_size": 100,
     }
     payload = json.loads(json.dumps(emitted))
     restored = research_spec_from_dict(payload)
@@ -87,9 +122,9 @@ def test_reader_rejects_legacy_unknown_and_extra_fields():
     payload = LUAD_RESEARCH_V1.as_dict()
 
     for legacy in (
+        {**payload, "schema_version": 3},
+        {**payload, "schema_version": 5},
         {**payload, "schema_version": 2},
-        {**payload, "schema_version": 4},
-        {**payload, "schema_version": 1},
     ):
         with pytest.raises(ValueError, match="unsupported research spec version/kind"):
             research_spec_from_dict(legacy)
@@ -101,6 +136,10 @@ def test_reader_rejects_legacy_unknown_and_extra_fields():
         research_spec_from_dict({**payload, "mutation_lane": {"enabled": True}})
     with pytest.raises(ValueError, match="unexpected/missing fields"):
         research_spec_from_dict({k: v for k, v in payload.items() if k != "wide_policy"})
+    with pytest.raises(ValueError, match="unexpected/missing fields"):
+        research_spec_from_dict({k: v for k, v in payload.items() if k != "discovery"})
+    with pytest.raises(ValueError, match="unexpected/missing fields"):
+        research_spec_from_dict({**payload, "discovery": {**payload["discovery"], "cnv": True}})
     with pytest.raises(ValueError, match="unexpected/missing fields"):
         research_spec_from_dict({**payload, "acquisition": {**payload["acquisition"], "cnv": True}})
     with pytest.raises(ValueError, match="unexpected/missing fields"):
@@ -122,6 +161,8 @@ def test_spec_rejects_unsupported_composition():
         _spec(limits=ScientificLimits(max_survivors=9))
     with pytest.raises(ValueError, match="invalid cohort spec"):
         _spec(cohort={"cohort_id": "TEST-COHORT"})
+    with pytest.raises(ValueError, match="invalid discovery spec"):
+        _spec(discovery={"universe_method": "x"})
     with pytest.raises(ValueError, match="invalid acquisition spec"):
         _spec(acquisition={"case_page_size": 1})
     with pytest.raises(ValueError, match="invalid scientific limits"):
@@ -164,10 +205,17 @@ def test_selection_rules_name_the_explicit_cohort_and_bounded_provider_ranking()
     assert "provider selection metadata" in gene_rule
     assert "never a mutation count" in gene_rule
 
+    discovery_rule = LUAD_RESEARCH_V1.discovery_selection_rule()
+    assert "GENE_ID_ASC_INDEXED_PREFIX_V1" in discovery_rule
+    assert "protein_coding" in discovery_rule
+    assert "1000" in discovery_rule
+    assert "not the entire genome" in discovery_rule
+    assert "never selects systematic survivors" in discovery_rule
 
-def test_no_indexed_universe_or_cnv_composition_is_representable():
+
+def test_no_lane_composition_or_cnv_is_representable():
     for name in ("ResearchSpecV2", "GeneUniverseSpec", "MutationLaneSpec",
-                 "ExpressionLaneSpec", "CnvLaneSpec"):
+                 "ExpressionLaneSpec", "CnvLaneSpec", "CandidateUniverse"):
         assert not hasattr(specs_module, name)
     for field in ("gene_universe", "indexed_universe", "mutation_lane", "expression_lane",
                   "cnv_lane", "cnv"):

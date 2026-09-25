@@ -15,12 +15,20 @@ instructions override implementation steps embedded in reference documents.
   (deterministic template by default; injected OpenRouter adapter on an explicitly authorized
   path) → Jev hypothesis critique (`jev-hypothesis-projection-v2`, question set `hypothesis-v2`)
   → dossier (schema 2).
+- Systematic pre-Wide funnel (Stage 4, IMPLEMENTED): `research/discovery.py` +
+  `python -m cancerjev discover --live` — fixed release-bound 1,000-gene protein-coding
+  gene-id-asc `/genes` prefix (≤10 strict pages), ≤100-gene indexed mutation-count batches with
+  coverage acquired once, one typed outcome/disposition per requested gene, deterministic
+  `MUTATION_LUAD_AFFECTED_COUNT_DESC_V1` reduction (≤10 survivors), one immutable persisted
+  `MutationDiscoveryResult` (schema 1). No provider rank, Jev, LLM, census status or hidden
+  biological knowledge enters the reduction; the provider top-mutated ranking is a labelled
+  comparator; Stage 4 terminates at the survivor result.
 - Python domain names are unsuffixed: `StatisticalState`, `EvidenceState`, `ResearchSpec`,
   `Candidate`, `HypothesisDraft`. Operational ids/hashes travel in `StateRecord` /
   `EvidenceRecord` / `HypothesisRecord` envelopes and never enter scientific identity.
-- Serialized schema versions: StatisticalState 4; EvidenceState 4; ResearchSpec 3; SQLite
-  schema 5. Older/unknown schemas are rejected fail-closed; there are no migrations and no
-  legacy readers.
+- Serialized schema versions: StatisticalState 4; EvidenceState 4; ResearchSpec 4;
+  MutationDiscoveryResult 1; SQLite schema 5. Older/unknown schemas are rejected fail-closed;
+  there are no migrations and no legacy readers.
 - Question sets remain `wide-v3`, `deep-v1` and `hypothesis-v2`. Do not silently change their
   semantics; a new question set requires a separate versioned task and validation.
 - Registered actions are exactly `CHECK_EVIDENCE_INTEGRITY_V1` (input `STATISTICAL_STATE`) and
@@ -47,8 +55,8 @@ instructions override implementation steps embedded in reference documents.
   (`DROP_INFLUENTIAL_FIXTURE_POINTS_V1`), `ResearchSpecV2`/lane/universe composition contracts,
   and the retired handoff/plan/audit documents. Do not reintroduce them.
 - Still absent: offline autoresearch (needs a labelled historical corpus and human review), a
-  systematic multi-lane discovery architecture, and any incremental-value result. Indexed
-  systematic discovery is the next Stage 4 task in [the roadmap](docs/DISCOVERY_ROADMAP.md).
+  systematic multi-lane discovery architecture, and any incremental-value result. The
+  independent expression arm is the next Stage 5 task in [the roadmap](docs/DISCOVERY_ROADMAP.md).
 
 ## Ownership boundaries
 
@@ -162,7 +170,7 @@ instructions override implementation steps embedded in reference documents.
 ## Documentation
 
 - `docs/IMPLEMENTATION_STATUS.md` is the factual source of truth. Keep it accurate.
-- `docs/DISCOVERY_ROADMAP.md` indexes the next Stage 4 discovery work and evidence gates. Proposed
+- `docs/DISCOVERY_ROADMAP.md` indexes the next Stage 5 discovery work and evidence gates. Proposed
   lane, typed-state and acquisition-capable action contracts are not current runtime behavior.
   Historical plans are evidence only, not active implementation instructions. Do not import
   prior-project architecture into OntoJev.

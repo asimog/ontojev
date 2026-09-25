@@ -11,9 +11,10 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 PARSER_VERSION = "gdc-parser-v1"
+GENES_UNIVERSE_BIOTYPE = "protein_coding"
 
 
 class ParserError(Exception):
@@ -83,6 +84,19 @@ class GeneRecord:
     name: str | None
     biotype: str | None
     is_cancer_gene_census: bool | None
+
+
+@dataclass(frozen=True)
+class GenesPage:
+    """One strictly validated universe-enumeration page of /genes."""
+
+    genes: list[GeneRecord]
+    total: int
+    count: int
+    size: int
+    offset: int
+    pages: int | None
+    warnings: list[str]
 
 
 @dataclass(frozen=True)
@@ -272,7 +286,7 @@ def _hits(document: dict[str, Any], context: str) -> list[dict[str, Any]]:
     for hit in hits:
         if not isinstance(hit, dict):
             raise ParserError("MALFORMED_JSON", f"{context}: hit is not an object")
-    return hits
+    return cast(list[dict[str, Any]], hits)
 
 
 def _aggregation_completeness(node: dict[str, Any], context: str) -> list[str]:
@@ -412,6 +426,76 @@ def parse_genes(body: bytes, meta: ResponseMeta) -> list[GeneRecord]:
             is_cancer_gene_census=_optional(hit, "is_cancer_gene_census", (bool,), "genes"),
         ))
     return records
+
+
+def parse_genes_page(body: bytes, meta: ResponseMeta, *, expected_offset: int,
+                     expected_size: int) -> GenesPage:
+    """Strict universe-enumeration page reader; malformed provider output fails closed.
+
+    Validated here: pagination scalar types and non-negative totals/offsets,
+    count/record consistency, unique identifiers, valid Ensembl gene IDs,
+    protein_coding membership and provider gene_id-ascending ordering within the
+    page. Cross-page continuity is the acquisition caller's contract.
+    """
+    document = _load_json(body, meta)
+    records: list[GeneRecord] = []
+    seen: set[str] = set()
+    previous_id: str | None = None
+    for hit in _hits(document, "genes"):
+        gene_id = _require(hit, "gene_id", (str,), "genes")
+        if not (gene_id.startswith("ENSG") and len(gene_id) == 15
+                and gene_id[4:].isascii() and gene_id[4:].isdigit()):
+            raise ParserError("INVALID_FIELD", f"genes: invalid Ensembl gene id {gene_id!r}")
+        if gene_id in seen:
+            raise ParserError("DUPLICATE_ID", f"genes: duplicate {gene_id}")
+        if previous_id is not None and gene_id <= previous_id:
+            raise ParserError("UNEXPECTED_ORDER", f"genes: {gene_id} does not ascend after {previous_id}")
+        previous_id = gene_id
+        seen.add(gene_id)
+        biotype = _require(hit, "biotype", (str,), "genes")
+        if biotype != GENES_UNIVERSE_BIOTYPE:
+            raise ParserError("UNEXPECTED_BIOTYPE", f"genes: {gene_id} biotype {biotype!r} "
+                                                    f"is not {GENES_UNIVERSE_BIOTYPE!r}")
+        records.append(GeneRecord(
+            gene_id=gene_id,
+            symbol=_require(hit, "symbol", (str,), "genes"),
+            name=None,
+            biotype=biotype,
+            is_cancer_gene_census=None,
+        ))
+    pagination = _optional(document, "data.pagination", (dict,), "genes") or {}
+    values: dict[str, int | None] = {}
+    for name in ("total", "count", "size", "from", "pages"):
+        value = pagination.get(name)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+            raise ParserError("INVALID_PAGINATION", f"genes: pagination {name} must be an integer")
+        values[name] = value
+    total = values["total"]
+    count = values["count"]
+    size = values["size"]
+    offset = values["from"]
+    if total is None or count is None or offset is None:
+        raise ParserError("MISSING_FIELD", "genes: pagination total, count and from are required")
+    for name, value in (("total", total), ("count", count), ("from", offset), ("size", size),
+                        ("pages", values["pages"])):
+        if value is not None and value < 0:
+            raise ParserError("INVALID_PAGINATION", f"genes: pagination {name} must be non-negative")
+    if size is not None and size < 1:
+        raise ParserError("INVALID_PAGINATION", "genes: pagination size must be positive")
+    if count != len(records):
+        raise ParserError("INVALID_PAGINATION",
+                          f"genes: pagination count {count} differs from {len(records)} records")
+    if offset != expected_offset:
+        raise ParserError("INVALID_PAGINATION",
+                          f"genes: provider offset {offset} differs from requested {expected_offset}")
+    if count > expected_size:
+        raise ParserError("INVALID_PAGINATION",
+                          f"genes: page returned {count} records, above requested size {expected_size}")
+    if size is not None and size != expected_size and count == expected_size:
+        raise ParserError("INVALID_PAGINATION",
+                          f"genes: provider size {size} differs from requested {expected_size}")
+    return GenesPage(genes=records, total=total, count=count, size=expected_size,
+                     offset=offset, pages=values["pages"], warnings=_warnings(document))
 
 
 def parse_top_mutated_genes(body: bytes, meta: ResponseMeta) -> list[DiscoveryHit]:

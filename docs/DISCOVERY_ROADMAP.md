@@ -1,10 +1,11 @@
 # Discovery implementation roadmap and deliverable index
 
-Current roadmap after the Stage 3 hard cutover (2026-09-25). Stages 0–3 are IMPLEMENTED and
-offline-verified. **Indexed systematic discovery is the next Stage 4 task.** Stages 4–9 are
-PLANNED; proposed lane, typed-state and acquisition-capable action contracts below are design,
-**not current runtime behavior**. [Implementation status](IMPLEMENTATION_STATUS.md) owns current
-facts; [architecture](ARCHITECTURE.md) owns the current runtime chain.
+Current roadmap after the Stage 3 hard cutover and the Stage 4 systematic-discovery
+implementation (2026-09-25). Stages 0–4 are IMPLEMENTED and verified. **The independent
+expression arm is the next Stage 5 task.** Stages 5–9 are PLANNED; proposed lane, typed-state
+and acquisition-capable action contracts below are design, **not current runtime behavior**.
+[Implementation status](IMPLEMENTATION_STATUS.md) owns current facts;
+[architecture](ARCHITECTURE.md) owns the current runtime chain.
 
 ## Ordered stages
 
@@ -13,23 +14,26 @@ facts; [architecture](ARCHITECTURE.md) owns the current runtime chain.
 | 0: implementation baseline | Clean HEAD/environment; offline baseline; historical identity/projection/question/event goldens; retained captures | IMPLEMENTED: baseline understood, capture integrity verified, no new live claims |
 | 1: scientific contracts | Frozen measurement/population/quality/state/evidence/check variants; direct version codecs | IMPLEMENTED: observed-null impossible; malformed/unknown schemas fail typed; historical artifacts unchanged |
 | 2: integrity of consumption | Hash+schema validation of dossier inputs, cache answers, candidate evidence; typed hypothesis drafts | IMPLEMENTED: corrupt/missing revisions never `OBSERVED`; invalid cache never drives policy; unknown test IDs rejected |
-| 3: typed lane composition | Typed acquisition/lane records, canonical `StatisticalState`/`EvidenceState`, consumer handoffs | IMPLEMENTED and offline-verified; 652 offline tests pass; bounded live acceptance PASSED (2026-09-25) |
-| 4: bounded broad universe | Explicit release/filter/ordered 1,000-gene manifest, count batches, deterministic reduction | **NEXT (PLANNED)**: unique IDs/totals/page guards; absence not zero; all selection/rejection reasons retained; within existing request/byte caps |
-| 5: independent expression arm | Optional explicitly budgeted case-labelled descriptors and within-gene extremes | PLANNED: complete declared population/missingness; not tumor-normal/causal; no sample-matching claim; lane-specific recall/coverage |
+| 3: typed lane composition | Typed acquisition/lane records, canonical `StatisticalState`/`EvidenceState`, consumer handoffs | IMPLEMENTED and offline-verified; offline suite passes; bounded live acceptance PASSED (2026-09-25) |
+| 4: bounded broad universe | Explicit release/filter/ordered 1,000-gene prefix over `/genes`, ≤100-gene indexed count batches, deterministic ≤10-survivor reduction | IMPLEMENTED (2026-09-25): strict page guards (duplicate/offset/total/order/biotype/slice), explicit zero vs absent vs partial, one disposition per requested gene, reducer `MUTATION_LUAD_AFFECTED_COUNT_DESC_V1`, persisted schema-1 result; live acceptance 1,000/1,000 with 10 survivors |
+| 5: independent expression arm | Optional explicitly budgeted case-labelled descriptors and within-gene extremes | **NEXT (PLANNED)**: complete declared population/missingness; not tumor-normal/causal; no sample-matching claim; lane-specific recall/coverage |
 | 6: narrow CNV lane | Fixed builders and strict occurrence parser; complete survivor queries only | PLANNED: real fixtures for generic Loss, missing sample ID, mixed callers; conflict/dedup policy; no neutral/negative inference |
 | 7: descriptive actions and cutover | Reuse the investigation loop; expression-tail/CNV-category actions; typed versioned projections; no new semantic questions | PLANNED: held-data methods and authorization enforced; explicit model attempt/token budget; unchanged judgments/policies |
 | 8: prospective evaluation | Blinded grouped labels, fixed development/holdout, ablations and resource comparison | PLANNED: blocked on a labelled historical corpus and human review; no ranking-only value claim |
 | 9: conditional inferential extensions | Matched mutation-expression/CNV-expression, survival, later scRNA | DEFERRED: separate source/matching/reference/censoring/statistical review; not unlocked by finishing earlier engineering stages |
 
-Stages 4–7 are FIX AS PART OF NEW ARCHITECTURE. A total paid-model spend gate remains a
+Stage 4 is IMPLEMENTED as part of the existing architecture (no new engine). Stages 5–7 remain
+FIX AS PART OF NEW ARCHITECTURE work. A total paid-model spend gate remains a
 prerequisite for scaling paid model work, not for offline contract implementation. Retain the
 small deterministic baseline throughout.
 
-## PLANNED: deterministic funnel and feature definitions (not current runtime)
+## IMPLEMENTED: mutation-lane funnel (Stage 4); PLANNED: expression/CNV feature definitions
 
-Universe: release-bound first 1,000 protein-coding Ensembl IDs by ascending ID at a declared
-offset. The prefix is reproducible but biased and incomplete for the genome. No known-target
-roster or provider top-mutated rank enters this new selector. Preserve the provider-ranked
+Universe: release-bound first 1,000 protein-coding Ensembl IDs by ascending ID at offset 0 —
+IMPLEMENTED in `research/discovery.py` with a fixed, non-configurable builder. The prefix is
+reproducible but biased and incomplete for the genome. No known-target roster or provider
+top-mutated rank enters this selector; the provider ranking is a labelled comparator. Preserve
+the provider-ranked
 current baseline separately. This is a reproducible subset of the 19,843 indexed protein-coding
 genes observed in the campaign, not genome-wide coverage or an unbiased random sample.
 

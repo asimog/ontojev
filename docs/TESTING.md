@@ -15,7 +15,7 @@ IMPLEMENTED, PLANNED or UNVERIFIED.
 - Default tests are offline and must not contact GDC, TypeSafe/Jev, OpenRouter or any LLM. The
   shared test fixture blocks outbound non-loopback network connections except loopback test
   servers. No default test needs Docker, PostgreSQL, Redis, provider credentials or secrets.
-- In this environment (2026-09-25): **652 offline pytest tests pass** (live opt-in markers
+- In this environment (2026-09-25): **534 offline pytest tests pass** (live opt-in markers
   excluded); Ruff is clean; the scoped strict mypy check passes. These are the current verified
   Python results.
 - Fixture runs use the same shared `LiveOrchestrator` with `FixtureTransport` and
@@ -76,6 +76,11 @@ substitute for the Python offline suite and vice versa.
 - Lane composition and typed flow: independent lane availability, explicit zero versus absent
    bucket, row/batch permutation invariance, provider-summary separation, typed projection
    and admission, typed cache reuse, revision binding and check-summary consistency.
+- Stage 4 systematic discovery: strict gene-page guards (duplicate/offset/total/order/biotype/
+  slice), explicit zero vs absent vs partial aggregation, deterministic tie break and survivor
+  cap, budget-exhaustion dispositions, fixed universe builder, and one offline replay through
+  real parsers → tested universe → batched counts → reducer → persisted result → verified
+  reload with no Jev call in the run stream.
 - Storage/cache/dossier hardening: corrupted bytes/metadata/bindings, unknown schemas,
   authoritative-latest refusal (no earlier-revision fallback), unusable cache without provider
   fallback, and strict generated-text bounds (unknown fields and unknown action IDs rejected).
@@ -183,7 +188,7 @@ validation.
 
 | Change | Required focused verification |
 |---|---|
-| Broad-universe lane | Unique IDs/totals/page guards; absence not zero; all selection/rejection reasons retained; within existing request/byte caps |
+| Broad-universe lane | Unique IDs/totals/page guards; absence not zero; all selection/rejection reasons retained; within existing request/byte caps — **IMPLEMENTED 2026-09-25** (Stage 4 offline suite + live acceptance) |
 | Expression arm | Complete declared population/missingness; not tumor-normal/causal; no sample-matching claim; lane-specific recall/coverage |
 | CNV lane | Requested ID membership, correct project/gene, paging/duplicates, Loss in the five-category field, unknown label, missing sample ID, mixed/conflicting callers |
 | New actions | Typed input kind, estimator eligibility, no failure promotion, deterministic results/identity, budget reserved before acquisition, authorized dispatch only |

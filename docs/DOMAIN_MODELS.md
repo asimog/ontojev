@@ -9,7 +9,7 @@ chain; [persistence](PERSISTENCE.md) owns storage.
 
 | Record | Role and protected invariant |
 |---|---|
-| `ResearchSpec` (schema 3) | Sole canonical research configuration: `spec_id`, intent, `CohortSpec` (cohort/domain/project), bounded `AcquisitionSpec` limits, `ScientificLimits`, allowed registered action IDs, and the fixed `wide-policy-v2` / `deep-policy-v2` versions. Unsupported configurations are rejected or not representable |
+| `ResearchSpec` (schema 4) | Sole canonical research configuration: `spec_id`, intent, `CohortSpec` (cohort/domain/project), fixed `DiscoverySpec` (universe method/biotype/order/offset/limit/batch), bounded `AcquisitionSpec` limits, `ScientificLimits`, allowed registered action IDs, and the fixed `wide-policy-v2` / `deep-policy-v2` versions. Unsupported configurations are rejected or not representable |
 | `StatisticalState` (schema 4) | Typed entity, annotation, research scope, universe, tested context, per-project lane results, quality and separate scientific/operational sources |
 | `EvidenceState` (schema 4) | Accepted state hash, parent evidence hash, E0/E1/E2 index, `ActionRef`, immutable checks, derived `CheckSummary`, quality and sources |
 | `Candidate` | Run-local promoted/selected candidate binding (projection row plus `CandidateEvidence` in `research/deep.py`): candidate id, entity, promotion slot, accepted state binding, lifecycle |
@@ -32,6 +32,8 @@ There is no general inheritance or serialization framework.
 | `EntityRef` | GENE kind, Ensembl ID, display symbol, release; symbol is not a join key |
 | `PopulationFrame` | cohort/project, CASE or SAMPLE unit, known eligible IDs or UNKNOWN eligibility, examined IDs, membership hash, selection rule; subset membership checked |
 | `TestedUniverse` | ordered IDs, hash, source/release/filter/order/offset, reported total, completeness for the declared slice; inferential family separately identified |
+| `DiscoverySpec` (domain/discovery.py) | Fixed Stage 4 configuration: `GENE_ID_ASC_INDEXED_PREFIX_V1`, protein_coding, `GENE_ID_ASC`, offset 0, limit 1..1,000 within the 10-page cap, batch ≤100. No caller-controlled filters are representable |
+| `MutationDiscoveryEntry` / `MutationDiscoveryResult` (schema 1) | One typed outcome + disposition + rank per requested gene; result binds spec identity, release, `TestedUniverse`, reducer identity, universe-ordered entries, ≤10 survivor IDs in rank order, sources, warnings/limitations and an optional labelled comparator. Disposition totals equal the universe size; survivors are the retained entries in rank order; no provider rank, Jev, LLM or census knowledge enters the reducer |
 | `MethodRef` / `MethodParameters` | ID/version, units, duplicate rule, transform, estimator, missingness, limitations; parameters are only optional `ddof=1` and `pseudocount=1`, not a metric bag |
 | `ScientificSource` | endpoint, canonical request hash, response hash, parser version, release, acquisition outcome |
 | `OperationalSource` | request/attempt/cache/artifact IDs, retrieval time, latency/status/bytes; separate from scientific identity |
@@ -103,10 +105,10 @@ constructing the record. CNV acquisition and descriptors remain PLANNED (Stage 6
 
 ## Serialization, versioning and identity
 
-- IMPLEMENTED: `domain/codecs.py` reads and writes StatisticalState schema 4 and EvidenceState
-  schema 4 only. `research/specs.py` reads and writes ResearchSpec schema 3 only. Older or
-  unknown versions fail with a typed unsupported-version error; there is no fixture fallback,
-  dictionary identity path, or schema-1/2/3 reader.
+- IMPLEMENTED: `domain/codecs.py` reads and writes StatisticalState schema 4, EvidenceState
+  schema 4 and MutationDiscoveryResult schema 1 only. `research/specs.py` reads and writes
+  ResearchSpec schema 4 only. Older or unknown versions fail with a typed unsupported-version
+  error; there is no fixture fallback, dictionary identity path, or legacy reader.
 - IMPLEMENTED: strict JSON boundary primitives in `domain/_json.py` reject duplicate keys,
   non-finite numbers, kind/version mismatch, missing/extra fields and inconsistent identities.
 - Load path: verify artifact path/size/hash → JSON → direct version parser → identity check →

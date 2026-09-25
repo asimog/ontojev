@@ -65,6 +65,7 @@ def _test_spec(project_id: str = "TCGA-LUAD", *, page_size: int = 200, batch_siz
         spec_id=f"TEST_{project_id}_V1",
         intent="bounded offline replay of one explicit cohort",
         cohort=CohortSpec(cohort_id=project_id, domain="test lung cancer", project_id=project_id),
+        discovery=LUAD_RESEARCH_V1.discovery,
         acquisition=AcquisitionSpec(
             case_page_size=page_size, case_batch_size=batch_size, max_cohort_cases=max_cases,
             discovery_gene_limit=2, count_gene_limit=2, candidate_gene_limit=2,
