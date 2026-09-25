@@ -30,7 +30,7 @@ from cancerjev.gdc.endpoints import (
     MAX_GENE_IDS,
 )
 
-RESEARCH_SPEC_SCHEMA_VERSION = 7
+RESEARCH_SPEC_SCHEMA_VERSION = 8
 IMPLEMENTED_ACTIONS = frozenset({
     "CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1",
     "SUMMARIZE_EXPRESSION_TAIL_V1", "SUMMARIZE_CNV_CATEGORIES_V1",
@@ -171,13 +171,14 @@ class ResearchSpec:
 
 
 def research_spec_from_dict(value: object) -> ResearchSpec:
-    """Strict schema-6 boundary. Never interpret a legacy spec as the current one."""
+    """Strict schema-8 boundary. Never interpret a legacy spec as the current one."""
     d = obj(value, "schema_version kind spec_id intent cohort discovery acquisition limits "
                    "allowed_actions wide_policy deep_policy expression_discovery cnv_discovery")
     require(integer(d["schema_version"]) == RESEARCH_SPEC_SCHEMA_VERSION
             and d["kind"] == "RESEARCH_SPEC", "unsupported research spec version/kind")
     c = obj(d["cohort"], "cohort_id domain project_id")
-    disc = obj(d["discovery"], "universe_method biotype order offset universe_limit mutation_batch_size")
+    disc = obj(d["discovery"],
+               "universe_method biotype order offset universe_limit occurrence_scan_page_size")
     a = obj(d["acquisition"], "case_page_size case_batch_size max_cohort_cases discovery_gene_limit "
                               "count_gene_limit candidate_gene_limit expression_file_sample_size")
     limits = obj(d["limits"], "max_survivors max_promotions max_revisions")
@@ -189,7 +190,7 @@ def research_spec_from_dict(value: object) -> ResearchSpec:
         CohortSpec(string(c["cohort_id"]), string(c["domain"]), string(c["project_id"])),
         DiscoverySpec(string(disc["universe_method"]), string(disc["biotype"]), string(disc["order"]),
                       integer(disc["offset"]), integer(disc["universe_limit"]),
-                      integer(disc["mutation_batch_size"])),
+                      integer(disc["occurrence_scan_page_size"])),
         AcquisitionSpec(integer(a["case_page_size"]), integer(a["case_batch_size"]),
                         integer(a["max_cohort_cases"]), integer(a["discovery_gene_limit"]),
                         integer(a["count_gene_limit"]), integer(a["candidate_gene_limit"]),
@@ -218,7 +219,7 @@ LUAD_DISCOVERY_V1 = DiscoverySpec(
     order="GENE_ID_ASC",
     offset=0,
     universe_limit=1000,
-    mutation_batch_size=100,
+    occurrence_scan_page_size=5000,
 )
 
 LUAD_RESEARCH_V1 = ResearchSpec(

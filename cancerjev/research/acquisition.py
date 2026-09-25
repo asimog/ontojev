@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from cancerjev.domain.discovery import OCCURRENCE_SCAN_MAX_PAGES
 from cancerjev.domain.measurements import Acquisition, OperationalSource, ScientificSource, digest
 from cancerjev.gdc.endpoints import (
     GDCRequest,
@@ -15,6 +16,7 @@ from cancerjev.gdc.endpoints import (
     files_expression_request,
     gene_case_counts_request,
     mutated_cases_count_request,
+    ssm_occurrence_page_request,
 )
 from cancerjev.gdc.parsers import (
     PARSER_VERSION,
@@ -34,8 +36,9 @@ from cancerjev.gdc.parsers import (
     parse_gene_case_counts,
     parse_gene_selection,
     parse_mutated_cases_count,
+    parse_ssm_occurrence_page,
 )
-from cancerjev.gdc.transport import GDCResponse, TransportError, TransportErrorCode
+from cancerjev.gdc.transport import GDCResponse
 from cancerjev.research.specs import AcquisitionSpec
 from cancerjev.science.methods import ProjectFrame
 
@@ -80,31 +83,29 @@ class MutationAcquisition:
 
 
 @dataclass(frozen=True)
-class MutationCountBatch:
-    """One validated ≤100-gene indexed count batch with its own provenance."""
+class MutationOccurrenceScan:
+    """Complete per-project released-occurrence scan with local distinct-case derivation.
 
-    batch_index: int
-    gene_ids: tuple[str, ...]
-    counts: GeneCaseCounts
-    source: OperationalSource
-    warnings: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class BatchedMutationCounts:
-    """Systematic-discovery mutation counts: disjoint batches plus one coverage record.
-
-    ``budget_exhausted_batch`` names the first batch that was never acquired
-    because the run budget was exhausted; every batch at or after it is
-    un-acquired and its genes must be recorded as unavailable.
+    Every page is parsed and validated fail-closed; occurrence ids are unique
+    across the whole scan. ``distinct_cases_per_gene`` is the scientific
+    quantity (MUTATION_AFFECTED_CASE_COUNT_V2): a gene absent from the maps has
+    an observed zero because the scan is complete.
     """
 
-    batches: tuple[MutationCountBatch, ...]
-    coverage: ProjectCoverage
-    coverage_source: OperationalSource
-    requested_batch_count: int
-    budget_exhausted_batch: int | None
+    project_id: str
+    page_size: int
+    page_count: int
+    total_occurrences: int
+    bytes_read: int
+    distinct_cases_per_gene: dict[str, int]
+    occurrence_docs_per_gene: dict[str, int]
+    sources: tuple[OperationalSource, ...]
     warnings: tuple[str, ...]
+
+    def counts_for(self, gene_id: str) -> tuple[int, int]:
+        """(distinct affected cases, occurrence records) for one gene; zero when absent."""
+        return (self.distinct_cases_per_gene.get(gene_id, 0),
+                self.occurrence_docs_per_gene.get(gene_id, 0))
 
 
 @dataclass(frozen=True)
@@ -196,41 +197,86 @@ def acquire_mutation_counts(transport: AcquisitionTransport, gene_ids: list[str]
                                tuple(counts.warnings + coverage.warnings))
 
 
-def acquire_batched_mutation_counts(transport: AcquisitionTransport, universe_ids: list[str],
-                                    batch_size: int, release: str | None) -> BatchedMutationCounts:
-    """Indexed mutation counts for a systematic universe in deterministic ≤100-gene batches.
+def acquire_project_mutation_occurrence_scan(transport: AcquisitionTransport, project_id: str,
+                                             page_size: int, release: str | None,
+                                             ) -> MutationOccurrenceScan:
+    """Complete deterministic scan of one project's released occurrence records.
 
-    Batches preserve universe order and are disjoint; each response is validated
-    independently before any merge. Project SSM coverage is invariant for the
-    scope and is acquired exactly once. Only a run-budget exhaustion is absorbed
-    (remaining batches are recorded as un-acquired); any other transport or
-    parser failure propagates and aborts the stage fail-closed.
+    Pages are requested in ascending ``ssm_occurrence_id`` order and every page
+    is parsed fail-closed (pagination invariants, project membership, ascending
+    unique ids). The provider total must stay stable across pages and the page
+    count is capped by the declared scan cap. Distinct-case and per-gene
+    occurrence derivations happen here, once, over validated records only; no
+    aggregation bucket value enters the quantity.
     """
-    coverage, coverage_source = _acquire_coverage(transport, release)
-    warnings: list[str] = list(coverage.warnings)
-    batches: list[MutationCountBatch] = []
-    budget_exhausted_batch: int | None = None
-    requested_batch_count = (len(universe_ids) + batch_size - 1) // batch_size
-    for index in range(0, len(universe_ids), batch_size):
-        batch_ids = list(universe_ids[index:index + batch_size])
-        try:
-            counts, source = _acquire_count_batch(transport, batch_ids, release)
-        except TransportError as exc:
-            if exc.code in (TransportErrorCode.REQUEST_BUDGET_EXHAUSTED,
-                            TransportErrorCode.BYTE_BUDGET_EXHAUSTED):
-                budget_exhausted_batch = index // batch_size
-                warnings.append(
-                    f"mutation count budget exhausted before batch {budget_exhausted_batch}: {exc.code}"
+    if not 1 <= page_size <= 10000:
+        raise LiveRunError("INVALID_OCCURRENCE_SCAN_PAGE_SIZE",
+                           f"occurrence scan page size {page_size} outside 1..10000")
+    cases_per_gene: dict[str, set[str]] = {}
+    docs_per_gene: dict[str, int] = {}
+    sources: list[OperationalSource] = []
+    warnings: list[str] = []
+    seen_occurrence_ids: set[str] = set()
+    previous_last_id: str | None = None
+    total: int | None = None
+    bytes_read = 0
+    offset = 0
+    page_count = 0
+    while True:
+        response = transport.request(
+            ssm_occurrence_page_request(project_id, offset=offset, size=page_size))
+        bytes_read += len(response.body)
+        page = parse_ssm_occurrence_page(
+            response.body, response_meta(response, release), expected_project=project_id,
+            expected_offset=offset, expected_size=page_size,
+        )
+        sources.append(response_operational_source(response, release=release))
+        warnings.extend(page.warnings)
+        page_count += 1
+        if page_count > OCCURRENCE_SCAN_MAX_PAGES:
+            raise LiveRunError(
+                "OCCURRENCE_SCAN_PAGE_CAP_EXCEEDED",
+                f"occurrence scan exceeded {OCCURRENCE_SCAN_MAX_PAGES} pages at offset {offset}",
+            )
+        if total is None:
+            total = page.total
+        elif page.total != total:
+            raise LiveRunError(
+                "OCCURRENCE_SCAN_TOTAL_CHANGED",
+                f"occurrence scan total changed from {total} to {page.total} at offset {offset}",
+            )
+        for record in page.records:
+            if record.occurrence_id in seen_occurrence_ids:
+                raise LiveRunError(
+                    "DUPLICATE_OCCURRENCE_ACROSS_PAGES",
+                    f"occurrence scan returned duplicate {record.occurrence_id}",
                 )
-                break
-            raise
-        batches.append(MutationCountBatch(
-            batch_index=index // batch_size, gene_ids=tuple(batch_ids), counts=counts,
-            source=source, warnings=tuple(counts.warnings),
-        ))
-        warnings.extend(counts.warnings)
-    return BatchedMutationCounts(tuple(batches), coverage, coverage_source, requested_batch_count,
-                                 budget_exhausted_batch, tuple(warnings))
+            if previous_last_id is not None and record.occurrence_id <= previous_last_id:
+                raise LiveRunError(
+                    "OCCURRENCE_SCAN_ORDER_VIOLATION",
+                    f"occurrence scan page at offset {offset} does not ascend after the previous page",
+                )
+            seen_occurrence_ids.add(record.occurrence_id)
+            previous_last_id = record.occurrence_id
+            for gene_id in record.gene_ids:
+                cases_per_gene.setdefault(gene_id, set()).add(record.case_id)
+                docs_per_gene[gene_id] = docs_per_gene.get(gene_id, 0) + 1
+        offset += page.count
+        if total == 0 or offset >= total:
+            break
+        if page.count == 0:
+            raise LiveRunError(
+                "OCCURRENCE_SCAN_STALLED",
+                f"occurrence scan stalled at offset {offset} of {total}",
+            )
+    assert total is not None
+    return MutationOccurrenceScan(
+        project_id=project_id, page_size=page_size, page_count=page_count, total_occurrences=total,
+        bytes_read=bytes_read,
+        distinct_cases_per_gene={gene_id: len(cases) for gene_id, cases in cases_per_gene.items()},
+        occurrence_docs_per_gene=docs_per_gene,
+        sources=tuple(sources), warnings=tuple(warnings),
+    )
 
 
 def _merge_expression_availability(

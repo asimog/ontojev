@@ -9,8 +9,12 @@ from cancerjev.gdc.transport import BudgetCaps
 
 ENV_LOCAL_FILENAME = ".env.local"
 
-# Documented hard ceilings (docs/GDC_BUDGETS.md). Operational settings may lower
+# Documented hard ceilings (BudgetCaps in gdc.transport). Operational settings may lower
 # these but may never raise them; an above-default value is rejected at load time.
+# The byte and page ceilings were enlarged for the Stage 4 mutation occurrence scan
+# (MUTATION_AFFECTED_CASE_COUNT_V2): a complete TCGA-LUAD released-occurrence scan is
+# ~36 pages of ~2.9 MB (~104 MB). Per-stage Settings defaults remain at the original
+# values; only the systematic-discovery worker constructs the scan budget explicitly.
 _DOCUMENTED_CAPS = BudgetCaps()
 GDC_MAX_REQUESTS_HARD_CAP = _DOCUMENTED_CAPS.max_requests
 GDC_MAX_BYTES_HARD_CAP = _DOCUMENTED_CAPS.max_bytes

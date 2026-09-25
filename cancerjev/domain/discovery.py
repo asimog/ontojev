@@ -39,7 +39,9 @@ from cancerjev.domain.scientific import (
 DISCOVERY_UNIVERSE_METHOD = "GENE_ID_ASC_INDEXED_PREFIX_V1"
 UNIVERSE_PAGE_CAP = 10
 MAX_UNIVERSE_LIMIT = 1000
-MAX_MUTATION_BATCH_SIZE = 100
+MAX_OCCURRENCE_SCAN_PAGE_SIZE = 10000
+OCCURRENCE_SCAN_MAX_PAGES = 64
+OCCURRENCE_SCAN_MAX_BYTES = 256 * 1024 * 1024
 MAX_DISCOVERY_SURVIVORS = 10
 MAX_EXPRESSION_BATCH_SIZE = 100
 MIN_EXPRESSION_TAIL_N = 20
@@ -48,7 +50,7 @@ MAX_CNV_PAGES_PER_GENE = 10
 CNV_PAGE_SIZE = 250
 UNIVERSE_SOURCE = "GDC_GENES_INDEXED_PREFIX"
 REDUCER_METHOD_ID = "MUTATION_LUAD_AFFECTED_COUNT_DESC_V1"
-REDUCER_VERSION = "1"
+REDUCER_VERSION = "2"
 
 UNIVERSE_LIMITATION = (
     "The systematic universe is the first deterministic prefix of the indexed protein-coding "
@@ -56,8 +58,9 @@ UNIVERSE_LIMITATION = (
     "biased and incomplete for the genome, not the entire genome and not an unbiased random sample."
 )
 ABSENCE_LIMITATION = (
-    "An absent project/gene mutation aggregation bucket is NOT_OBSERVED: it is not zero, not "
-    "wildtype, not mutation-negative, and never a callable-negative denominator; no recurrence "
+    "Affected-case counts are derived locally from the complete per-project released occurrence "
+    "scan: a gene absent from a complete scan is an observed zero, never NOT_OBSERVED, wildtype "
+    "or a callable-negative denominator; an incomplete scan is never persisted and no recurrence "
     "fraction is computed."
 )
 COMPARATOR_LIMITATION = (
@@ -94,8 +97,10 @@ class DiscoverySpec:
 
     The Stage 4 contract is deterministic: the release-bound first
     ``universe_limit`` protein-coding Ensembl gene IDs by ascending gene_id at a
-    declared offset, mutated in bounded batches. These are the only supported
-    values; the provider-ranked baseline path remains the labelled comparator.
+    declared offset, measured by a complete per-project released-occurrence scan
+    in bounded pages of ``occurrence_scan_page_size``. These are the only
+    supported values; the provider-ranked baseline path remains the labelled
+    comparator and the legacy count-bucket endpoint is not a Stage 4 source.
     """
 
     universe_method: str
@@ -103,7 +108,7 @@ class DiscoverySpec:
     order: str
     offset: int
     universe_limit: int
-    mutation_batch_size: int
+    occurrence_scan_page_size: int
 
     def __post_init__(self) -> None:
         require(self.universe_method == DISCOVERY_UNIVERSE_METHOD,
@@ -113,10 +118,8 @@ class DiscoverySpec:
         require(self.offset == 0, "offset must be 0")
         require(1 <= self.universe_limit <= MAX_UNIVERSE_LIMIT,
                 f"universe_limit must be 1..{MAX_UNIVERSE_LIMIT}")
-        require(1 <= self.mutation_batch_size <= MAX_MUTATION_BATCH_SIZE,
-                f"mutation_batch_size must be 1..{MAX_MUTATION_BATCH_SIZE}")
-        require(self.universe_limit <= UNIVERSE_PAGE_CAP * self.mutation_batch_size,
-                f"universe_limit must fit within {UNIVERSE_PAGE_CAP} mutation pages")
+        require(1 <= self.occurrence_scan_page_size <= MAX_OCCURRENCE_SCAN_PAGE_SIZE,
+                f"occurrence_scan_page_size must be 1..{MAX_OCCURRENCE_SCAN_PAGE_SIZE}")
 
 
 @dataclass(frozen=True)

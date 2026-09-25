@@ -1,9 +1,11 @@
 """Stage 4 deterministic reduction and universe-loop contracts.
 
 Realistic failure modes protected: a tie that resolves nondeterministically, a
-survivor cap that leaks, an absent bucket treated as zero or wildtype, an
-incomplete aggregation promoting a survivor, and a truncated universe accepted
-as complete.
+survivor cap that leaks, a complete-scan zero treated as unavailable, partial
+project coverage promoting a survivor, and a truncated universe accepted as
+complete. The mutation quantity source is the complete occurrence scan; an
+absent gene in a complete scan is an observed zero by construction, so the
+legacy NOT_OBSERVED bucket semantics cannot reappear.
 """
 
 from __future__ import annotations
@@ -21,17 +23,11 @@ from cancerjev.domain.measurements import (
     PopulationUnit,
     ScientificSource,
     UnavailableMeasurement,
-    UnavailableStatus,
 )
 from cancerjev.gdc.endpoints import genes_universe_request
-from cancerjev.gdc.parsers import GeneCaseCounts, GeneRecord, ProjectCoverage
+from cancerjev.gdc.parsers import GeneRecord, ProjectCoverage
 from cancerjev.gdc.transport import GDCResponse
-from cancerjev.research.acquisition import (
-    BatchedMutationCounts,
-    MutationCountBatch,
-    TransportError,
-    TransportErrorCode,
-)
+from cancerjev.research.acquisition import MutationOccurrenceScan
 from cancerjev.research.discovery import (
     UNIVERSE_PAGE_SIZE,
     acquire_gene_universe,
@@ -65,10 +61,12 @@ def _source(endpoint: str) -> OperationalSource:
         "attempt:1", "artifact:1", "now", 128, 1, 200, False)
 
 
-def _counts(gene_counts: dict[str, int], *, complete: bool = True) -> GeneCaseCounts:
-    return GeneCaseCounts(projects={PROJECT: dict(gene_counts)}, hits_total=sum(gene_counts.values()),
-                          complete=complete, partial_reasons=[] if complete else ["timed_out"],
-                          warnings=[])
+def _scan(distinct: dict[str, int], docs: dict[str, int] | None = None) -> MutationOccurrenceScan:
+    docs_map = dict(docs) if docs is not None else dict(distinct)
+    return MutationOccurrenceScan(
+        project_id=PROJECT, page_size=40, page_count=1, total_occurrences=sum(docs_map.values()),
+        bytes_read=0, distinct_cases_per_gene=dict(distinct), occurrence_docs_per_gene=docs_map,
+        sources=(_source("/ssm_occurrences"),), warnings=())
 
 
 def _coverage(value: int = 580, *, complete: bool = True) -> ProjectCoverage:
@@ -76,28 +74,25 @@ def _coverage(value: int = 580, *, complete: bool = True) -> ProjectCoverage:
                            partial_reasons=[] if complete else ["failed_shards=1"], warnings=[])
 
 
-def _batched(batches: list[tuple[tuple[str, ...], GeneCaseCounts]], coverage: ProjectCoverage,
-             *, requested: int | None = None, exhausted: int | None = None) -> BatchedMutationCounts:
-    typed = tuple(MutationCountBatch(index, ids, counts, _source("/analysis/top_cases_counts_by_genes"), ())
-                  for index, (ids, counts) in enumerate(batches))
-    return BatchedMutationCounts(typed, coverage, _source("/analysis/mutated_cases_count_by_project"),
-                                 requested if requested is not None else len(batches), exhausted, ())
-
-
 def _ids(*indexes: int) -> tuple[str, ...]:
     return tuple(_gene_id(index) for index in indexes)
 
 
-def _entries_for(ids: tuple[str, ...], batched: BatchedMutationCounts, *, max_survivors: int = 10):
-    return build_discovery_entries(PROJECT, _genes(list(ids)), ids, batched, _frame(), RELEASE,
-                                   max_survivors)
+def _entries_for(ids: tuple[str, ...], scan: MutationOccurrenceScan, *,
+                 coverage: ProjectCoverage | None = None, coverage_complete: bool = True,
+                 max_survivors: int = 10):
+    coverage_value = coverage if coverage is not None else _coverage()
+    return build_discovery_entries(
+        PROJECT, _genes(list(ids)), ids, scan, RELEASE, _frame(), coverage_value,
+        _source("/analysis/mutated_cases_count_by_project"), coverage_complete,
+        _source("/ssm_occurrences/scan"), max_survivors)
 
 
 def test_counts_descending_with_gene_id_tie_break_and_cap():
     ids = _ids(1, 2, 3, 4)
-    batched = _batched([(ids, _counts({_gene_id(1): 40, _gene_id(2): 50, _gene_id(3): 50,
-                                       _gene_id(4): 20}))], _coverage())
-    entries, survivors = _entries_for(ids, batched, max_survivors=2)
+    scan = _scan({_gene_id(1): 40, _gene_id(2): 50, _gene_id(3): 50, _gene_id(4): 20},
+                 {_gene_id(1): 55, _gene_id(2): 50, _gene_id(3): 62, _gene_id(4): 21})
+    entries, survivors = _entries_for(ids, scan, max_survivors=2)
     by_id = {entry.entity.gene_id: entry for entry in entries}
     assert survivors == (_gene_id(2), _gene_id(3))
     assert by_id[_gene_id(2)].disposition.value == "RETAINED"
@@ -109,78 +104,69 @@ def test_counts_descending_with_gene_id_tie_break_and_cap():
     assert by_id[_gene_id(4)].disposition.value == "BELOW_SURVIVOR_CUTOFF"
     assert by_id[_gene_id(4)].rank == 4
     assert [entry.entity.gene_id for entry in entries] == list(ids)
+    assert by_id[_gene_id(1)].outcome.affected_cases.value == 40
 
 
-def test_explicit_zero_is_eligible_but_absent_bucket_is_not():
+def test_counts_for_returns_distinct_and_doc_counts():
+    scan = _scan({_gene_id(1): 50, _gene_id(2): 7}, {_gene_id(1): 51, _gene_id(2): 7})
+    assert scan.counts_for(_gene_id(1)) == (50, 51)
+    assert scan.counts_for(_gene_id(2)) == (7, 7)
+    assert scan.counts_for(_gene_id(99)) == (0, 0)
+
+
+def test_complete_scan_zero_and_absent_gene_are_observed_zeroes():
     ids = _ids(4, 5)
-    batched = _batched([(ids, _counts({_gene_id(4): 0}))], _coverage())
-    entries, survivors = _entries_for(ids, batched)
+    scan = _scan({_gene_id(4): 0})
+    entries, survivors = _entries_for(ids, scan)
     by_id = {entry.entity.gene_id: entry for entry in entries}
     zero = by_id[_gene_id(4)]
     assert isinstance(zero.outcome.affected_cases, ObservedCount)
     assert zero.outcome.affected_cases.value == 0
     assert zero.disposition.value == "RETAINED" and zero.rank == 1
-    assert survivors == (_gene_id(4),)
     absent = by_id[_gene_id(5)]
-    assert isinstance(absent.outcome.affected_cases, UnavailableMeasurement)
-    assert absent.outcome.affected_cases.status is UnavailableStatus.NOT_OBSERVED
-    assert absent.outcome.affected_cases.reason == "GENE_BUCKET_ABSENT"
-    assert absent.disposition.value == "MUTATION_BUCKET_NOT_OBSERVED"
-    assert absent.rank is None and absent.entity.gene_id not in survivors
+    assert isinstance(absent.outcome.affected_cases, ObservedCount)
+    assert absent.outcome.affected_cases.value == 0
+    assert absent.disposition.value == "RETAINED" and absent.rank == 2
+    assert survivors == (_gene_id(4), _gene_id(5))
 
 
-def test_incomplete_aggregation_never_promotes_a_survivor():
-    ids = _ids(6, 7)
-    batched = _batched([(ids, _counts({_gene_id(6): 90, _gene_id(7): 0}, complete=False))],
-                       _coverage())
-    entries, survivors = _entries_for(ids, batched)
-    by_id = {entry.entity.gene_id: entry for entry in entries}
-    assert survivors == ()
-    for gene_id in ids:
-        assert by_id[gene_id].disposition.value == "MUTATION_AGGREGATION_PARTIAL"
-    assert isinstance(by_id[_gene_id(7)].outcome.affected_cases, UnavailableMeasurement)
-    assert by_id[_gene_id(7)].outcome.affected_cases.status is UnavailableStatus.UNAVAILABLE
-
-
-def test_partial_coverage_blocks_eligibility_for_complete_counts():
+def test_partial_coverage_blocks_eligibility_for_complete_scan():
     ids = _ids(8)
-    batched = _batched([(ids, _counts({_gene_id(8): 12}))], _coverage(complete=False))
-    entries, survivors = _entries_for(ids, batched)
+    scan = _scan({_gene_id(8): 12})
+    entries, survivors = _entries_for(ids, scan, coverage=_coverage(complete=False),
+                                      coverage_complete=False)
     assert survivors == ()
     assert entries[0].disposition.value == "MUTATION_AGGREGATION_PARTIAL"
     assert entries[0].reason == "MUTATION_COVERAGE_PARTIAL"
 
 
-def test_budget_exhaustion_marks_remaining_genes_unavailable():
-    ids = _ids(1, 2, 3, 4, 5, 6)
-    batch0_ids = _ids(1, 2, 3)
-    batched = _batched(
-        [(batch0_ids, _counts({_gene_id(1): 10, _gene_id(2): 9, _gene_id(3): 8}))], _coverage(),
-        requested=2, exhausted=1)
-    entries, survivors = _entries_for(ids, batched, max_survivors=1)
-    by_id = {entry.entity.gene_id: entry for entry in entries}
-    assert survivors == (_gene_id(1),)
-    assert by_id[_gene_id(2)].disposition.value == "BELOW_SURVIVOR_CUTOFF"
-    assert by_id[_gene_id(3)].disposition.value == "BELOW_SURVIVOR_CUTOFF"
-    for gene_id in _ids(4, 5, 6):
-        assert by_id[gene_id].disposition.value == "ACQUISITION_UNAVAILABLE"
-        assert by_id[gene_id].reason == "MUTATION_COUNT_BUDGET_EXHAUSTED"
-        assert isinstance(by_id[gene_id].outcome.affected_cases, UnavailableMeasurement)
-        assert by_id[gene_id].outcome.affected_cases.status is UnavailableStatus.NOT_ACQUIRED
+def test_project_absent_from_coverage_keeps_complete_scan_eligible():
+    """A missing coverage bucket is context, not the measurement.
+
+    The affected-case quantity derives from the complete occurrence scan; the
+    project SSM coverage aggregation is availability context only, so its
+    absence cannot demote an observed distinct-case count.
+    """
+    ids = _ids(9)
+    scan = _scan({_gene_id(9): 5})
+    empty_coverage = ProjectCoverage(case_with_ssm={}, complete=True, partial_reasons=[], warnings=[])
+    entries, survivors = _entries_for(ids, scan, coverage=empty_coverage)
+    assert survivors == (_gene_id(9),)
+    assert entries[0].disposition.value == "RETAINED"
+    assert isinstance(entries[0].outcome.ssm_coverage_cases, UnavailableMeasurement)
 
 
 def test_every_requested_gene_receives_exactly_one_disposition():
     ids = _ids(1, 2, 3, 4, 5, 6)
-    batched = _batched([(ids, _counts({_gene_id(1): 50, _gene_id(2): 50, _gene_id(3): 30,
-                                       _gene_id(4): 0}))], _coverage())
-    entries, survivors = _entries_for(ids, batched)
+    scan = _scan({_gene_id(1): 50, _gene_id(2): 50, _gene_id(3): 30, _gene_id(4): 0})
+    entries, survivors = _entries_for(ids, scan)
     assert len(entries) == len(ids)
     assert {entry.entity.gene_id for entry in entries} == set(ids)
     totals: dict[str, int] = {}
     for entry in entries:
         totals[entry.disposition.value] = totals.get(entry.disposition.value, 0) + 1
     assert sum(totals.values()) == len(ids)
-    assert totals == {"RETAINED": 4, "MUTATION_BUCKET_NOT_OBSERVED": 2}
+    assert totals == {"RETAINED": 6}
 
 
 class _UniverseTransport:
@@ -220,9 +206,9 @@ class _UniverseTransport:
             attempt_no=1)
 
 
-def _discovery(limit: int, batch: int) -> DiscoverySpec:
+def _discovery(limit: int, page_size: int) -> DiscoverySpec:
     return DiscoverySpec("GENE_ID_ASC_INDEXED_PREFIX_V1", "protein_coding", "GENE_ID_ASC", 0,
-                         limit, batch)
+                         limit, page_size)
 
 
 def _pages(*page_specs: tuple[list[tuple[str, str]], int]) -> tuple[list[list[tuple[str, str]]], list[int]]:
@@ -304,12 +290,6 @@ def _gene_pair(index: int) -> tuple[str, str]:
 
 def test_full_page_size_default_is_the_endpoint_max():
     assert UNIVERSE_PAGE_SIZE == 100
-
-
-def test_transport_budget_error_code_is_recognized_for_batch_absorption():
-    error = TransportError(TransportErrorCode.REQUEST_BUDGET_EXHAUSTED, "cap reached")
-    assert error.code in (TransportErrorCode.REQUEST_BUDGET_EXHAUSTED,
-                          TransportErrorCode.BYTE_BUDGET_EXHAUSTED)
 
 
 def test_universe_request_builder_is_fixed():

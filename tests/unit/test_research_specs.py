@@ -29,7 +29,7 @@ def _discovery(**overrides) -> DiscoverySpec:
         "order": "GENE_ID_ASC",
         "offset": 0,
         "universe_limit": 1000,
-        "mutation_batch_size": 100,
+        "occurrence_scan_page_size": 5000,
     }
     values.update(overrides)
     return DiscoverySpec(**values)
@@ -91,10 +91,8 @@ def test_acquisition_spec_rejects_values_above_admitted_endpoint_bounds(override
     ({"order": "SYMBOL_ASC"}, "order must be GENE_ID_ASC"),
     ({"offset": 100}, "offset must be 0"),
     ({"universe_limit": 1001}, "universe_limit must be 1..1000"),
-    ({"mutation_batch_size": 101}, "mutation_batch_size must be 1..100"),
-    ({"universe_limit": 1001, "mutation_batch_size": 50}, "universe_limit must be 1..1000"),
-    ({"universe_limit": 600, "mutation_batch_size": 50},
-     "universe_limit must fit within 10 mutation pages"),
+    ({"occurrence_scan_page_size": 10001}, "occurrence_scan_page_size must be 1..10000"),
+    ({"occurrence_scan_page_size": 0}, "occurrence_scan_page_size must be 1..10000"),
 ])
 def test_discovery_spec_rejects_non_fixed_contracts(overrides, message):
     with pytest.raises(ValueError, match=message):
@@ -113,9 +111,9 @@ def test_expression_discovery_spec_rejects_semantic_drift(overrides, message):
         ExpressionDiscoverySpec(**overrides)
 
 
-def test_luad_spec_round_trips_through_schema_seven():
+def test_luad_spec_round_trips_through_schema_eight():
     emitted = LUAD_RESEARCH_V1.as_dict()
-    assert emitted["schema_version"] == RESEARCH_SPEC_SCHEMA_VERSION == 7
+    assert emitted["schema_version"] == RESEARCH_SPEC_SCHEMA_VERSION == 8
     assert emitted["kind"] == "RESEARCH_SPEC"
     assert set(emitted) == {
         "schema_version", "kind", "spec_id", "intent", "cohort", "discovery", "acquisition",
@@ -124,7 +122,8 @@ def test_luad_spec_round_trips_through_schema_seven():
     }
     assert emitted["discovery"] == {
         "universe_method": "GENE_ID_ASC_INDEXED_PREFIX_V1", "biotype": "protein_coding",
-        "order": "GENE_ID_ASC", "offset": 0, "universe_limit": 1000, "mutation_batch_size": 100,
+        "order": "GENE_ID_ASC", "offset": 0, "universe_limit": 1000,
+        "occurrence_scan_page_size": 5000,
     }
     payload = json.loads(json.dumps(emitted))
     restored = research_spec_from_dict(payload)
@@ -141,7 +140,8 @@ def test_reader_rejects_legacy_unknown_and_extra_fields():
         {**payload, "schema_version": 4},
         {**payload, "schema_version": 5},
         {**payload, "schema_version": 6},
-        {**payload, "schema_version": 8},
+        {**payload, "schema_version": 7},
+        {**payload, "schema_version": 9},
         {**payload, "schema_version": 2},
     ):
         with pytest.raises(ValueError, match="unsupported research spec version/kind"):

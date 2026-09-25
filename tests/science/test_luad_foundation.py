@@ -170,9 +170,9 @@ def test_luad_spec_is_the_single_production_spec():
     assert "_score is provider selection metadata" in spec.gene_selection_rule()
 
 
-def test_spec_boundary_reader_is_strict_schema_7():
+def test_spec_boundary_reader_is_strict_schema_8():
     payload = LUAD_RESEARCH_V1.as_dict()
-    assert payload["schema_version"] == RESEARCH_SPEC_SCHEMA_VERSION == 7
+    assert payload["schema_version"] == RESEARCH_SPEC_SCHEMA_VERSION == 8
     assert research_spec_from_dict(json.loads(json.dumps(payload))) == LUAD_RESEARCH_V1
 
     legacy = dict(payload)

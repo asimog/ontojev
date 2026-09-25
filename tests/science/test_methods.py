@@ -289,7 +289,7 @@ def test_scientific_sufficiency_requires_complete_acquisition_and_no_missingness
 @pytest.mark.parametrize("method_id", sorted(METHODS))
 def test_method_registry_declares_typed_contract_fields(method_id):
     definition = METHODS[method_id]
-    assert definition.version == "1"
+    assert definition.version == ("2" if definition.method_id.endswith("_V2") else "1")
     for field in ("purpose", "analysis_unit", "population_semantics", "duplicate_rule",
                   "eligibility", "minimum_n", "sampling_rule", "estimator",
                   "missingness_handling", "provenance_requirements", "limitations"):

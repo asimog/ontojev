@@ -70,16 +70,30 @@ def test_invalid_evidence_prevents_all_provider_calls(runtime, monkeypatch):
 def test_documented_hard_caps_are_the_run_defaults():
     caps = BudgetCaps()
     assert caps.max_requests == GDC_MAX_REQUESTS_HARD_CAP == 150
-    assert caps.max_bytes == GDC_MAX_BYTES_HARD_CAP == 64 * 1024 * 1024
+    assert caps.max_bytes == GDC_MAX_BYTES_HARD_CAP == 256 * 1024 * 1024
     assert caps.per_response_bytes == GDC_PER_RESPONSE_BYTES_HARD_CAP == 5 * 1024 * 1024
     assert caps.timeout_seconds == GDC_TIMEOUT_SECONDS_HARD_CAP == 30.0
-    assert caps.max_pages_per_query == 10
+    assert caps.max_pages_per_query == 48
     assert caps.max_case_ids == 250
     assert caps.max_gene_ids == 100
     assert caps.max_retries == 2
     assert JEV_MAX_STATES_HARD_CAP == 1000
     assert JEV_TIMEOUT_SECONDS_HARD_CAP == 30.0
     assert LLM_TIMEOUT_SECONDS_HARD_CAP == 120.0
+
+
+def test_settings_defaults_stay_at_the_original_operational_budgets():
+    """The byte ceiling was enlarged for the occurrence scan only.
+
+    General run settings keep the original 64 MiB default; the systematic
+    discovery worker constructs the scan budget explicitly from the documented
+    domain constants, and operational settings may never exceed the hard cap.
+    """
+    settings = Settings.from_env()
+    assert settings.gdc_max_bytes == 64 * 1024 * 1024
+    assert settings.gdc_max_bytes < GDC_MAX_BYTES_HARD_CAP
+    assert settings.gdc_max_requests == 150
+    assert settings.gdc_per_response_bytes == GDC_PER_RESPONSE_BYTES_HARD_CAP
 
 
 def test_settings_refuse_values_above_the_documented_caps(tmp_path, monkeypatch):
@@ -102,7 +116,8 @@ def test_settings_refuse_values_above_the_documented_caps(tmp_path, monkeypatch)
 
     settings = Settings.from_env()
     assert settings.gdc_max_requests == GDC_MAX_REQUESTS_HARD_CAP
-    assert settings.gdc_max_bytes == GDC_MAX_BYTES_HARD_CAP
+    assert settings.gdc_max_bytes == 64 * 1024 * 1024
+    assert settings.gdc_max_bytes < GDC_MAX_BYTES_HARD_CAP
     assert settings.gdc_per_response_bytes == GDC_PER_RESPONSE_BYTES_HARD_CAP
     assert settings.gdc_timeout_seconds == GDC_TIMEOUT_SECONDS_HARD_CAP
     assert settings.jev_max_states == JEV_MAX_STATES_HARD_CAP

@@ -22,6 +22,7 @@ MAX_FILES_PAGE = 5
 MAX_PROJECTS_PAGE = 100
 MAX_DISCOVERY_HITS = 20
 MAX_CNV_OCCURRENCES_PAGE = 250
+MAX_SSM_OCCURRENCES_PAGE = 10000
 
 GENES_UNIVERSE_BIOTYPE = "protein_coding"
 GENES_UNIVERSE_SORT = "gene_id:asc"
@@ -64,6 +65,7 @@ _ENDPOINT_LIST = (
     EndpointSpec("gene_expression_gene_selection", "POST", "/gene_expression/gene_selection"),
     EndpointSpec("gene_expression_values", "POST", "/gene_expression/values"),
     EndpointSpec("cnv_occurrences", "GET", "/cnv_occurrences", retryable=True),
+    EndpointSpec("ssm_occurrences", "GET", "/ssm_occurrences", retryable=True),
     EndpointSpec("projects_mapping", "GET", "/projects/_mapping", retryable=True, runtime=False),
 )
 
@@ -354,6 +356,39 @@ def cnv_occurrences_request(project_id: str, gene_id: str, *, offset: int = 0,
             )),
         },
         logical_query_id=f"cnv-occurrences:{project_id}:{gene_id}",
+        page=(offset // size) + 1,
+    )
+
+
+def ssm_occurrence_page_request(project_id: str, *, offset: int = 0,
+                                size: int = MAX_SSM_OCCURRENCES_PAGE) -> GDCRequest:
+    """One complete-scan page of the project's released occurrence records.
+
+    Fixed bounded shape: project-scoped filter, deterministic ascending sort,
+    occurrence identity plus case identity plus the annotated gene identity.
+    No other query surface is expressible; distinct-case derivation happens
+    locally over validated records, never from an aggregation bucket.
+    """
+    _validate_ids([project_id], limit=1, label="project_id")
+    _validate_bounded_int(size, minimum=1, maximum=MAX_SSM_OCCURRENCES_PAGE,
+                          label="SSM occurrence size")
+    _validate_bounded_int(offset, minimum=0, maximum=None, label="SSM occurrence offset")
+    return _request(
+        resolve_endpoint("GET", "/ssm_occurrences"),
+        {
+            "size": size,
+            "from": offset,
+            "sort": "ssm_occurrence_id:asc",
+            "filters": _filter_json({"op": "in", "content": {
+                "field": "case.project.project_id", "value": [project_id]}}),
+            "fields": ",".join((
+                "ssm_occurrence_id",
+                "case.case_id",
+                "case.project.project_id",
+                "ssm.consequence.transcript.gene.gene_id",
+            )),
+        },
+        logical_query_id=f"ssm-occurrence-scan:{project_id}",
         page=(offset // size) + 1,
     )
 

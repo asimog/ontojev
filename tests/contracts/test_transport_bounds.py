@@ -90,9 +90,9 @@ def test_no_authentication_headers_are_ever_sent(transport_builder, loopback):
 def test_default_caps_match_documented_hard_budgets():
     caps = BudgetCaps()
     assert caps.max_requests == 150
-    assert caps.max_bytes == 64 * 1024 * 1024
+    assert caps.max_bytes == 256 * 1024 * 1024
     assert caps.per_response_bytes == 5 * 1024 * 1024
-    assert caps.max_pages_per_query == 10
+    assert caps.max_pages_per_query == 48
     assert caps.max_case_ids == 250
     assert caps.max_gene_ids == 100
 

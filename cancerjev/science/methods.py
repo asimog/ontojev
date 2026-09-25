@@ -171,12 +171,51 @@ METHODS: dict[str, MethodDefinition] = {
             "An absent project or gene bucket is NOT_OBSERVED, never zero, wildtype or a callable negative."
         ),
         unsupported_states=("PARTIAL", "NOT_OBSERVED"),
+        provenance_requirements=("counts response artifact hash", "request hash", "parser version", "release identity"),
         limitations=(
             "No matched denominator; no recurrence fraction.",
             "Provider case universe may change with data releases.",
             "Counts cannot distinguish mutation absence from unassayed cases.",
+            "DEPRECATED FOR SCIENTIFIC USE: external reconciliation (SCIENTIFIC_RECONCILIATION_FIXTURE "
+            "reconciliation_dr46, Data Release 46.0) proved the provider bucket is not a distinct-case "
+            "count and not derivable from released occurrence records; retained only for replay of "
+            "historical artifacts superseded by MUTATION_AFFECTED_CASE_COUNT_V2.",
         ),
-        provenance_requirements=("counts response artifact hash", "request hash", "parser version", "release identity"),
+    ),
+    "MUTATION_AFFECTED_CASE_COUNT_V2": MethodDefinition(
+        method_id="MUTATION_AFFECTED_CASE_COUNT_V2", version="2",
+        purpose=(
+            "Per-project count of distinct cases with at least one released indexed somatic mutation "
+            "affecting the gene, derived from the complete released occurrence record set."
+        ),
+        analysis_unit="case",
+        population_semantics=(
+            "All cases of the project appearing in the released occurrence records; occurrence "
+            "records are one document per (mutation, case) pair with consequence-annotated genes."
+        ),
+        duplicate_rule=(
+            "Distinct case_id per gene derived locally from validated occurrence records: each record "
+            "contributes its case once per distinct annotated gene; occurrence ids are validated for "
+            "global uniqueness across the scan and pages are validated as complete before derivation."
+        ),
+        eligibility="Complete occurrence scan for the declared project (all pages, no short pages).",
+        minimum_n="n>=0; a gene absent from a complete scan is an observed zero",
+        sampling_rule="Complete deterministic scan of the project's occurrence index; no sampling.",
+        estimator="Cardinality of the distinct case_id set annotated to the gene in the complete scan.",
+        effect_definition=None, interval_method=None, null_hypothesis=None, correction_family=None,
+        missingness_handling=(
+            "An incomplete scan is never persisted; an absent gene in a complete scan is an observed "
+            "zero, not NOT_OBSERVED."
+        ),
+        unsupported_states=("PARTIAL", "NOT_ACQUIRED"),
+        limitations=(
+            "No matched denominator; no recurrence fraction.",
+            "Population is the released occurrence corpus; it excludes variants absent from released "
+            "records and may change with data releases.",
+            "Counts cannot distinguish mutation absence from unassayed cases.",
+        ),
+        provenance_requirements=("occurrence page artifact hashes", "request hashes", "parser version",
+                                 "release identity"),
     ),
     "PROJECT_SSM_COVERAGE_V1": MethodDefinition(
         method_id="PROJECT_SSM_COVERAGE_V1", version="1",
@@ -382,6 +421,14 @@ def _method_ref(method_id: str, unit: Unit, *, parameters: MethodParameters | No
 
 
 MUTATION_COUNT_METHOD = _method_ref("MUTATION_AFFECTED_CASE_COUNT_V1", Unit.CASES)
+MUTATION_DISTINCT_CASE_COUNT_METHOD = _method_ref(
+    "MUTATION_AFFECTED_CASE_COUNT_V2", Unit.CASES)
+MUTATION_SCAN_SEMANTICS = (
+    "Affected-case counts are derived locally from the complete per-project released occurrence "
+    "scan: each validated record contributes its case once per distinct annotated gene, and a gene "
+    "absent from a complete scan is an observed zero, not NOT_OBSERVED and not a callable negative; "
+    "no recurrence fraction is computed without a valid gene-specific denominator."
+)
 SSM_COVERAGE_METHOD = _method_ref("PROJECT_SSM_COVERAGE_V1", Unit.CASES)
 EXPRESSION_SD_METHOD = _method_ref("EXPRESSION_LOG2_SUMMARY_V1", Unit.LOG2_UQFPKM_PLUS_ONE,
                                    parameters=MethodParameters(ddof=1, pseudocount=1.0),

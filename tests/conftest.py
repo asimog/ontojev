@@ -38,7 +38,8 @@ def runtime(tmp_path):
 # The everyday gate: focused contract/invariant tests plus one core offline replay.
 # Run with ``python -m pytest -m fast``. Everything else (heavy multi-run integration,
 # browser acceptance and live providers) stays available through the full/offline commands.
-_FAST_PREFIXES = ("tests/contracts/", "tests/science/", "tests/jev/", "tests/unit/")
+_FAST_PREFIXES = ("tests/contracts/", "tests/science/", "tests/jev/", "tests/unit/",
+                  "tests/reconciliation/")
 _FAST_FILES = {
     "tests/test_identity.py",
     "tests/test_fixtures.py",

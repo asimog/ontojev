@@ -117,6 +117,24 @@ class GeneCaseCounts:
 
 
 @dataclass(frozen=True)
+class SsmOccurrenceRecord:
+    occurrence_id: str
+    case_id: str
+    gene_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SsmOccurrencePage:
+    records: tuple[SsmOccurrenceRecord, ...]
+    total: int
+    count: int
+    size: int
+    offset: int
+    pages: int
+    warnings: list[str]
+
+
+@dataclass(frozen=True)
 class ProjectCoverage:
     case_with_ssm: dict[str, int]
     complete: bool
@@ -623,6 +641,84 @@ def parse_cnv_occurrences_page(
                           "cnv_occurrences: short page before reported total")
     return CnvOccurrencesPage(
         tuple(occurrences), values["total"], values["count"], values["size"],
+        values["from"], values["pages"], _warnings(document),
+    )
+
+
+def parse_ssm_occurrence_page(
+    body: bytes,
+    meta: ResponseMeta,
+    *,
+    expected_project: str,
+    expected_offset: int,
+    expected_size: int,
+) -> SsmOccurrencePage:
+    """Strict one-page slice of the project's released occurrence records.
+
+    Every record must carry a unique ascending ``ssm_occurrence_id``, a
+    non-empty ``case.case_id`` inside the requested project, and an optional
+    consequence-annotated gene list (a record without any gene annotation is
+    kept and contributes to no gene). Pagination invariants are exact; a short
+    page before the reported total is an error, never a stop condition.
+    """
+    document = _load_json(body, meta)
+    records: list[SsmOccurrenceRecord] = []
+    seen: set[str] = set()
+    previous_id: str | None = None
+    for hit in _hits(document, "ssm_occurrences"):
+        occurrence_id = _require(hit, "ssm_occurrence_id", (str,), "ssm_occurrences")
+        if occurrence_id in seen:
+            raise ParserError("DUPLICATE_ID", f"ssm_occurrences: duplicate {occurrence_id}")
+        if previous_id is not None and occurrence_id <= previous_id:
+            raise ParserError(
+                "UNEXPECTED_ORDER",
+                f"ssm_occurrences: {occurrence_id} does not ascend after {previous_id}",
+            )
+        previous_id = occurrence_id
+        seen.add(occurrence_id)
+        project_id = _require(hit, "case.project.project_id", (str,), "ssm_occurrences")
+        case_id = _require(hit, "case.case_id", (str,), "ssm_occurrences")
+        if project_id != expected_project:
+            raise ParserError("UNEXPECTED_IDENTIFIER",
+                              f"ssm_occurrences: unrequested project {project_id}")
+        consequences = _optional(hit, "ssm.consequence", (list,), "ssm_occurrences") or []
+        gene_ids: set[str] = set()
+        for consequence in consequences:
+            if not isinstance(consequence, dict):
+                raise ParserError("MALFORMED_JSON", "ssm_occurrences: consequence is not an object")
+            gene_id = _optional(consequence, "transcript.gene.gene_id", (str,), "ssm_occurrences")
+            if gene_id:
+                gene_ids.add(gene_id)
+        records.append(SsmOccurrenceRecord(
+            occurrence_id=occurrence_id, case_id=case_id, gene_ids=tuple(sorted(gene_ids)),
+        ))
+    pagination = _require(document, "data.pagination", (dict,), "ssm_occurrences")
+    values: dict[str, int] = {}
+    for name in ("total", "count", "size", "from", "pages"):
+        value = pagination.get(name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ParserError("INVALID_PAGINATION",
+                              f"ssm_occurrences: pagination {name} must be non-negative integer")
+        values[name] = value
+    if values["size"] < 1:
+        raise ParserError("INVALID_PAGINATION", "ssm_occurrences: size must be positive")
+    if values["count"] != len(records):
+        raise ParserError("INVALID_PAGINATION", "ssm_occurrences: count/records mismatch")
+    if values["from"] != expected_offset:
+        raise ParserError("INVALID_PAGINATION", "ssm_occurrences: offset mismatch")
+    if values["size"] != expected_size:
+        raise ParserError("INVALID_PAGINATION", "ssm_occurrences: size mismatch")
+    expected_pages = math.ceil(values["total"] / expected_size) if values["total"] else 0
+    if values["pages"] != expected_pages:
+        raise ParserError("INVALID_PAGINATION", "ssm_occurrences: pages/total mismatch")
+    if expected_offset + values["count"] > values["total"]:
+        raise ParserError("INVALID_PAGINATION", "ssm_occurrences: page exceeds total")
+    if expected_offset + values["count"] < values["total"] \
+            and values["count"] != expected_size:
+        raise ParserError("INVALID_PAGINATION",
+                          "ssm_occurrences: short page before reported total")
+    return SsmOccurrencePage(
+        tuple(records), values["total"], values["count"], values["size"],
         values["from"], values["pages"], _warnings(document),
     )
 

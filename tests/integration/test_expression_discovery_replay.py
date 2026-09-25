@@ -24,7 +24,7 @@ SPEC = ResearchSpec(
     cohort=CohortSpec("TCGA-LUAD", "lung cancer", "TCGA-LUAD"),
     discovery=DiscoverySpec(
         universe_method="GENE_ID_ASC_INDEXED_PREFIX_V1", biotype="protein_coding",
-        order="GENE_ID_ASC", offset=0, universe_limit=2, mutation_batch_size=2,
+        order="GENE_ID_ASC", offset=0, universe_limit=2, occurrence_scan_page_size=2,
     ),
     acquisition=AcquisitionSpec(
         case_page_size=25, case_batch_size=20, max_cohort_cases=25,

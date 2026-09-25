@@ -130,10 +130,10 @@ def _universe(value: object) -> TestedUniverse:
 
 
 def _discovery_spec(value: object) -> DiscoverySpec:
-    d = obj(value, "universe_method biotype order offset universe_limit mutation_batch_size")
+    d = obj(value, "universe_method biotype order offset universe_limit occurrence_scan_page_size")
     return DiscoverySpec(string(d["universe_method"]), string(d["biotype"]), string(d["order"]),
                          integer(d["offset"]), integer(d["universe_limit"]),
-                         integer(d["mutation_batch_size"]))
+                         integer(d["occurrence_scan_page_size"]))
 
 
 def _disposition(value: object) -> DiscoveryDisposition:

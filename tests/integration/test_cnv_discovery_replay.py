@@ -70,14 +70,14 @@ class CnvReplayTransport:
                 self._hit(gene_id, index, "Loss", "ASCAT3", sample=None)
                 for index in range(size)
             ]
-        elif gene_id.endswith("1"):
+        elif gene_id.endswith("2"):
             total = 3
             records = [
                 self._hit(gene_id, 0, "Loss", "ASCAT3", sample=None),
                 self._hit(gene_id, 1, "Gain", "ASCAT2", sample="sample-1", case_index=0),
                 self._hit(gene_id, 2, "Amplification", "AscatNGS", sample=None),
             ]
-        elif gene_id.endswith("2"):
+        elif gene_id.endswith("1"):
             total = 1
             records = [self._hit(gene_id, 0, "Homozygous Deletion", "ASCAT3", sample=None)]
         else:
@@ -143,7 +143,7 @@ def test_cnv_discovery_replay_binds_stage4_and_preserves_conflicts(runtime):
 
     assert result.survivor_ids == mutation_result.survivor_ids
     assert result.mutation_discovery_hash
-    assert [request.endpoint.name for request in transport.requests].count("cnv_occurrences") == 4
+    assert [request.endpoint.name for request in transport.requests].count("cnv_occurrences") == 6
     first = result.entries[0]
     assert isinstance(first.outcome, CnvOccurrenceResult)
     assert [item.raw_category for item in first.categories] == ["Amplification", "Gain", "Loss"]

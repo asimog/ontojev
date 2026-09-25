@@ -9,6 +9,7 @@ from pathlib import Path
 
 from cancerjev.cli.console import render_event, render_json_event
 from cancerjev.config import Settings, load_local_env
+from cancerjev.domain.discovery import OCCURRENCE_SCAN_MAX_BYTES, OCCURRENCE_SCAN_MAX_PAGES
 from cancerjev.domain.measurements import ContractError
 from cancerjev.gdc.capture import CaptureSink, run_contract_probe
 from cancerjev.gdc.parsers import ParserError
@@ -134,10 +135,14 @@ def _discover(settings: Settings, repository: Repository, artifacts: ArtifactSto
     from cancerjev.research.specs import LUAD_RESEARCH_V1
 
     spec = LUAD_RESEARCH_V1
+    # The systematic-discovery worker declares the mutation occurrence-scan budget
+    # explicitly: a complete project scan is the scientific quantity source, and its
+    # declared ceiling lives in domain.discovery (not env-adjustable in this change).
     caps = BudgetCaps(
         max_requests=settings.gdc_max_requests,
-        max_bytes=settings.gdc_max_bytes,
+        max_bytes=OCCURRENCE_SCAN_MAX_BYTES,
         per_response_bytes=settings.gdc_per_response_bytes,
+        max_pages_per_query=OCCURRENCE_SCAN_MAX_PAGES,
         timeout_seconds=settings.gdc_timeout_seconds,
     )
     run_id = repository.create_run(

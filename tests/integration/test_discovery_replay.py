@@ -2,10 +2,13 @@
 
 ``DiscoveryReplayTransport`` substitutes only the network boundary: every
 response flows through the real builders, strict parsers, tested universe,
-batched count acquisition, deterministic reducer, typed codec and the artifact +
-event persistence path. The test reloads the persisted result through the
-repository/artifact store and verifies the identity hash, and asserts the run
-never touches Jev.
+complete occurrence-scan acquisition, deterministic reducer, typed codec and
+the artifact + event persistence path. The synthetic occurrence corpus encodes
+documented semantics: a case with two mutations in one gene counts once
+(distinct cases), a record annotated to two genes contributes its case to both,
+and a gene absent from the corpus is an observed zero. The test reloads the
+persisted result through the repository/artifact store and verifies the
+identity hash, and asserts the run never touches Jev.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from uuid import uuid4
 
 from cancerjev.domain.codecs import discovery_identity, read_discovery
 from cancerjev.domain.events import utc_now
+from cancerjev.domain.measurements import ObservedCount
 from cancerjev.gdc.endpoints import GDCRequest
 from cancerjev.gdc.transport import GDCResponse
 from cancerjev.research.discovery import run_mutation_discovery
@@ -31,29 +35,63 @@ from cancerjev.storage.artifacts import ArtifactStore
 RELEASE = "Data Release 46.0 - August 10, 2026"
 PROJECT = "TCGA-LUAD"
 CASE_COUNT = 600
-UNIVERSE = [
-    ("ENSG00000000001", "S1", 50),
-    ("ENSG00000000002", "S2", 50),
-    ("ENSG00000000003", "S3", 30),
-    ("ENSG00000000004", "S4", 0),
-    ("ENSG00000000005", "S5", None),
-    ("ENSG00000000006", "S6", 7),
-]
-PROVIDER_TOP = ["ENSG00000000006", "ENSG00000000001"]
+SCAN_PAGE_SIZE = 40
+G1, G2, G3, G4, G5, G6 = (f"ENSG0000000000{index}" for index in range(1, 7))
+UNIVERSE = [(G1, "S1"), (G2, "S2"), (G3, "S3"), (G4, "S4"), (G5, "S5"), (G6, "S6")]
+PROVIDER_TOP = [G6, G1]
 
 SPEC = ResearchSpec(
-    spec_id="TEST_DISCOVERY_V1",
-    intent="bounded offline systematic discovery replay",
+    spec_id="TEST_DISCOVERY_V2",
+    intent="bounded offline systematic discovery replay over the occurrence scan",
     cohort=CohortSpec(cohort_id=PROJECT, domain="lung cancer", project_id=PROJECT),
     discovery=DiscoverySpec(universe_method="GENE_ID_ASC_INDEXED_PREFIX_V1",
                             biotype="protein_coding", order="GENE_ID_ASC", offset=0,
-                            universe_limit=6, mutation_batch_size=2),
+                            universe_limit=6, occurrence_scan_page_size=SCAN_PAGE_SIZE),
     acquisition=AcquisitionSpec(case_page_size=250, case_batch_size=250, max_cohort_cases=1000,
                                 discovery_gene_limit=20, count_gene_limit=100,
                                 candidate_gene_limit=10, expression_file_sample_size=5),
     limits=ScientificLimits(),
     allowed_actions=("CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1"),
 )
+
+
+def _synthetic_occurrences() -> list[dict]:
+    """Deterministic released-occurrence corpus with distinct-case semantics.
+
+    G1: 50 distinct cases across 51 documents (case 0000 carries two mutations).
+    G2: 51 distinct cases (50 own plus one shared document with G6).
+    G3: 30 distinct cases. G4: absent (observed zero). G5: 2 distinct cases.
+    G6: 7 distinct cases (one document shared with G2).
+    """
+    records: list[dict] = []
+
+    def add(occ_id: str, case_id: str, gene_ids: list[str]) -> None:
+        records.append({"occ_id": occ_id, "case_id": case_id, "gene_ids": sorted(gene_ids)})
+
+    counter = 0
+
+    def next_id() -> str:
+        nonlocal counter
+        counter += 1
+        return f"occ-{counter:06d}"
+
+    for index in range(50):
+        add(next_id(), f"{PROJECT}-case-{index:04d}", [G1])
+    add(next_id(), f"{PROJECT}-case-0000", [G1])
+    for index in range(50):
+        add(next_id(), f"{PROJECT}-case-{index:04d}", [G2])
+    add(next_id(), f"{PROJECT}-case-0050", [G2, G6])
+    for index in range(30):
+        add(next_id(), f"{PROJECT}-case-{index:04d}", [G3])
+    add(next_id(), f"{PROJECT}-case-0000", [G5])
+    add(next_id(), f"{PROJECT}-case-0001", [G5])
+    for index in range(51, 57):
+        add(next_id(), f"{PROJECT}-case-{index:04d}", [G6])
+    records.sort(key=lambda record: record["occ_id"])
+    return records
+
+
+OCCURRENCES = _synthetic_occurrences()
 
 
 def _json(payload: object) -> bytes:
@@ -123,24 +161,24 @@ class DiscoveryReplayTransport:
             size = int(params["size"])
             page = UNIVERSE[offset:offset + size]
             hits = [{"gene_id": gene_id, "symbol": symbol, "biotype": "protein_coding"}
-                    for gene_id, symbol, _ in page]
+                    for gene_id, symbol in page]
             return self._respond(name, _json({"data": {"hits": hits, "pagination": {
                 "count": len(hits), "total": len(UNIVERSE), "size": size, "from": offset,
                 "pages": math.ceil(len(UNIVERSE) / size)}}}), request)
-        if name == "top_cases_counts_by_genes":
-            requested = params["gene_ids"].split(",")
-            counts = {gene_id: count for gene_id, _, count in UNIVERSE
-                      if gene_id in requested and count is not None}
-            incomplete = "ENSG00000000005" in requested
-            gene_buckets = [{"key": gene_id, "doc_count": count}
-                            for gene_id, count in sorted(counts.items())]
-            return self._respond(name, _json({
-                "took": 4, "timed_out": False, "_shards": {"total": 5, "successful": 5, "failed": 0},
-                "sum_other_doc_count": 2 if incomplete else 0,
-                "doc_count_error_upper_bound": 2 if incomplete else 0,
-                "aggregations": {"projects": {"buckets": [{
-                    "key": PROJECT, "doc_count": sum(counts.values()),
-                    "genes": {"my_genes": {"gene_id": {"buckets": gene_buckets}}}}]}}}), request)
+        if name == "ssm_occurrences":
+            offset = int(params["from"])
+            size = int(params["size"])
+            page = OCCURRENCES[offset:offset + size]
+            hits = [{
+                "ssm_occurrence_id": record["occ_id"],
+                "case": {"case_id": record["case_id"], "project": {"project_id": PROJECT}},
+                "ssm": {"consequence": [
+                    {"transcript": {"gene": {"gene_id": gene_id}}} for gene_id in record["gene_ids"]
+                ]},
+            } for record in page]
+            return self._respond(name, _json({"data": {"hits": hits, "pagination": {
+                "count": len(hits), "total": len(OCCURRENCES), "size": size, "from": offset,
+                "pages": math.ceil(len(OCCURRENCES) / size)}}}), request)
         if name == "mutated_cases_count_by_project":
             return self._respond(name, _json({
                 "took": 3, "timed_out": False, "_shards": {"total": 5, "successful": 5, "failed": 0},
@@ -171,57 +209,56 @@ def test_discovery_replay_persists_and_reloads_the_typed_result(runtime):
     result = run_mutation_discovery(run_id, transport, repository, artifacts, emit, SPEC)
 
     # Universe contract: the complete bounded prefix, hash-bound.
-    assert result.universe.ordered_ids == tuple(gene_id for gene_id, _, _ in UNIVERSE)
+    assert result.universe.ordered_ids == tuple(gene_id for gene_id, _ in UNIVERSE)
     assert result.universe.complete is True
     assert result.universe.requested_limit == 6
     assert result.universe.reported_total == 6
     assert result.universe.membership_hash
 
-    # Batching: coverage once, one ≤100-gene request per batch, disjoint, universe order.
-    count_requests = [request for request in transport.requests
-                      if request.endpoint.name == "top_cases_counts_by_genes"]
+    # Occurrence scan: complete deterministic paging, one coverage request.
+    scan_requests = [request for request in transport.requests
+                     if request.endpoint.name == "ssm_occurrences"]
     coverage_requests = [request for request in transport.requests
                          if request.endpoint.name == "mutated_cases_count_by_project"]
     assert len(coverage_requests) == 1
-    requested_batches = [dict(request.params)["gene_ids"].split(",")
-                         for request in count_requests]
-    assert requested_batches == [
-        ["ENSG00000000001", "ENSG00000000002"], ["ENSG00000000003", "ENSG00000000004"],
-        ["ENSG00000000005", "ENSG00000000006"]]
+    assert len(scan_requests) == 4
+    assert [int(dict(request.params)["from"]) for request in scan_requests] == [0, 40, 80, 120]
+    assert all(int(dict(request.params)["size"]) == SCAN_PAGE_SIZE for request in scan_requests)
+    assert _project_filter_value(scan_requests[0]) == PROJECT
+    count_requests = [request for request in transport.requests
+                      if request.endpoint.name == "top_cases_counts_by_genes"]
+    assert count_requests == []
 
-    # Deterministic reduction: count desc, gene_id tie break, zero eligible, absence never zero.
+    # Deterministic reduction: distinct affected cases desc, gene_id tie break, observed zeros.
     by_id = {entry.entity.gene_id: entry for entry in result.entries}
-    assert result.survivor_ids == ("ENSG00000000001", "ENSG00000000002", "ENSG00000000003",
-                                   "ENSG00000000004")
+    assert result.survivor_ids == (G2, G1, G3, G6, G5, G4)
     ranks = {gene_id: entry.rank for gene_id, entry in by_id.items()}
-    assert ranks == {"ENSG00000000001": 1, "ENSG00000000002": 2, "ENSG00000000003": 3,
-                     "ENSG00000000004": 4, "ENSG00000000005": None, "ENSG00000000006": None}
-    from cancerjev.domain.measurements import (
-        ObservedCount,
-        UnavailableMeasurement,
-        UnavailableStatus,
-    )
-    zero = by_id["ENSG00000000004"].outcome.affected_cases
-    assert isinstance(zero, ObservedCount) and zero.value == 0
-    absent = by_id["ENSG00000000005"].outcome.affected_cases
-    assert isinstance(absent, UnavailableMeasurement)
-    assert absent.status is UnavailableStatus.UNAVAILABLE
-    partial = by_id["ENSG00000000006"].outcome.affected_cases
-    assert isinstance(partial, ObservedCount) and partial.value == 7
+    assert ranks == {G2: 1, G1: 2, G3: 3, G6: 4, G5: 5, G4: 6}
+    values = {gene_id: entry.outcome.affected_cases.value for gene_id, entry in by_id.items()}
+    assert values == {G1: 50, G2: 51, G3: 30, G4: 0, G5: 2, G6: 7}
+    assert all(isinstance(entry.outcome.affected_cases, ObservedCount)
+               for entry in result.entries)
     totals: dict[str, int] = {}
     for entry in result.entries:
         totals[entry.disposition.value] = totals.get(entry.disposition.value, 0) + 1
-    assert totals == {"RETAINED": 4, "MUTATION_AGGREGATION_PARTIAL": 2}
-    assert len(result.entries) == len(UNIVERSE)
+    assert totals == {"RETAINED": 6}
+
+    # The affected measurement cites the immutable scan bundle, not an aggregation bucket.
+    first_source = by_id[G1].outcome.affected_cases.sources[0]
+    assert first_source.endpoint == "/ssm_occurrences/scan"
 
     # Labelled comparator: descriptive overlap only.
     assert result.comparator is not None
     assert result.comparator.provider_gene_ids == tuple(PROVIDER_TOP)
-    assert result.comparator.survivor_overlap == ("ENSG00000000001",)
+    assert result.comparator.survivor_overlap == (G1, G6)
 
-    # Persistence: one immutable artifact; reload verifies identity and content.
+    # Persistence: one immutable result artifact plus the immutable scan bundle.
     completed = [event for event in events if event["type"] == "DISCOVERY_COMPLETED"]
     assert len(completed) == 1
+    assert completed[0]["data"]["occurrence_scan"]["pages"] == 4
+    assert completed[0]["data"]["occurrence_scan"]["total_occurrences"] == len(OCCURRENCES)
+    scan_metadata = repository.artifact(completed[0]["data"]["occurrence_scan"]["artifact_id"])
+    assert scan_metadata["sha256"] == completed[0]["data"]["occurrence_scan"]["artifact_sha256"]
     metadata = repository.artifact(completed[0]["data"]["artifact_id"])
     assert metadata["sha256"] == completed[0]["data"]["artifact_sha256"]
     raw = artifacts.read(metadata["relative_path"], metadata["sha256"])
@@ -232,8 +269,9 @@ def test_discovery_replay_persists_and_reloads_the_typed_result(runtime):
     run_events = repository.events(run_id, 0, 500)["items"]
     assert not [event for event in run_events if event["type"].startswith("JEV")]
     assert [event["type"] for event in run_events if event["type"].startswith("DISCOVERY")] == [
-        "DISCOVERY_STARTED", "DISCOVERY_UNIVERSE_ACQUIRED", "DISCOVERY_COMPLETED"]
+        "DISCOVERY_STARTED", "DISCOVERY_UNIVERSE_ACQUIRED", "DISCOVERY_OCCURRENCE_SCAN_ACQUIRED",
+        "DISCOVERY_COMPLETED"]
 
     # Limitation sentences travel with the result.
     assert any("not the entire genome" in line for line in result.limitations)
-    assert any("NOT_OBSERVED" in line for line in result.limitations)
+    assert any("observed zero" in line for line in result.limitations)
