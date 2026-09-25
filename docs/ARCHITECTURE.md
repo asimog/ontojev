@@ -26,6 +26,8 @@ Evidence maturity is derived deterministically from persisted typed evidence (`e
 
 Pathway membership is adopted from Reactome top-level pathways (`REACTOME_TOP_LEVEL_ENSEMBL_V1`, CC-BY-4.0, filtered Homo sapiens snapshot with a recorded hash and an exact-identifier contract against the live Content Service for TP53); it is descriptive membership only — enrichment, p/q-values and cross-modal pathway analysis are deferred to their declared contracts, and an unmapped gene is `NO_PATHWAY_MEMBERSHIP_OBSERVED`, never negative.
 
+The TypeSafe/Jev capability posture is committed in [TYPESAFE_DECISIONS.md](TYPESAFE_DECISIONS.md) (`typesafe-decisions-v1`, machine-checked): current Wide/Deep/hypothesis questions are kept and were re-validated live against the pinned model on 2026-09-25; **Arm Jev is DEFERRED** because deterministic dispositions plus typed pending-semantic-review carrying already cover admission, so `JEV_REVIEW` entries are never admitted and never silently dropped.
+
 ### Measurement reconciliation retained from the previous architecture document
 
 The frozen `tests/reconciliation/fixtures/reconciliation_dr46` corpus independently compares analysis buckets with released `/ssm_occurrences`. For its TP53/TCGA-LUAD capture, the analysis bucket is 393, released occurrences are 299 and distinct cases are 281. These are fixture-specific observations, not current live counts. A gene with no released occurrences can still have a nonzero analysis bucket. The bucket must therefore not be presented as a distinct released-case measurement.

@@ -45,6 +45,7 @@ files = [
   "cancerjev/science/expression.py", "cancerjev/science/descriptors.py", "cancerjev/science/methods.py",
   "cancerjev/science/actions.py",
   "cancerjev/jev/contracts.py", "cancerjev/jev/projection.py",
+  "cancerjev/jev/posture.py",
   "cancerjev/storage/readers.py",
   "apps/api/serializers.py",
 ]

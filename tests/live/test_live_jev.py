@@ -23,9 +23,14 @@ def test_real_jev_evaluation_of_one_state(runtime, monkeypatch):
         pytest.skip("TYPESAFE_API_KEY is not set")
     settings, repository, artifacts = runtime
     run_id, _, records = _live_state_records(runtime, monkeypatch)
+
+    def emit(target_run_id: str, event_type: str, key: str, message: str, **kwargs) -> None:
+        repository.append_event(target_run_id, event_type=event_type, idempotency_key=key,
+                                message=message, **kwargs)
+
     service = JevService(settings, repository, artifacts)
     evaluation = service.evaluate_record(run_id=run_id, state=records[0],
-                                         emit=lambda *args, **kwargs: None)
+                                         emit=emit)
     assert evaluation.error_code is None
     vector = evaluation.boundary_representation()
     assert vector["resolved_model"] == settings.jev_model

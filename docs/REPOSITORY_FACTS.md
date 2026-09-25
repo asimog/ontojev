@@ -22,6 +22,7 @@ that describes behavior (see the source-of-truth hierarchy in
 {
   "action_registry_version": "3",
   "api_version": "3.0.0",
+  "arm_jev_decision": "DEFER",
   "cnv_discovery_result_schema_version": 1,
   "cnv_disposition_policy": "cnv-dispositions-v1",
   "deep_next_move_policy": "deep-policy-v2",
@@ -57,6 +58,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "state_projection_version": "jev-state-projection-v4",
   "statistical_state_schema_version": 5,
   "systematic_universe_method": "GENE_ID_ASC_INDEXED_COMPLETE_V1",
+  "typesafe_decision_record": "1",
   "wide_admission_policy": "wide-policy-v2",
   "wide_baseline_policy": "baseline-wide-v2",
   "wide_question_set": "wide-v3"
