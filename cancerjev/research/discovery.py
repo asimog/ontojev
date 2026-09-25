@@ -22,9 +22,14 @@ from cancerjev.domain.codecs import write_discovery
 from cancerjev.domain.discovery import (
     ABSENCE_LIMITATION,
     COMPARATOR_LIMITATION,
+    COMPLETE_UNIVERSE_LIMITATION,
+    COMPLETE_UNIVERSE_METHOD,
     MAX_DISCOVERY_SURVIVORS,
+    MAX_UNIVERSE_DEFECT_CEILING,
+    MAX_UNIVERSE_DEFECT_PAGES,
     REDUCER_METHOD_ID,
     REDUCER_VERSION,
+    SYSTEMATIC_UNIVERSE_PAGE_SIZE,
     UNIVERSE_LIMITATION,
     UNIVERSE_PAGE_CAP,
     UNIVERSE_SOURCE,
@@ -47,6 +52,7 @@ from cancerjev.domain.measurements import (
     TestedUniverse,
     digest,
 )
+from cancerjev.domain.shards import ShardKind, ShardLedger, ShardRecord, ShardStatus
 from cancerjev.domain.scientific import MutationCountResult
 from cancerjev.gdc.endpoints import (
     SSM_OCCURRENCE_FIELDS,
@@ -76,12 +82,15 @@ from cancerjev.research.acquisition import (
     response_meta,
     response_operational_source,
 )
+from cancerjev.research.shards import ledger_summary, publish_shard_ledger
 from cancerjev.research.specs import ResearchSpec
 from cancerjev.science.methods import scanned_mutation_result
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
 
-UNIVERSE_PAGE_SIZE = 100
+UNIVERSE_PAGE_SIZE = SYSTEMATIC_UNIVERSE_PAGE_SIZE
+UNIVERSE_SOURCE_COMPLETE = "GDC_GENES_INDEXED_COMPLETE"
+UNIVERSE_PAGE_CAP_COMPLETE = MAX_UNIVERSE_DEFECT_PAGES
 COMPARATOR_RULE = "PROVIDER_TOP_MUTATED_BASELINE"
 COMPLETE_COUNT_REASON = "COMPLETE_DISTINCT_AFFECTED_CASE_COUNT"
 SCAN_ENDPOINT_DESCRIPTOR = "/ssm_occurrences/scan"
@@ -94,37 +103,57 @@ class GeneUniverseAcquisition:
     sources: tuple[OperationalSource, ...]
     warnings: tuple[str, ...]
     page_count: int
+    ledger: ShardLedger
 
 
 def acquire_gene_universe(transport: AcquisitionTransport, discovery_spec: DiscoverySpec,
                           release: str | None) -> GeneUniverseAcquisition:
-    """Enumerate the fixed gene-id-ascending protein-coding prefix, failing closed.
+    """Enumerate the declared gene-id-ascending protein-coding universe, failing closed.
 
-    Pages are validated by ``parse_genes_page`` independently; across pages the
-    provider total must stay stable and ids must ascend with no duplicates. The
-    loop stops at the declared limit or the provider's end of records; a short
-    page before the declared slice is satisfied is an error.
+    The complete method enumerates every gene the pinned release reports up to a
+    declared defect guard ceiling (a sanity check, never a sampler); the
+    historical prefix method enumerates its bounded indexed slice. Pages are
+    validated independently; across pages the provider total must stay stable and
+    ids must ascend with no duplicates. Every page is registered in an
+    operational shard ledger; a short page before the declared slice is
+    satisfied, a ceiling breach, or a total change raises and no terminal ledger
+    is ever published for an incomplete sweep.
     """
     universe_release = release or "UNVERIFIED_RELEASE"
+    complete_method = discovery_spec.universe_method == COMPLETE_UNIVERSE_METHOD
+    page_ceiling = UNIVERSE_PAGE_CAP_COMPLETE if complete_method else UNIVERSE_PAGE_CAP
     sources: list[OperationalSource] = []
     warnings: list[str] = []
     genes: dict[str, GeneRecord] = {}
     ordered_ids: list[str] = []
+    records: list[ShardRecord] = []
     total: int | None = None
     offset = 0
     page_count = 0
-    while offset < discovery_spec.universe_limit:
+    while True:
+        if not complete_method and offset >= discovery_spec.universe_limit:
+            break
+        if complete_method and total is not None and offset >= total:
+            break
         response = transport.request(genes_universe_request(offset, UNIVERSE_PAGE_SIZE))
         page = parse_genes_page(response.body, response_meta(response, release),
                                 expected_offset=offset, expected_size=UNIVERSE_PAGE_SIZE)
         sources.append(response_operational_source(response, release=release))
         warnings.extend(page.warnings)
         page_count += 1
-        if page_count > UNIVERSE_PAGE_CAP:
-            raise LiveRunError("UNIVERSE_PAGE_CAP_EXCEEDED",
-                               f"genes universe exceeded {UNIVERSE_PAGE_CAP} pages")
+        if page_count > page_ceiling:
+            raise LiveRunError(
+                "UNIVERSE_PAGE_CAP_EXCEEDED",
+                f"genes universe exceeded {page_ceiling} pages",
+            )
         if total is None:
             total = page.total
+            if complete_method and total - discovery_spec.offset > discovery_spec.universe_limit:
+                raise LiveRunError(
+                    "UNIVERSE_DEFECT_CEILING_EXCEEDED",
+                    f"genes universe reports {total} genes beyond the declared defect guard "
+                    f"ceiling {discovery_spec.universe_limit}",
+                )
         elif page.total != total:
             raise LiveRunError(
                 "UNIVERSE_TOTAL_CHANGED",
@@ -138,24 +167,34 @@ def acquire_gene_universe(transport: AcquisitionTransport, discovery_spec: Disco
                 )
             genes[gene.gene_id] = gene
             ordered_ids.append(gene.gene_id)
+        records.append(ShardRecord(
+            index=page_count - 1, status=ShardStatus.COMPLETED, item_count=page.count,
+            request_hash=response.request_hash, response_hash=response.body_sha256,
+            artifact_id=response.artifact.artifact_id, detail=None,
+        ))
         if page.count == UNIVERSE_PAGE_SIZE:
             offset += UNIVERSE_PAGE_SIZE
             continue
         break
-    expected = min(discovery_spec.universe_limit, total or 0)
-    if len(ordered_ids) != expected:
+    expected = ((total or 0) - discovery_spec.offset) if complete_method else min(
+        discovery_spec.universe_limit, total or 0)
+    if not records or len(ordered_ids) != expected:
         raise LiveRunError(
             "UNIVERSE_SLICE_INCOMPLETE",
             f"genes universe returned {len(ordered_ids)} of the expected {expected} genes",
         )
     universe = TestedUniverse(
-        ordered_ids=tuple(ordered_ids), source=UNIVERSE_SOURCE, release=universe_release,
-        filter_description=discovery_spec.biotype, order=discovery_spec.order,
-        offset=discovery_spec.offset, requested_limit=discovery_spec.universe_limit,
-        reported_total=total or 0,
+        ordered_ids=tuple(ordered_ids),
+        source=UNIVERSE_SOURCE_COMPLETE if complete_method else UNIVERSE_SOURCE,
+        release=universe_release, filter_description=discovery_spec.biotype,
+        order=discovery_spec.order, offset=discovery_spec.offset,
+        requested_limit=discovery_spec.universe_limit, reported_total=total or 0,
         complete=(total is not None and len(ordered_ids) == expected),
     )
-    return GeneUniverseAcquisition(universe, genes, tuple(sources), tuple(warnings), page_count)
+    ledger = ShardLedger(kind=ShardKind.UNIVERSE_PAGES, required=len(records),
+                         records=tuple(records))
+    return GeneUniverseAcquisition(universe, genes, tuple(sources), tuple(warnings), page_count,
+                                   ledger)
 
 
 def _mutation_outcome(project_id: str, gene: GeneRecord, population_frame: PopulationFrame,
@@ -361,6 +400,14 @@ def run_mutation_discovery(run_id: str, transport: AcquisitionTransport, reposit
     universe_acquisition = acquire_gene_universe(transport, discovery, release)
     sources.extend(universe_acquisition.sources)
     warnings.extend(universe_acquisition.warnings)
+    universe_ledger_artifact = publish_shard_ledger(
+        artifacts, repository, run_id, universe_acquisition.ledger,
+        relative_path=f"runs/{run_id}/discovery/universe-shards.json")
+    if not universe_acquisition.ledger.terminal:
+        raise LiveRunError(
+            "SHARD_LEDGER_NOT_TERMINAL",
+            "the universe shard ledger is not terminal; no reduction may finalize",
+        )
     emit("DISCOVERY_UNIVERSE_ACQUIRED", f"discovery:universe:{uuid4()}",
          "Indexed protein-coding gene universe enumerated.",
          data={"total": universe_acquisition.universe.reported_total,
@@ -369,7 +416,9 @@ def run_mutation_discovery(run_id: str, transport: AcquisitionTransport, reposit
                "complete": universe_acquisition.universe.complete,
                "pages": universe_acquisition.page_count,
                "membership_hash": universe_acquisition.universe.membership_hash,
-               "release": universe_acquisition.universe.release})
+               "release": universe_acquisition.universe.release,
+               "shard_ledger": ledger_summary(universe_acquisition.ledger)},
+         artifact_refs=[universe_ledger_artifact.ref()])
     scan = acquire_project_mutation_occurrence_scan(
         transport, cohort.project_id, discovery.occurrence_scan_page_size, release)
     sources.extend(scan.sources)
@@ -405,7 +454,10 @@ def run_mutation_discovery(run_id: str, transport: AcquisitionTransport, reposit
         discovery=discovery, universe=universe_acquisition.universe,
         reducer=_reducer_identity(cohort.project_id), entries=entries,
         survivor_ids=survivor_ids, sources=tuple(sources), warnings=tuple(warnings),
-        limitations=(UNIVERSE_LIMITATION, ABSENCE_LIMITATION, COMPARATOR_LIMITATION),
+        limitations=((COMPLETE_UNIVERSE_LIMITATION
+                      if discovery.universe_method == COMPLETE_UNIVERSE_METHOD
+                      else UNIVERSE_LIMITATION),
+                     ABSENCE_LIMITATION, COMPARATOR_LIMITATION),
         comparator=comparator,
     )
     artifact = artifacts.publish(

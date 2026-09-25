@@ -32,6 +32,7 @@ from cancerjev.domain.discovery import REDUCER_METHOD_ID, REDUCER_VERSION
 from cancerjev.domain.dossier import DOSSIER_SCHEMA_VERSION
 from cancerjev.domain.events import SUPPORTED_SCHEMA_VERSION
 from cancerjev.gdc.endpoints import GDC_DATA_MODEL_REFERENCE
+from cancerjev.research.specs import LUAD_DISCOVERY_V1
 from cancerjev.jev.projection import (
     EVIDENCE_PROJECTION_VERSION,
     HYPOTHESIS_PROJECTION_VERSION,
@@ -69,6 +70,7 @@ def collect_facts() -> dict[str, object]:
         "expression_discovery_result_schema_version": EXPRESSION_DISCOVERY_SCHEMA_VERSION,
         "final_candidate_result_schema_version": FINAL_RESULT_SCHEMA_VERSION,
         "gdc_data_model_reference": GDC_DATA_MODEL_REFERENCE,
+        "systematic_universe_method": LUAD_DISCOVERY_V1.universe_method,
         "hypothesis_projection_version": HYPOTHESIS_PROJECTION_VERSION,
         "hypothesis_question_set": HYPOTHESIS_QUESTION_SET_VERSION,
         "mutation_discovery_result_schema_version": DISCOVERY_SCHEMA_VERSION,

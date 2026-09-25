@@ -208,6 +208,8 @@ source hashes
 
 Never use Shard-local top-N selection as a substitute for global reduction unless that exact procedure is the declared scientific method.
 
+Implemented now: the systematic universe enumerates every reported protein-coding gene to a stable provider total under the complete-universe method and a declared defect guard ceiling (a sanity check, never a sampler); gene pages, occurrence-scan pages and expression gene batches register in an operational shard ledger, a reduction finalizes only when every required shard is terminal, and historical prefix-universe results remain readable and labelled.
+
 ## 10. Streaming
 
 Streaming accumulation is allowed when mathematically equivalent to the complete-data calculation.

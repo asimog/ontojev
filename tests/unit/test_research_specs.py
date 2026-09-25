@@ -121,8 +121,8 @@ def test_luad_spec_round_trips_through_schema_eight():
         "cnv_discovery",
     }
     assert emitted["discovery"] == {
-        "universe_method": "GENE_ID_ASC_INDEXED_PREFIX_V1", "biotype": "protein_coding",
-        "order": "GENE_ID_ASC", "offset": 0, "universe_limit": 1000,
+        "universe_method": "GENE_ID_ASC_INDEXED_COMPLETE_V1", "biotype": "protein_coding",
+        "order": "GENE_ID_ASC", "offset": 0, "universe_limit": 100_000,
         "occurrence_scan_page_size": 5000,
     }
     payload = json.loads(json.dumps(emitted))
@@ -236,10 +236,12 @@ def test_selection_rules_name_the_explicit_cohort_and_bounded_provider_ranking()
     assert "never a mutation count" in gene_rule
 
     discovery_rule = LUAD_RESEARCH_V1.discovery_selection_rule()
-    assert "GENE_ID_ASC_INDEXED_PREFIX_V1" in discovery_rule
+    assert "GENE_ID_ASC_INDEXED_COMPLETE_V1" in discovery_rule
+    assert "every release-bound" in discovery_rule
+    assert "defect guard ceiling" in discovery_rule
     assert "protein_coding" in discovery_rule
-    assert "1000" in discovery_rule
-    assert "not the entire genome" in discovery_rule
+    assert "100000" in discovery_rule
+    assert "every reported gene was enumerated" in discovery_rule
     assert "never selects systematic survivors" in discovery_rule
 
 

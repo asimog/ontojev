@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from cancerjev.domain.measurements import (
+    MAX_UNIVERSE_REQUEST_LIMIT,
     EntityRef,
     MethodIdentityRef,
     MetricAvailability,
@@ -37,8 +38,16 @@ from cancerjev.domain.scientific import (
 )
 
 DISCOVERY_UNIVERSE_METHOD = "GENE_ID_ASC_INDEXED_PREFIX_V1"
+COMPLETE_UNIVERSE_METHOD = "GENE_ID_ASC_INDEXED_COMPLETE_V1"
 UNIVERSE_PAGE_CAP = 10
 MAX_UNIVERSE_LIMIT = 1000
+MAX_UNIVERSE_DEFECT_CEILING = MAX_UNIVERSE_REQUEST_LIMIT
+SYSTEMATIC_UNIVERSE_PAGE_SIZE = 100
+MAX_UNIVERSE_DEFECT_PAGES = MAX_UNIVERSE_DEFECT_CEILING // SYSTEMATIC_UNIVERSE_PAGE_SIZE + 1
+DISCOVERY_RUN_MAX_REQUESTS = 1200
+DISCOVERY_RUN_MAX_PAGES_PER_QUERY = MAX_UNIVERSE_DEFECT_PAGES
+EXPRESSION_RUN_MAX_REQUESTS = 1500
+EXPRESSION_RUN_MAX_BYTES = 384 * 1024 * 1024
 MAX_OCCURRENCE_SCAN_PAGE_SIZE = 10000
 OCCURRENCE_SCAN_MAX_PAGES = 64
 OCCURRENCE_SCAN_MAX_BYTES = 256 * 1024 * 1024
@@ -56,6 +65,11 @@ UNIVERSE_LIMITATION = (
     "The systematic universe is the first deterministic prefix of the indexed protein-coding "
     "Ensembl gene universe by ascending gene_id at a declared offset; it is reproducible but "
     "biased and incomplete for the genome, not the entire genome and not an unbiased random sample."
+)
+COMPLETE_UNIVERSE_LIMITATION = (
+    "The systematic universe is every protein-coding Ensembl gene the pinned release reports by "
+    "ascending gene_id; completeness means every reported gene was enumerated to a stable provider "
+    "total, and the declared defect ceiling is a sanity guard, not a sampler."
 )
 ABSENCE_LIMITATION = (
     "Affected-case counts are derived locally from the complete per-project released occurrence "
@@ -95,11 +109,12 @@ CNV_LIMITATIONS = (
 class DiscoverySpec:
     """Fixed bounded systematic-discovery configuration.
 
-    The Stage 4 contract is deterministic: the release-bound first
-    ``universe_limit`` protein-coding Ensembl gene IDs by ascending gene_id at a
-    declared offset, measured by a complete per-project released-occurrence scan
-    in bounded pages of ``occurrence_scan_page_size``. These are the only
-    supported values; the provider-ranked baseline path remains the labelled
+    The Stage 4 contract is deterministic: the release-bound protein-coding
+    Ensembl gene IDs by ascending gene_id at a declared offset, measured by a
+    complete per-project released-occurrence scan in bounded pages of
+    ``occurrence_scan_page_size``. The complete method enumerates every reported
+    gene up to a defect guard ceiling; the historical prefix method enumerates a
+    bounded indexed slice. The provider-ranked baseline path remains the labelled
     comparator and the legacy count-bucket endpoint is not a Stage 4 source.
     """
 
@@ -111,13 +126,19 @@ class DiscoverySpec:
     occurrence_scan_page_size: int
 
     def __post_init__(self) -> None:
-        require(self.universe_method == DISCOVERY_UNIVERSE_METHOD,
-                f"universe_method must be {DISCOVERY_UNIVERSE_METHOD}")
+        require(self.universe_method in {DISCOVERY_UNIVERSE_METHOD, COMPLETE_UNIVERSE_METHOD},
+                f"universe_method must be {DISCOVERY_UNIVERSE_METHOD} or {COMPLETE_UNIVERSE_METHOD}")
         require(self.biotype == "protein_coding", "biotype must be protein_coding")
         require(self.order == "GENE_ID_ASC", "order must be GENE_ID_ASC")
         require(self.offset == 0, "offset must be 0")
-        require(1 <= self.universe_limit <= MAX_UNIVERSE_LIMIT,
-                f"universe_limit must be 1..{MAX_UNIVERSE_LIMIT}")
+        if self.universe_method == DISCOVERY_UNIVERSE_METHOD:
+            require(1 <= self.universe_limit <= MAX_UNIVERSE_LIMIT,
+                    f"universe_limit must be 1..{MAX_UNIVERSE_LIMIT} "
+                    f"for {DISCOVERY_UNIVERSE_METHOD}")
+        else:
+            require(1 <= self.universe_limit <= MAX_UNIVERSE_DEFECT_CEILING,
+                    f"universe_limit must be 1..{MAX_UNIVERSE_DEFECT_CEILING} "
+                    f"for {COMPLETE_UNIVERSE_METHOD}")
         require(1 <= self.occurrence_scan_page_size <= MAX_OCCURRENCE_SCAN_PAGE_SIZE,
                 f"occurrence_scan_page_size must be 1..{MAX_OCCURRENCE_SCAN_PAGE_SIZE}")
 

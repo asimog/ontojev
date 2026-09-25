@@ -153,6 +153,9 @@ class PopulationFrame:
         return digest([self.unit, self.project_id, self.examined_ids])
 
 
+MAX_UNIVERSE_REQUEST_LIMIT = 100_000
+
+
 @dataclass(frozen=True)
 class TestedUniverse:
     """The actual bounded universe a run examined, in its declared order.
@@ -184,7 +187,8 @@ class TestedUniverse:
         count(self.offset, "offset")
         count(self.requested_limit, "requested_limit")
         count(self.reported_total, "reported_total")
-        require(1 <= self.requested_limit <= 1000, "universe limit must be 1..1000")
+        require(1 <= self.requested_limit <= MAX_UNIVERSE_REQUEST_LIMIT,
+                f"universe limit must be 1..{MAX_UNIVERSE_REQUEST_LIMIT}")
         require(type(self.complete) is bool, "complete must be bool")
         expected = min(self.requested_limit, max(0, self.reported_total - self.offset))
         require(len(self.ordered_ids) <= expected, "universe exceeds declared slice")

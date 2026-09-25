@@ -9,7 +9,7 @@ The diagram and numbered design sections below describe the target architecture.
 | Area | Current owner and behavior | Remaining target |
 |---|---|---|
 | Scope | `research/specs.py`: `CohortSpec`, `ResearchSpec`, LUAD profile; `research/capability.py` derives a release-pinned typed capability from status + one project record + one aggregate open-file facet request; `research/campaign.py` gates profiles by readiness | Wider source/capability/readiness bindings and continuous Campaign selection; LUAD scientific validation is not assumed. |
-| Universe | `domain/discovery.py`, `research/discovery.py`: bounded indexed protein-coding prefix | Complete eligible universe with operational shard completion and global reduction. |
+| Universe | `domain/discovery.py`, `research/discovery.py`: complete release-bound protein-coding enumeration (`GENE_ID_ASC_INDEXED_COMPLETE_V1`, defect guard ceiling) with an operational shard ledger and a terminal-all-required gate; historical prefix specs remain readable and labelled | CNV project-wide shards and full-universe expression execution. |
 | Mutation | Stage 4 counts distinct cases from complete released-occurrence scans | Correct older `research/live.py` bucket consumer; add only justified scientific methods. |
 | Expression | `research/expression_discovery.py`: case-labelled UQFPKM summaries and descriptive tails; one aggregate open-file facet request records per-workflow coverage and annotates single-family sources | QC, defensible inference when eligible, independent nomination. |
 | CNV | `research/cnv_discovery.py`: positive indexed categories on mutation survivors | Independent caller-aware nomination; no assumed neutral denominator. |

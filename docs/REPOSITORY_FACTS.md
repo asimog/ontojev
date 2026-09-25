@@ -48,6 +48,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "sqlite_schema_version": 5,
   "state_projection_version": "jev-state-projection-v4",
   "statistical_state_schema_version": 5,
+  "systematic_universe_method": "GENE_ID_ASC_INDEXED_COMPLETE_V1",
   "wide_admission_policy": "wide-policy-v2",
   "wide_baseline_policy": "baseline-wide-v2",
   "wide_question_set": "wide-v3"

@@ -6,9 +6,9 @@ It combines harmonized GDC evidence with established NCI/GDAN computational-geno
 
 ## Current implementation
 
-At the inspected HEAD, OntoJev has typed GDC acquisition, bounded descriptive discovery, Wide/Deep Jev, Python policies, immutable candidate evidence revisions, hypothesis critique, and Stage 8 dossiers with no-Jev comparisons. Systematic discovery currently covers a declared first 1,000-gene protein-coding prefix. Expression describes that prefix; CNV and integrated states cover mutation survivors only.
+At the inspected HEAD, OntoJev has typed GDC acquisition, bounded descriptive discovery, Wide/Deep Jev, Python policies, immutable candidate evidence revisions, hypothesis critique, and Stage 8 dossiers with no-Jev comparisons. Systematic discovery enumerates the release-bound protein-coding gene universe to a stable provider total (`GENE_ID_ASC_INDEXED_COMPLETE_V1`, declared defect guard, operational shard ledger); historical prefix-universe results remain readable and labelled. Expression describes the same universe; CNV and integrated states cover mutation survivors only.
 
-Complete-universe discovery, independent modality union, scientific readiness gates, selected-file acquisition and continuous multi-Campaign autonomy are planned. The older provider-ranked live mutation path still needs the measurement correction described in P01. The target flow below must not be read as a list of completed features.
+Independent modality union, scientific readiness gates, selected-file acquisition and continuous multi-Campaign autonomy are planned. The older provider-ranked live mutation path still needs the measurement correction described in P01. The target flow below must not be read as a list of completed features.
 
 See the [saved implementation plan](docs/IMPLEMENTATION_PLAN.md) for code evidence, pinned upstream references, execution order and acceptance gates. [Repository facts](docs/REPOSITORY_FACTS.md) owns mutable version/action identities.
 

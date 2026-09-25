@@ -433,7 +433,7 @@ def test_universe_slice_is_not_genome_completeness():
     with pytest.raises(ContractError):
         replace(universe, reported_total=0)
     with pytest.raises(ContractError):
-        replace(universe, requested_limit=1001)
+        replace(universe, requested_limit=100_001)
     with pytest.raises(ContractError):
         replace(universe, order="NOT_DECLARED")
     with pytest.raises(ContractError):

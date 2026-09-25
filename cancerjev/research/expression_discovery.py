@@ -21,6 +21,7 @@ from cancerjev.domain.measurements import (
     PopulationUnit,
 )
 from cancerjev.domain.scientific import ExpressionSummaryResult
+from cancerjev.domain.shards import ShardKind, ShardLedger, ShardRecord, ShardStatus
 from cancerjev.gdc.endpoints import cohort_project_request, status_request
 from cancerjev.gdc.parsers import GeneRecord, parse_projects, parse_status
 from cancerjev.research.acquisition import (
@@ -31,6 +32,7 @@ from cancerjev.research.acquisition import (
     response_operational_source,
 )
 from cancerjev.research.discovery import acquire_gene_universe
+from cancerjev.research.shards import ledger_summary, publish_shard_ledger
 from cancerjev.research.specs import ResearchSpec
 from cancerjev.science.descriptors import expression_tail_descriptor
 from cancerjev.science.expression import expression_observation
@@ -104,6 +106,34 @@ def run_expression_discovery(
     )
     sources.extend(acquired.sources)
     warnings.extend(acquired.warnings)
+    expression_ledger = ShardLedger(
+        kind=ShardKind.EXPRESSION_GENE_BATCHES, required=len(acquired.batches),
+        records=tuple(ShardRecord(
+            index=batch.batch_index, status=ShardStatus.COMPLETED,
+            item_count=len(batch.gene_ids),
+            request_hash=batch.sources[-1].source.request_hash if batch.sources else None,
+            response_hash=batch.sources[-1].source.response_hash if batch.sources else None,
+            artifact_id=batch.sources[-1].artifact_id if batch.sources else None,
+            detail=None,
+        ) for batch in acquired.batches),
+    ) if acquired.batches else ShardLedger(
+        kind=ShardKind.EXPRESSION_GENE_BATCHES, required=1,
+        records=(ShardRecord(index=0, status=ShardStatus.FAILED, item_count=None,
+                             request_hash=None, response_hash=None, artifact_id=None,
+                             detail="no expression gene batch was acquired"),),
+    )
+    ledger_artifact = publish_shard_ledger(
+        artifacts, repository, run_id, expression_ledger,
+        relative_path=f"runs/{run_id}/expression-discovery/shards.json")
+    if not expression_ledger.terminal:
+        raise LiveRunError(
+            "SHARD_LEDGER_NOT_TERMINAL",
+            "the expression shard ledger is not terminal; no reduction may finalize",
+        )
+    emit("EXPRESSION_SHARDS_COMPLETED", f"expression-discovery:shards:{uuid4()}",
+         "Expression gene batches completed for every required shard.",
+         data={"shard_ledger": ledger_summary(expression_ledger), "release": release},
+         artifact_refs=[ledger_artifact.ref()])
     entries_by_id: dict[str, ExpressionDiscoveryEntry] = {}
     for batch in acquired.batches:
         frame = ProjectFrame(

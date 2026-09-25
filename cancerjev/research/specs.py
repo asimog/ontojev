@@ -16,7 +16,9 @@ from typing import Any
 
 from cancerjev.domain._json import integer, number, obj, string, string_tuple
 from cancerjev.domain.discovery import (
+    COMPLETE_UNIVERSE_METHOD,
     DISCOVERY_UNIVERSE_METHOD,
+    MAX_UNIVERSE_DEFECT_CEILING,
     CnvDiscoverySpec,
     DiscoverySpec,
     ExpressionDiscoverySpec,
@@ -160,6 +162,15 @@ class ResearchSpec:
         )
 
     def discovery_selection_rule(self) -> str:
+        if self.discovery.universe_method == COMPLETE_UNIVERSE_METHOD:
+            return (
+                f"systematic discovery: every release-bound {self.discovery.biotype} Ensembl gene "
+                f"ID the provider reports by ascending gene_id from offset {self.discovery.offset} "
+                f"({COMPLETE_UNIVERSE_METHOD}, defect guard ceiling {self.discovery.universe_limit}); "
+                "completeness means every reported gene was enumerated to a stable provider total; "
+                "the provider top-mutated ranking is a separate labelled comparator and never "
+                "selects systematic survivors"
+            )
         return (
             f"systematic discovery: the release-bound first {self.discovery.universe_limit} "
             f"{self.discovery.biotype} Ensembl gene IDs by ascending gene_id from offset "
@@ -214,11 +225,11 @@ def research_spec_from_dict(value: object) -> ResearchSpec:
 
 
 LUAD_DISCOVERY_V1 = DiscoverySpec(
-    universe_method=DISCOVERY_UNIVERSE_METHOD,
+    universe_method=COMPLETE_UNIVERSE_METHOD,
     biotype="protein_coding",
     order="GENE_ID_ASC",
     offset=0,
-    universe_limit=1000,
+    universe_limit=MAX_UNIVERSE_DEFECT_CEILING,
     occurrence_scan_page_size=5000,
 )
 
@@ -227,7 +238,8 @@ LUAD_RESEARCH_V1 = ResearchSpec(
     intent=(
         "Bounded, deterministic-first examination of one explicit lung-adenocarcinoma cohort for a "
         "provider-ranked gene set, with narrow Jev judgment and no cross-cohort pooling; Stage 4 "
-        "systematic discovery runs over the fixed indexed protein-coding prefix."
+        "systematic discovery enumerates the complete release-bound protein-coding Ensembl gene "
+        "universe to a stable provider total under a declared defect guard ceiling."
     ),
     cohort=CohortSpec(
         cohort_id="TCGA-LUAD",

@@ -9,7 +9,14 @@ from pathlib import Path
 
 from cancerjev.cli.console import render_event, render_json_event
 from cancerjev.config import Settings, load_local_env
-from cancerjev.domain.discovery import OCCURRENCE_SCAN_MAX_BYTES, OCCURRENCE_SCAN_MAX_PAGES
+from cancerjev.domain.discovery import (
+    DISCOVERY_RUN_MAX_PAGES_PER_QUERY,
+    DISCOVERY_RUN_MAX_REQUESTS,
+    EXPRESSION_RUN_MAX_BYTES,
+    EXPRESSION_RUN_MAX_REQUESTS,
+    OCCURRENCE_SCAN_MAX_BYTES,
+    OCCURRENCE_SCAN_MAX_PAGES,
+)
 from cancerjev.domain.measurements import ContractError
 from cancerjev.gdc.capture import CaptureSink, run_contract_probe
 from cancerjev.gdc.parsers import ParserError
@@ -64,13 +71,13 @@ def parser() -> argparse.ArgumentParser:
     )
     discover = commands.add_parser(
         "discover",
-        help="bounded Stage 4 systematic mutation discovery over the fixed indexed gene universe",
+        help="bounded Stage 4 systematic mutation discovery over the complete protein-coding gene universe",
     )
     discover.add_argument("--live", action="store_true",
                           help="real bounded open-access GDC systematic discovery")
     discover_expression = commands.add_parser(
         "discover-expression",
-        help="bounded Stage 5 expression discovery over the fixed indexed gene universe",
+        help="bounded Stage 5 expression discovery over the complete systematic universe",
     )
     discover_expression.add_argument(
         "--live", action="store_true",
@@ -191,10 +198,10 @@ def _discover(settings: Settings, repository: Repository, artifacts: ArtifactSto
     # explicitly: a complete project scan is the scientific quantity source, and its
     # declared ceiling lives in domain.discovery (not env-adjustable in this change).
     caps = BudgetCaps(
-        max_requests=settings.gdc_max_requests,
+        max_requests=DISCOVERY_RUN_MAX_REQUESTS,
         max_bytes=OCCURRENCE_SCAN_MAX_BYTES,
         per_response_bytes=settings.gdc_per_response_bytes,
-        max_pages_per_query=OCCURRENCE_SCAN_MAX_PAGES,
+        max_pages_per_query=DISCOVERY_RUN_MAX_PAGES_PER_QUERY,
         timeout_seconds=settings.gdc_timeout_seconds,
     )
     run_id = repository.create_run(
@@ -239,9 +246,10 @@ def _discover_expression(
 
     spec = LUAD_RESEARCH_V1
     caps = BudgetCaps(
-        max_requests=settings.gdc_max_requests,
-        max_bytes=settings.gdc_max_bytes,
+        max_requests=EXPRESSION_RUN_MAX_REQUESTS,
+        max_bytes=EXPRESSION_RUN_MAX_BYTES,
         per_response_bytes=settings.gdc_per_response_bytes,
+        max_pages_per_query=DISCOVERY_RUN_MAX_PAGES_PER_QUERY,
         timeout_seconds=settings.gdc_timeout_seconds,
     )
     run_id = repository.create_run(
