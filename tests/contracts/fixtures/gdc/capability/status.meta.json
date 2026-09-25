@@ -1,0 +1,36 @@
+{
+  "authentication_headers_sent": [],
+  "body_bytes_read": 221,
+  "body_sha256": "a8b1c69f9cfc678486e1c897aee6d878f47fab9cb4c60eb6818598bbe30a7139",
+  "completeness": "COMPLETE",
+  "endpoint": "/status",
+  "error": null,
+  "from_cache": false,
+  "http_status": 200,
+  "latency_ms": 1339,
+  "method": "GET",
+  "normalized_body": null,
+  "normalized_params": {},
+  "parser_version": "contract-probe-v1",
+  "per_response_cap": null,
+  "probe_name": "status",
+  "request_headers_sent": {
+    "Accept": "application/json",
+    "Accept-Encoding": "identity",
+    "User-Agent": "CancerJEV/0.2 (public open-access research; anonymous)"
+  },
+  "response_headers": {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "Content-Disposition",
+    "content-length": "221",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 20:23:51 GMT",
+    "server": "Apache",
+    "strict-transport-security": "max-age=63072001; includeSubdomains; preload",
+    "vary": "Accept-Encoding",
+    "x-frame-options": "SAMEORIGIN"
+  },
+  "response_truncated_by_probe_cap": false,
+  "retrieved_at": "2026-09-25T20:23:50.149191Z",
+  "url": "/status"
+}

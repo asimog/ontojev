@@ -8,7 +8,7 @@ The diagram and numbered design sections below describe the target architecture.
 
 | Area | Current owner and behavior | Remaining target |
 |---|---|---|
-| Scope | `research/specs.py`: `CohortSpec`, `ResearchSpec`, LUAD profile | Explicit source/capability/readiness bindings; LUAD scientific validation is not assumed. |
+| Scope | `research/specs.py`: `CohortSpec`, `ResearchSpec`, LUAD profile; `research/capability.py` derives a release-pinned typed capability from status + one project record + one aggregate open-file facet request; `research/campaign.py` gates profiles by readiness | Wider source/capability/readiness bindings and continuous Campaign selection; LUAD scientific validation is not assumed. |
 | Universe | `domain/discovery.py`, `research/discovery.py`: bounded indexed protein-coding prefix | Complete eligible universe with operational shard completion and global reduction. |
 | Mutation | Stage 4 counts distinct cases from complete released-occurrence scans | Correct older `research/live.py` bucket consumer; add only justified scientific methods. |
 | Expression | `research/expression_discovery.py`: case-labelled UQFPKM summaries and descriptive tails | Provenance/QC, defensible inference when eligible, independent nomination. |

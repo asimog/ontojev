@@ -1,0 +1,74 @@
+{
+  "authentication": "NONE (anonymous)",
+  "base_host": "api.gdc.cancer.gov",
+  "captured_at": "2026-09-25T20:23:50.149191Z",
+  "captures": [
+    {
+      "body_bytes_read": 221,
+      "body_sha256": "a8b1c69f9cfc678486e1c897aee6d878f47fab9cb4c60eb6818598bbe30a7139",
+      "completeness": "COMPLETE",
+      "endpoint": "/status",
+      "error": null,
+      "http_status": 200,
+      "method": "GET",
+      "probe_name": "status",
+      "response_truncated_by_probe_cap": false,
+      "retrieved_at": "2026-09-25T20:23:50.149191Z",
+      "url": "/status"
+    },
+    {
+      "body_bytes_read": 919,
+      "body_sha256": "1b9773909edcb0ef566c1997ef23a8cf5d44b81f8208e610751dbb54e31d8a98",
+      "completeness": "COMPLETE",
+      "endpoint": "/projects",
+      "error": null,
+      "http_status": 200,
+      "method": "GET",
+      "probe_name": "luad_project",
+      "response_truncated_by_probe_cap": false,
+      "retrieved_at": "2026-09-25T20:23:51.524161Z",
+      "url": "/projects?fields=project_id%2Cname%2Cprogram.name%2Cprimary_site%2Cdisease_type%2Csummary.case_count%2Csummary.file_count%2Csummary.data_categories.data_category&filters=%7B%22content%22%3A%7B%22field%22%3A%22project_id%22%2C%22value%22%3A%5B%22TCGA-LUAD%22%5D%7D%2C%22op%22%3A%22in%22%7D&size=1"
+    },
+    {
+      "body_bytes_read": 2061,
+      "body_sha256": "cf46b777e2b7f16f0920d114b6485f274f5c87e24aaca2d3f3ecaeeb20834654",
+      "completeness": "COMPLETE",
+      "endpoint": "/files",
+      "error": null,
+      "http_status": 200,
+      "method": "GET",
+      "probe_name": "luad_files_facets",
+      "response_truncated_by_probe_cap": false,
+      "retrieved_at": "2026-09-25T20:23:52.766452Z",
+      "url": "/files?facets=experimental_strategy%2Canalysis.workflow_type%2Cdata_type&filters=%7B%22content%22%3A%5B%7B%22content%22%3A%7B%22field%22%3A%22access%22%2C%22value%22%3A%5B%22open%22%5D%7D%2C%22op%22%3A%22in%22%7D%2C%7B%22content%22%3A%7B%22field%22%3A%22cases.project.project_id%22%2C%22value%22%3A%5B%22TCGA-LUAD%22%5D%7D%2C%22op%22%3A%22in%22%7D%5D%2C%22op%22%3A%22and%22%7D&size=0"
+    },
+    {
+      "body_bytes_read": 857,
+      "body_sha256": "490389406493ecae2185c04308e5c7c1260d8ad3c9cacbd53e3edf13a2599b6e",
+      "completeness": "COMPLETE",
+      "endpoint": "/projects",
+      "error": null,
+      "http_status": 200,
+      "method": "GET",
+      "probe_name": "lusc_project",
+      "response_truncated_by_probe_cap": false,
+      "retrieved_at": "2026-09-25T20:23:54.399144Z",
+      "url": "/projects?fields=project_id%2Cname%2Cprogram.name%2Cprimary_site%2Cdisease_type%2Csummary.case_count%2Csummary.file_count%2Csummary.data_categories.data_category&filters=%7B%22content%22%3A%7B%22field%22%3A%22project_id%22%2C%22value%22%3A%5B%22TCGA-LUSC%22%5D%7D%2C%22op%22%3A%22in%22%7D&size=1"
+    },
+    {
+      "body_bytes_read": 2155,
+      "body_sha256": "08fd7a6cf382b8083747957d4d5d92a1b8a6571ca098172d3d5b95116c34f5df",
+      "completeness": "COMPLETE",
+      "endpoint": "/files",
+      "error": null,
+      "http_status": 200,
+      "method": "GET",
+      "probe_name": "lusc_files_facets",
+      "response_truncated_by_probe_cap": false,
+      "retrieved_at": "2026-09-25T20:23:55.535771Z",
+      "url": "/files?facets=experimental_strategy%2Canalysis.workflow_type%2Cdata_type&filters=%7B%22content%22%3A%5B%7B%22content%22%3A%7B%22field%22%3A%22access%22%2C%22value%22%3A%5B%22open%22%5D%7D%2C%22op%22%3A%22in%22%7D%2C%7B%22content%22%3A%7B%22field%22%3A%22cases.project.project_id%22%2C%22value%22%3A%5B%22TCGA-LUSC%22%5D%7D%2C%22op%22%3A%22in%22%7D%5D%2C%22op%22%3A%22and%22%7D&size=0"
+    }
+  ],
+  "probe_count": 5,
+  "total_body_bytes": 6213
+}

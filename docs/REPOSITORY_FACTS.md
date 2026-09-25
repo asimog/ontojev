@@ -30,6 +30,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "evidence_state_schema_version": 4,
   "expression_discovery_result_schema_version": 1,
   "final_candidate_result_schema_version": 1,
+  "gdc_data_model_reference": "gdcdatamodel2@9c6a046b96c130ea131d2ce2c9160381edd2fcc1",
   "hypothesis_projection_version": "jev-hypothesis-projection-v2",
   "hypothesis_question_set": "hypothesis-v2",
   "mutation_discovery_result_schema_version": 1,

@@ -4,7 +4,7 @@
 
 ## 1. Purpose
 
-Current implementation supports bounded typed API acquisition and immutable source artifacts. The endpoint list below is a candidate capability list, not an implemented allowlist. A selected-open-file `gdc-client` adapter, complete-universe shard lifecycle and full workflow/assay compatibility remain planned (P03–P06).
+Current implementation supports bounded typed API acquisition and immutable source artifacts. The endpoint list below is a candidate capability list, not an implemented allowlist. A bounded cohort capability probe (status + one project record + one aggregate open-file facet request; no per-file listing) now exists; a selected-open-file `gdc-client` adapter, complete-universe shard lifecycle and full workflow/assay compatibility remain planned (P03–P06).
 
 The existing upstream clones are source references, not installed runtime tools. Exact inspected SHAs are recorded in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md); `.upstream/SOURCES.lock.json` remains the untracked local inventory.
 

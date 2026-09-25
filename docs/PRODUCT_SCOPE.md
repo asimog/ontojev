@@ -75,7 +75,7 @@ policy versions
 
 A materially different cohort, GDC release, or method profile is a different Campaign context.
 
-TCGA-LUAD is the first intended validation CampaignProfile; the current LUAD ResearchSpec is not proof of autonomous scientific readiness. It is not a permanent product limitation.
+TCGA-LUAD is the first intended validation CampaignProfile; the current LUAD ResearchSpec is not proof of autonomous scientific readiness. The implemented readiness vocabulary is `EXPERIMENTAL` → `VALIDATED_FOR_REPLAY` → `VALIDATED_FOR_AUTONOMOUS_USE`, and the declared LUAD campaign profile currently records `EXPERIMENTAL`. It is not a permanent product limitation.
 
 ## 6. Scientific scope
 

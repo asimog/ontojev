@@ -943,3 +943,58 @@ def parse_files_provenance(body: bytes, meta: ResponseMeta) -> FilesProvenance:
             strategies.append(strategy)
     return FilesProvenance(workflows=sorted(workflows), strategies=sorted(strategies),
                            files_seen=len(hits), non_open_records=non_open, warnings=_warnings(document))
+
+
+FACET_NAMES = ("experimental_strategy", "analysis.workflow_type", "data_type")
+
+
+@dataclass(frozen=True)
+class FileFacets:
+    """Provider aggregate counts for one bounded open-file facet request."""
+
+    total_open_files: int | None
+    counts: dict[str, dict[str, int]]
+    warnings: list[str]
+
+    def facet(self, name: str) -> dict[str, int]:
+        return dict(self.counts.get(name, {}))
+
+
+def parse_file_facets(body: bytes, meta: ResponseMeta) -> FileFacets:
+    """Strict aggregate parse of a bounded ``/files`` facet response.
+
+    Only provider aggregate counts are read; the response is rejected when a
+    requested facet is missing, malformed, duplicated or carries a negative or
+    non-integer count. No file-level record is parsed or retained here.
+    """
+    document = _load_json(body, meta)
+    data = document.get("data")
+    if not isinstance(data, dict):
+        raise ParserError("MISSING_FIELD", "files: data object is missing")
+    aggregations = data.get("aggregations")
+    if not isinstance(aggregations, dict):
+        raise ParserError("MISSING_FIELD", "files: aggregations object is missing")
+    counts: dict[str, dict[str, int]] = {}
+    for name in FACET_NAMES:
+        facet = aggregations.get(name)
+        if not isinstance(facet, dict) or not isinstance(facet.get("buckets"), list):
+            raise ParserError("INVALID_FACET", f"files: facet {name} is missing or malformed")
+        buckets: dict[str, int] = {}
+        for bucket in facet["buckets"]:
+            if not isinstance(bucket, dict):
+                raise ParserError("INVALID_FACET", f"files: facet {name} bucket is malformed")
+            key = bucket.get("key")
+            count = bucket.get("doc_count")
+            if not isinstance(key, str) or not key:
+                raise ParserError("INVALID_FACET", f"files: facet {name} bucket key is invalid")
+            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+                raise ParserError("INVALID_FACET", f"files: facet {name}/{key} has a non-integer count")
+            if key in buckets:
+                raise ParserError("DUPLICATE_ID", f"files: facet {name} repeats {key}")
+            buckets[key] = count
+        counts[name] = buckets
+    pagination = data.get("pagination")
+    total = pagination.get("total") if isinstance(pagination, dict) else None
+    if total is not None and (not isinstance(total, int) or isinstance(total, bool) or total < 0):
+        raise ParserError("INVALID_FACET", "files: pagination total is not a count")
+    return FileFacets(total_open_files=total, counts=counts, warnings=_warnings(document))

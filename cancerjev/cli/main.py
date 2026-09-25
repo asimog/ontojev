@@ -54,6 +54,14 @@ def parser() -> argparse.ArgumentParser:
                                   "requires --deep-candidate --deep-followup")
     probe = commands.add_parser("probe", help="bounded anonymous GDC contract capture")
     probe.add_argument("--capture-dir", default=None)
+    capability = commands.add_parser(
+        "capability",
+        help="bounded cohort capability probe (status + one project + one open-file facet aggregate)",
+    )
+    capability.add_argument(
+        "--project", default=None,
+        help="open GDC project id to probe (default: the declared LUAD campaign project)",
+    )
     discover = commands.add_parser(
         "discover",
         help="bounded Stage 4 systematic mutation discovery over the fixed indexed gene universe",
@@ -128,6 +136,50 @@ def _probe(settings: Settings, repository: Repository, artifacts: ArtifactStore,
               "captures": summary["captures"], "bytes": totals["bytes"], "gdc_attempts": totals["attempts"]},
     )
     print(f"[PROBE] captures written to {directory} ({summary['captures']} requests, {summary['bytes']} bytes)", flush=True)
+
+
+def _capability(settings: Settings, repository: Repository, artifacts: ArtifactStore,
+                *, project_id: str | None) -> None:
+    from cancerjev.research.campaign import LUAD_CAMPAIGN_V1
+    from cancerjev.research.capability import discover_cohort_capability
+
+    target = project_id or LUAD_CAMPAIGN_V1.project_id
+    caps = BudgetCaps(
+        max_requests=12, max_bytes=4 * 1024 * 1024,
+        per_response_bytes=settings.gdc_per_response_bytes,
+        timeout_seconds=settings.gdc_timeout_seconds,
+    )
+    run_id = repository.create_run("capability", mode="LIVE", fixture_id=None, fixture_version=None,
+                                   scope={"purpose": "CAPABILITY_PROBE", "project_id": target})
+
+    def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+        event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
+                                        message=message, **kwargs)
+        render_event(event)
+
+    emit("RUN_STARTED", "run:started", f"Cohort capability probe started for {target}.",
+         data={"mode": "LIVE", "purpose": "CAPABILITY_PROBE", "project_id": target})
+    transport = GDCTransport(repository, artifacts, RunBudget(caps=caps), run_id, emit,
+                             cache_enabled=False)
+    capability = discover_cohort_capability(transport, project_id=target)
+    payload = {"kind": "COHORT_CAPABILITY", "capability_hash": capability.capability_hash(),
+               **capability.payload()}
+    artifact = artifacts.publish(
+        f"runs/{run_id}/capability/{target}.json",
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        "application/json", "cohort-capability",
+    )
+    repository.register_artifact(artifact, run_id)
+    totals = repository.gdc_run_totals(run_id)
+    emit("RUN_COMPLETED", "run:completed", f"Cohort capability probe completed for {target}.",
+         data={"status": "COMPLETED", "reason_code": "CAPABILITY_PROBE_COMPLETE",
+               "coverage": "COMPLETE_FOR_SCOPE", "project_id": target,
+               "available_modalities": [modality.value
+                                        for modality in capability.available_modalities()],
+               "bytes": totals["bytes"], "gdc_attempts": totals["attempts"]})
+    print(json.dumps(payload, indent=2, sort_keys=True), flush=True)
+    print(f"[CAPABILITY] {target}: available modalities = "
+          f"{', '.join(modality.value for modality in capability.available_modalities())}", flush=True)
 
 
 def _discover(settings: Settings, repository: Repository, artifacts: ArtifactStore) -> None:
@@ -363,6 +415,14 @@ def main(argv: list[str] | None = None) -> None:
             with ResearchOwnership(settings.lock_path):
                 repository.recover_interrupted()
                 _probe(settings, repository, artifacts, args.capture_dir)
+        except OwnershipError as exc:
+            raise SystemExit(str(exc)) from exc
+        return
+    if args.command == "capability":
+        try:
+            with ResearchOwnership(settings.lock_path):
+                repository.recover_interrupted()
+                _capability(settings, repository, artifacts, project_id=args.project)
         except OwnershipError as exc:
             raise SystemExit(str(exc)) from exc
         return

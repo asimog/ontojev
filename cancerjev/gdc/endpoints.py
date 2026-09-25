@@ -72,6 +72,8 @@ _ENDPOINT_LIST = (
 ENDPOINTS: dict[tuple[str, str], EndpointSpec] = {(spec.method, spec.path): spec for spec in _ENDPOINT_LIST}
 FORBIDDEN_PATHS = frozenset({"/data", "/manifest", "/slicing", "/files/versions", "/submissions"})
 
+GDC_DATA_MODEL_REFERENCE = "gdcdatamodel2@9c6a046b96c130ea131d2ce2c9160381edd2fcc1"
+
 
 def resolve_endpoint(method: str, path: str) -> EndpointSpec:
     method = method.upper()
@@ -223,6 +225,29 @@ def files_expression_request(project_id: str, size: int = 5) -> GDCRequest:
             "fields": "file_id,access,analysis.workflow_type,experimental_strategy",
         },
         logical_query_id=f"files-expression:{project_id}",
+    )
+
+
+def files_capability_request(project_id: str) -> GDCRequest:
+    """One aggregate open-file facet request: per-strategy/workflow/data-type counts.
+
+    The request lists no file: it returns provider aggregate counts only, so a
+    cohort capability probe stays near-zero-bytes. Only open-access files are
+    counted; access to controlled data is impossible by construction.
+    """
+    if not isinstance(project_id, str) or not project_id or len(project_id) > 128:
+        raise EndpointError("capability project_id is invalid")
+    return _request(
+        resolve_endpoint("GET", "/files"),
+        {
+            "size": 0,
+            "facets": "experimental_strategy,analysis.workflow_type,data_type",
+            "filters": _filter_json({"op": "and", "content": [
+                {"op": "in", "content": {"field": "access", "value": ["open"]}},
+                {"op": "in", "content": {"field": "cases.project.project_id", "value": [project_id]}},
+            ]}),
+        },
+        logical_query_id=f"files-capability:{project_id}",
     )
 
 

@@ -1,0 +1,46 @@
+{
+  "authentication_headers_sent": [],
+  "body_bytes_read": 2155,
+  "body_sha256": "08fd7a6cf382b8083747957d4d5d92a1b8a6571ca098172d3d5b95116c34f5df",
+  "completeness": "COMPLETE",
+  "endpoint": "/files",
+  "error": null,
+  "from_cache": false,
+  "http_status": 200,
+  "latency_ms": 1514,
+  "method": "GET",
+  "normalized_body": null,
+  "normalized_params": {
+    "facets": "experimental_strategy,analysis.workflow_type,data_type",
+    "filters": "{\"content\":[{\"content\":{\"field\":\"access\",\"value\":[\"open\"]},\"op\":\"in\"},{\"content\":{\"field\":\"cases.project.project_id\",\"value\":[\"TCGA-LUSC\"]},\"op\":\"in\"}],\"op\":\"and\"}",
+    "size": "0"
+  },
+  "parser_version": "contract-probe-v1",
+  "per_response_cap": null,
+  "probe_name": "lusc_files_facets",
+  "request_headers_sent": {
+    "Accept": "application/json",
+    "Accept-Encoding": "identity",
+    "User-Agent": "CancerJEV/0.2 (public open-access research; anonymous)"
+  },
+  "response_headers": {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "Content-Disposition",
+    "content-length": "2155",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 20:23:56 GMT",
+    "server": "Apache",
+    "strict-transport-security": "max-age=63072001; includeSubdomains; preload",
+    "vary": "Accept-Encoding",
+    "x-frame-options": "SAMEORIGIN",
+    "x-gdc-commit": "8f7c2a51ab0084b216ad1b62a3fae8b945439c53",
+    "x-gdc-data_release": "Data Release 46.0 - August 10, 2026",
+    "x-gdc-data_release_version": "{'major': 46, 'minor': 0, 'release_date': '2026-08-10'}",
+    "x-gdc-status": "OK",
+    "x-gdc-tag": "8.5.0",
+    "x-gdc-version": "1"
+  },
+  "response_truncated_by_probe_cap": false,
+  "retrieved_at": "2026-09-25T20:23:55.535771Z",
+  "url": "/files?facets=experimental_strategy%2Canalysis.workflow_type%2Cdata_type&filters=%7B%22content%22%3A%5B%7B%22content%22%3A%7B%22field%22%3A%22access%22%2C%22value%22%3A%5B%22open%22%5D%7D%2C%22op%22%3A%22in%22%7D%2C%7B%22content%22%3A%7B%22field%22%3A%22cases.project.project_id%22%2C%22value%22%3A%5B%22TCGA-LUSC%22%5D%7D%2C%22op%22%3A%22in%22%7D%5D%2C%22op%22%3A%22and%22%7D&size=0"
+}
