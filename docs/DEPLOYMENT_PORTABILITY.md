@@ -11,8 +11,9 @@ presence of an older/newer local toolchain does not change the supported floor. 
 
 One research process runs the CLI loop. One FastAPI process serves reads. One Next.js process
 serves UI. “One Python research process” does not mean embedding web serving or spawning
-background research from FastAPI reload hooks. API restarts never create runs. `apps/web/` is not
-part of the Stage 3 hard cutover; browser acceptance lives in `tests/browser/` with its own
+background research from FastAPI reload hooks. API restarts never create runs. `apps/web/` is
+presentation-only and outside the research runtime; browser acceptance lives in `tests/browser/`
+with its own
 Playwright configuration and runs in CI.
 
 Settings are environment-based: `CANCERJEV_DATA_DIR` (absolute), `CANCERJEV_WEB_ORIGIN`,

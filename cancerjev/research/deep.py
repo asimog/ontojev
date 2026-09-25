@@ -1,4 +1,4 @@
-"""Phase 4 deep evidence: deterministic revisions for one explicitly selected candidate.
+"""Deep evidence: deterministic revisions for one explicitly selected candidate.
 
 Sequence for one explicitly selected candidate: accept the candidate's immutable
 StatisticalState evidence E0, compute the eligible registered deterministic

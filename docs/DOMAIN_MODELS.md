@@ -104,19 +104,21 @@ summaries. It does not add a neutral denominator, broad CNV universe or cross-la
   enforces finite ranges, exact roster, distribution sum and rubric consistency. A Jev evaluation
   binds input/projection/question/model/adapter identities, applicability, and
   success/failure/cache outcomes. A semantic score is not an effect size or cancer probability.
-- Dossiers are JSON (schema 3) with the `DOSSIER_SECTIONS` roster, embedding the Stage 8
-  `FinalCandidateResult` (schema 1) and the `JEV_NO_JEV_COMPARISON` payload; Markdown is derived
+- Dossiers are JSON with the `DOSSIER_SECTIONS` roster (dossier schema in
+  [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md)), embedding the Stage 8
+  `FinalCandidateResult` and the `JEV_NO_JEV_COMPARISON` payload; Markdown is derived
   from the same structured payload, never authored separately. Corrupt or unverifiable
   authoritative input refuses publication (`DOSSIER_UNAVAILABLE`) or yields explicit unavailable
   sections; an earlier revision never substitutes for a corrupt latest revision.
 
 ## Serialization, versioning and identity
 
-- IMPLEMENTED: `domain/codecs.py` reads and writes StatisticalState schema 5, EvidenceState
-  schema 4, MutationDiscoveryResult schema 1, ExpressionDiscoveryResult schema 1 and
-  CnvDiscoveryResult schema 1 only. `research/specs.py` reads and writes ResearchSpec schema 7
-  only. Older or unknown versions fail with a typed unsupported-version
-  error; there is no fixture fallback, dictionary identity path, or legacy reader.
+- IMPLEMENTED: `domain/codecs.py` reads and writes the current versioned scientific records
+  (StatisticalState, EvidenceState, MutationDiscoveryResult, ExpressionDiscoveryResult,
+  CnvDiscoveryResult) and `research/specs.py` reads and writes the current ResearchSpec —
+  current versions in [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md). Older or unknown versions
+  fail with a typed unsupported-version error; there is no fixture fallback, dictionary identity
+  path, or legacy reader.
 - IMPLEMENTED: strict JSON boundary primitives in `domain/_json.py` reject duplicate keys,
   non-finite numbers, kind/version mismatch, missing/extra fields and inconsistent identities.
 - Load path: verify artifact path/size/hash → JSON → direct version parser → identity check →

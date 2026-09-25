@@ -1,10 +1,14 @@
 # Discovery implementation roadmap and deliverable index
 
 Current roadmap after the Stage 6/7/8 implementations (2026-09-25). Stages 0–8 are
-IMPLEMENTED (offline verified where stated). **Conditional inferential extensions are the next
-Stage 9 task and remain deferred behind their review gates.** The remaining proposed contracts
-below are design, **not current runtime behavior**.
-[Implementation status](IMPLEMENTATION_STATUS.md) owns current facts;
+IMPLEMENTED (offline and, where stated, live verified). **Stage 9 is the provisional
+reorientation toward the autonomous multi-modal target-discovery loop
+(PROVISIONAL TARGET ARCHITECTURE in [architecture](ARCHITECTURE.md), SUBJECT TO THE
+SOURCE-GROUNDED STAGE 9 DESIGN REVIEWS); no Stage 9 contract is frozen.** The remaining
+proposed contracts below are design, **not current runtime behavior**. Current schema,
+projection, question-set, policy and registry identities live in
+[REPOSITORY_FACTS.md](REPOSITORY_FACTS.md).
+[Implementation status](IMPLEMENTATION_STATUS.md) owns current claims;
 [architecture](ARCHITECTURE.md) owns the current runtime chain.
 
 ## Ordered stages
@@ -18,10 +22,11 @@ below are design, **not current runtime behavior**.
 | 4: bounded broad universe | Explicit release/filter/ordered 1,000-gene prefix over `/genes`, ≤100-gene indexed count batches, deterministic ≤10-survivor reduction | IMPLEMENTED (2026-09-25): strict page guards (duplicate/offset/total/order/biotype/slice), explicit zero vs absent vs partial, one disposition per requested gene, reducer `MUTATION_LUAD_AFFECTED_COUNT_DESC_V1`, persisted schema-1 result; live acceptance 1,000/1,000 with 10 survivors |
 | 5: independent expression arm | Optional explicitly budgeted case-labelled descriptors and within-gene extremes | **IMPLEMENTED (offline verified)**: separate `discover-expression --live`; same release-bound 1,000-gene universe; ≤100-gene × ≤250-case strict batches; complete declared population/missingness; local summaries and Tukey tails only; no tumor-normal, causal or sample-matching claim; live acceptance PASSED (2026-09-25: 61 attempts / 5.0 MiB, 946 observed + 54 typed unavailable) |
 | 6: narrow CNV lane | Fixed builders and strict occurrence parser; complete survivor queries only | **IMPLEMENTED (offline verified)**: Stage 4 artifact/release/frame binding; ≤10 survivors × ≤10 strict 250-row pages; real-shape fixture for generic Loss, missing sample ID and caller context; unique positive cases per category with explicit conflicts; no neutral/negative inference; full live acceptance PASSED (2026-09-25: 20 attempts / 1.9 MiB, 10/10 survivors) |
-| 7: descriptive actions and cutover | Reuse the investigation loop; expression-tail/CNV-category actions; typed versioned projections; no new semantic questions | **IMPLEMENTED (offline verified)**: exact Stage 4-6 binding cutover to one schema-5 state per survivor (`research/cutover.py`); shared descriptors (`science/descriptors.py`); `SUMMARIZE_EXPRESSION_TAIL_V1`/`SUMMARIZE_CNV_CATEGORIES_V1` registered (registry version 3); projection `jev-state-projection-v4` adds CNV fields and Python-computed `eligible_followups`; several eligible actions require one explicit operator action id; Jev attempt/token envelopes configured; no new semantic questions |
-| 8: candidate finalization and audit | One explicit terminal result per candidate; authoritative dossier; deterministic Jev-vs-no-Jev delta; lifecycle completion; no human review | **IMPLEMENTED (offline verified)**: `research/finalize.py` + the investigation arc derive `FinalCandidateResult` from recorded state, run the read-only `no-jev-baseline-v1` comparison (same evidence, declared replay; `NOT_COMPARABLE` where unsupported; no mutation/action/hypothesis/model in the replay), persist the schema-3 dossier (Markdown derived), record `DOSSIER_READY` and `CANDIDATE_COMPLETE`, continue the candidate loop automatically, and complete the run only when the queue is exhausted. Admission provenance from persisted records; terminal stop reasons preserved; several eligible actions fail closed |
+| 7: descriptive actions and cutover | Reuse the investigation loop; expression-tail/CNV-category actions; typed versioned projections; no new semantic questions | **IMPLEMENTED (offline verified)**: exact Stage 4-6 binding cutover to one canonical state per survivor (`research/cutover.py`); shared descriptors (`science/descriptors.py`); `SUMMARIZE_EXPRESSION_TAIL_V1`/`SUMMARIZE_CNV_CATEGORIES_V1` registered (roster/version in [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md)); the state projection adds CNV fields and Python-computed `eligible_followups`; several eligible actions require one explicit operator action id; Jev attempt/token envelopes configured; no new semantic questions |
+| 8: candidate finalization and audit | One explicit terminal result per candidate; authoritative dossier; deterministic Jev-vs-no-Jev delta; lifecycle completion; no human review | **IMPLEMENTED (offline verified)**: `research/finalize.py` + the investigation arc derive `FinalCandidateResult` from recorded state, run the read-only `no-jev-baseline-v1` comparison (same evidence, declared replay; `NOT_COMPARABLE` where unsupported; no mutation/action/hypothesis/model in the replay), persist the authoritative dossier (Markdown derived), record `DOSSIER_READY` and `CANDIDATE_COMPLETE`, continue the candidate loop automatically, and complete the run only when the queue is exhausted. Admission provenance from persisted records; terminal stop reasons preserved; several eligible actions fail closed |
 | Optional: blinded empirical evaluation | Human-labelled calibration/superiority studies | OPTIONAL harness outside the numbered runtime stages: `research/prospective.py` + `research/evaluation.py`; never invoked by the runtime, never gates completion; no protocol executed, no labelled historical corpus exists |
-| 9: conditional inferential extensions | Matched mutation-expression/CNV-expression, survival, later scRNA | DEFERRED: separate source/matching/reference/censoring/statistical review; not unlocked by finishing earlier engineering stages |
+| 9 (PROVISIONAL): autonomous multi-modal target discovery | Reorient the completed Stage 8 infrastructure to the autonomous loop: multi-modal deterministic arms → selective Arm Jev → candidate union → integrated states → Wide Jev → autonomous target investigation → Stage 8 → versioned campaign-selection policy (next campaign or explicit idle) | PROVISIONAL TARGET ARCHITECTURE, SUBJECT TO THE SOURCE-GROUNDED STAGE 9 DESIGN REVIEWS: not implemented, no contract frozen; the production runtime target requires no human control of candidate selection, Jev promotion, follow-up selection, hypothesis approval, iteration authorization or candidate completion, with manual CLI controls remaining only as debug overrides |
+| Deferred: conditional inferential follow-ups | Narrow sequential first sequence (provisional): `BUILD_MATCHED_ASSAY_FRAME_V1` → `ACQUIRE_CANDIDATE_SSM_CASES_V1` → `MUTATION_EXPRESSION_ASSOCIATION_V1`; CNV-expression, survival, pathway and scRNA explicitly deferred, not simultaneous | DEFERRED: separate source/matching/reference/censoring/statistical review; not unlocked by finishing earlier engineering stages |
 
 Stages 4–8 are IMPLEMENTED: bounded discovery, cutover, the full investigation loop, and
 candidate finalization with the deterministic no-Jev comparison all run without human review.
@@ -64,26 +69,25 @@ identity. No imputation, reference pooling, normal controls or causal interpreta
 Discovery metrics are selected on the same data and cannot be repackaged as confirmatory
 p-values.
 
-## Registered actions and proposed contract change
+## Registered actions and deferred contract changes
 
-Current registered actions are integrity checks only:
-`CHECK_EVIDENCE_INTEGRITY_V1` (input `STATISTICAL_STATE`) and
-`CHECK_REVISION_FAITHFULNESS_V1` (input `EVIDENCE_STATE`). Adding a measurement-producing action
-requires an explicit versioned rule change in the action registry and scientific contracts, not
-quietly treating a descriptor as an integrity check. Acquisition-capable actions additionally
-require a declared fixed request plan and reservation before sending; no generative/model output
-may supply an endpoint or query.
+Current registered actions (roster and registry version in
+[REPOSITORY_FACTS.md](REPOSITORY_FACTS.md)) are the two integrity checks and the two held-data
+descriptor actions. Adding a measurement-producing action requires an explicit versioned rule
+change in the action registry and scientific contracts, not quietly treating a descriptor as an
+integrity check. Acquisition-capable actions additionally require a declared fixed request plan
+and reservation before sending; no generative/model output may supply an endpoint or query.
 
-| Proposed action | Input / question / method / output | Eligibility, reservation and decision |
+| Action | Input / question / method / output | Eligibility, reservation and decision |
 |---|---|---|
-| Existing integrity and revision-faithfulness checks | Current typed-input contract; unchanged check semantics | KEEP; no acquisition/model/new biology |
-| `SUMMARIZE_EXPRESSION_TAIL_V1` | Held typed case-labelled values; does the declared distribution contain empirical tail observations? Exact quantile/tail rule above; case counts/IDs and coverage | Proposed descriptive measurement action only after an explicit action-contract change; n≥20, IQR>0, declared complete input frame; zero GDC reservation; no p/q |
-| `SUMMARIZE_CNV_CATEGORIES_V1` | Held complete typed occurrences; count distinct cases for each provider category, retain conflicts and caller/source refs | Proposed descriptive measurement action after contract change; complete filter-bound query, dedup invariant; no neutral denominator; zero new acquisition |
-| `ACQUIRE_SURVIVOR_CNV_V1` | Fixed bounded gene/project query → typed evidence outcome | REJECT as a Stage 7 action: Stage 6 already performs separately invoked, fixed-plan acquisition; the action registry must not hide or repeat that side effect |
+| Integrity and revision-faithfulness checks | Current typed-input contract; unchanged check semantics | KEEP (IMPLEMENTED); no acquisition/model/new biology |
+| `SUMMARIZE_EXPRESSION_TAIL_V1` | Held typed case-labelled values; does the declared distribution contain empirical tail observations? Exact quantile/tail rule above; case counts/IDs and coverage | KEEP (IMPLEMENTED, Stage 7): held-data only, zero GDC reservation; n≥20, IQR>0, declared complete input frame; no p/q |
+| `SUMMARIZE_CNV_CATEGORIES_V1` | Held complete typed occurrences; count distinct cases for each provider category, retain conflicts and caller/source refs | KEEP (IMPLEMENTED, Stage 7): complete filter-bound query, dedup invariant; no neutral denominator; zero new acquisition |
+| `ACQUIRE_SURVIVOR_CNV_V1` | Fixed bounded gene/project query → typed evidence outcome | REJECT as a registered action: Stage 6 already performs separately invoked, fixed-plan acquisition; the action registry must not hide or repeat that side effect |
 | `STRATIFY_BY_PROJECT_V1`, `LEAVE_ONE_PROJECT_OUT_V1` | Project stratification / leave-one-project-out | NOT APPLICABLE to the single TCGA-LUAD cohort; not registered |
 | `CHECK_MISSINGNESS_V1` | Recompute case-level missingness from retained responses and reconcile against the recorded state | PLANNED contract review only; partly redundant with `EXPRESSION_COVERAGE_ARITHMETIC`; needs a demonstrated non-redundant operation from held evidence |
 | `OUTLIER_SENSITIVITY_V1`, `COMPARE_MODALITIES_V1` | Sensitivity/modality comparison proposals | Unapproved placeholders; not registered |
-| `MUTATION_EXPRESSION_ASSOCIATION`, `CNV_EXPRESSION_ASSOCIATION` | Matched mutation-status/category groups versus expression | INELIGIBLE now; design conditions below |
+| `MUTATION_EXPRESSION_ASSOCIATION`, `CNV_EXPRESSION_ASSOCIATION` | Matched mutation-status/category groups versus expression | INELIGIBLE now (narrow sequential follow-up plan in the Stage 9 row above); design conditions below |
 | `SURVIVAL_ASSOCIATION` | Time/event and exposure groups | LATER; censoring/clinical selection and confounding contract absent |
 | Generic missingness action duplicating integrity arithmetic | Same existing evidence check | REJECT unless a distinct falsifiable operation is demonstrated |
 

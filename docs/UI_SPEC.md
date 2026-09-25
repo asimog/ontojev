@@ -1,11 +1,13 @@
 # Next.js App Router UI
 
 This is a presentation specification, not an independent scientific-status authority.
-`apps/web/` is explicitly **not part of the Stage 3 hard cutover**: it consumes the version-3.0.0
-read API but is not audited or changed by this documentation pass, and no frontend schema-parity
-claim is made. The API/record contract it consumes is IMPLEMENTED; the renderer behavior
-described here is the specified target and is UNVERIFIED in this environment except where the
-browser acceptance suite exercises it. OntoJev does not inherit prior-project architecture.
+`apps/web/` consumes the versioned read API (current API version in
+[REPOSITORY_FACTS.md](REPOSITORY_FACTS.md)); the API/record contract it consumes is
+IMPLEMENTED, while the renderer behavior described here is the specified target and is
+UNVERIFIED in this environment except where the browser acceptance suite exercises it. The UI
+is an observatory over committed records only: it never initiates research, never writes
+through the research path, and never influences the system-owned autonomous program at
+runtime. OntoJev does not inherit prior-project architecture.
 
 Useful behaviors: clickable persistent run cards; readable status badges/time/goal; frequent
 active-run polling; expandable stage events; model/usage context alongside judgments; visible
@@ -44,7 +46,9 @@ The run detail keeps the two record families visually and structurally separate,
 never merges them:
 
 - **DeterministicStatePanel** renders the typed `StatisticalState` presentation payload
-  (presentation schema 4): entity identity, project scope, examined/observed populations,
+  (versioned presentation schema; current version in
+  [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md)): entity identity, project scope,
+  examined/observed populations,
   mutation counts and coverage, local and provider expression summaries, missingness and
   method/source refs. Availability is always rendered: `OBSERVED` with a number, `NOT_OBSERVED`,
   `PARTIAL`, `NOT_ACQUIRED`, or `INSUFFICIENT`. A `NOT_OBSERVED` mutation count renders as “not
@@ -97,13 +101,35 @@ without duplicating a product surface. Global event search, `/candidates`, `/eva
 animations and extensive charting are deferred. Deep evidence, hypotheses and dossier panels
 remain available for fixture runs. Live evidence requires an operator-selected candidate
 (`--deep-candidate`); authorized investigation arcs can produce hypotheses and live dossiers.
-Render their recorded availability, not a blanket assumption that later phases are absent.
+Render their recorded availability, not a blanket assumption that later stages are absent.
 
 **Live hypotheses and dossier**: for a live run, generated statements render in their own
 section labelled “GENERATED HYPOTHESES — NOT EVIDENCE” with the generator, statement,
 hypothetical mechanism and falsification criteria, and never inside the wide judgment panel; a
 live dossier renders as a “DOSSIER READY” callout linking to `/dossiers/{id}`, whose
 authoritative JSON carries the live notice and a per-section availability.
+
+## Researcher Lab boundary (future, isolated)
+
+The researcher-facing UI is an observatory/configuration surface only, separate from the
+autonomous backend loop. An optional future Researcher Lab may let researchers compose and run
+isolated investigations on the same scientific engine; its state, evidence, candidates,
+hypotheses and results are stored and rendered separately from the system-owned autonomous
+program at runtime, and researcher activity cannot influence the autonomous program at
+runtime (influence on future autonomous behavior occurs only through an explicit versioned
+code/scientific change outside runtime). Researcher Lab surfaces must therefore never share
+candidate queues, promotion slots, evidence revisions or dossiers with autonomous runs, and
+must never acquire authority to start, stop or shape the autonomous loop. Researcher initiation
+is never required for autonomous operation.
+
+## Known stale runtime labels (documented, not fixed here)
+
+Small presentation/runtime text mismatches exist and are recorded rather than silently
+ignored; fixing them is a separate UI/API task, not this documentation contract: the
+`/api/system` payload still reports a historical `phase: 3` field, the site header renders
+“PHASE 3 · OPEN GDC + JEV”, and the site footer still says “no LLM hypotheses” although
+bounded generated hypotheses exist on the explicitly authorized path. API consumers must not
+treat these labels as capability discovery (see [API contract](API_CONTRACT.md)).
 
 **DeepEvidencePanel** lists the run's immutable evidence revisions (iteration, parent revision,
 action, per-check verified/contradicted/not-observed counts, evidence hash, and the deep Jev

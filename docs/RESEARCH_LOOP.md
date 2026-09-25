@@ -17,10 +17,10 @@ Proposed discovery changes are separate in the [roadmap](DISCOVERY_ROADMAP.md).
    production gene chunks of at most 10. Identifier-joined values are merged before local
    `log2(x+1)` summaries. Multi-batch provider summaries are not pooled:
    `BATCHED_PROVIDER_SUMMARY_NOT_COHORT_WIDE` is retained.
-5. Per-gene typed `StatisticalState` records (schema 4) are serialized once at the artifact
-   boundary. With `--jev`, `jev-state-projection-v4` and `wide-v3` produce validated typed
-   answers and separate baseline/Jev rankings. Python admission (`wide-policy-v2`) promotes at
-   most three candidates; zero is valid.
+5. Per-gene typed `StatisticalState` records are serialized once at the artifact boundary. With
+   `--jev`, the state projection and the wide question set produce validated typed answers and
+   separate baseline/Jev rankings. Python admission promotes at most three candidates; zero is
+   valid.
 6. Only explicitly selected candidates enter deep investigation. Selection can use an existing
    promotion (`slot:N`) or explicitly promote a successfully Wide-evaluated state under the same
    three-slot cap (`operator-selection-v1`); it is not a Jev admission. Repeated
@@ -31,7 +31,7 @@ Proposed discovery changes are separate in the [roadmap](DISCOVERY_ROADMAP.md).
 ```text
 accepted StatisticalState -> baseline EvidenceState E0
    -> CHECK_EVIDENCE_INTEGRITY_V1 -> E1
-   -> deep-v1 judgment (jev-evidence-projection-v2) -> deep-policy-v2 recorded move
+    -> deep judgment (evidence projection + deep question set) -> deep policy recorded move
         COMPLETE / ABSTAIN -> stop arc with the policy's actual reason code
             (a terminal move is never routed through the follow-up dispatcher)
         FOLLOW_UP + authorization + eligible distinct action + budget
@@ -41,11 +41,11 @@ accepted StatisticalState -> baseline EvidenceState E0
           -> CHECK_REVISION_FAITHFULNESS_V1 -> E2 -> deep judgment/policy
         GENERATE_HYPOTHESES + authorization + budget
           -> deterministic or injected generator -> bounded hypotheses
-          -> hypothesis-v2 critique (jev-hypothesis-projection-v2)
+          -> hypothesis question set critique (hypothesis projection)
    -> STAGE 8 FINALIZATION:
         FinalCandidateResult derived from the recorded run state
         -> no-jev-baseline-v1 deterministic comparison (read-only replay)
-        -> authoritative JSON dossier (schema 3) + derived Markdown
+        -> authoritative JSON dossier + derived Markdown
         -> FINAL_CANDIDATE_RESULT_RECORDED + DOSSIER_READY
         -> CANDIDATE_COMPLETE -> next candidate
    -> candidate queue exhausted -> RUN_COMPLETED
@@ -66,7 +66,7 @@ arbitrary action IDs.
 
 Every investigated candidate whose evidence was accepted finalizes in Stage 8
 (`research/finalize.py`): one deterministic `FINAL_CANDIDATE_RESULT` artifact, the authoritative
-dossier (schema 3, including the final result and the `jev_vs_no_jev_comparison` section), and
+dossier (including the final result and the `jev_vs_no_jev_comparison` section), and
 then `CANDIDATE_COMPLETE` with the dossier attached. No human review participates; the candidate
 loop continues automatically to the next selection, and the run completes only after the queue is
 exhausted (`RUN_COMPLETED` with `candidate_queue_exhausted`). If an authoritative revision or
@@ -106,12 +106,22 @@ invocations, and TypeSafe SDK retries are explicitly disabled, so one logical ev
 corresponds to at most one HTTP attempt. A total paid-model spend gate is still absent
 (PLANNED); unknown cost is not zero.
 
-## PLANNED: Stage 4 discovery transition
+## IMPLEMENTED: systematic pre-Wide discovery
 
-Replace the top-mutation-only selection bottleneck with an explicit bounded measurable universe,
-cheap deterministic reduction and richer survivor acquisition. Add only admitted typed lanes and
-versioned policy. Reuse this bounded candidate arc; do not introduce a workflow engine.
-Acquisition-capable or measurement-producing actions require a new explicit contract and budget
-reservation, not an exception hidden inside the existing integrity action registry. Indexed
-systematic discovery is the next separately authorized task; proposed contracts in the roadmap
-are not current runtime.
+The provider-ranked top-mutation selection above is not the only candidate source. Systematic
+discovery is implemented as separately invoked bounded commands (`discover`,
+`discover-expression`, `discover-cnv`) over a fixed release-bound indexed universe: indexed
+mutation counts, case-labelled expression summaries with Tukey tails, and survivor-only CNV
+occurrences, each reduced deterministically and persisted as one immutable typed result; the
+cutover composes one canonical `StatisticalState` per survivor with exact cross-stage binding.
+No Jev, provider rank, LLM, census status or hidden biological knowledge enters any reduction.
+Contracts and evidence gates are owned by [the roadmap](DISCOVERY_ROADMAP.md); the multi-modal
+Stage 9 loop (Arm Jev, candidate union, integrated states) is PROVISIONAL and not implemented.
+
+## PLANNED: campaign progression (Stage 9, provisional)
+
+Today one bounded run completes and stops; continuous worker mode repeats bounded runs at the
+operational interval. The provisional Stage 9 target adds a named, versioned and deterministic
+campaign-selection policy that either selects the next eligible bounded campaign or places the
+autonomous program into an explicit idle state — never a hidden model, lexicographic fallback
+or implicit ordering, and never one infinite run.

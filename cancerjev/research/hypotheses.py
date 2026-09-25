@@ -1,4 +1,4 @@
-"""Bounded hypothesis generation and its Jev evaluation (Phase 6).
+"""Bounded hypothesis generation and its Jev evaluation.
 
 Generated text is never evidence: every statement is stored with an explicit label
 that names its generator, it never writes a measured field, and its Jev judgment is

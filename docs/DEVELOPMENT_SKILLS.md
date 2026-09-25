@@ -63,8 +63,10 @@ Core means preferred when relevant, not a requirement to load every skill on eve
 Roadmap Stages 0–8 (through the bounded broad universe, independent expression arm,
 survivor-only CNV lane, cutover with held-data descriptor actions, and Stage 8 candidate
 finalization with the deterministic no-Jev comparison) are IMPLEMENTED and offline-verified. The
-human-labelled prospective harness is optional and outside the runtime stages. Stage 9
-(conditional inferential extensions) is deferred. See [roadmap](DISCOVERY_ROADMAP.md),
+human-labelled prospective harness is optional and outside the runtime stages. Stage 9 is the
+provisional reorientation toward the autonomous multi-modal target-discovery loop (see
+[architecture](ARCHITECTURE.md)); conditional inferential extensions are deferred. See
+[roadmap](DISCOVERY_ROADMAP.md),
 [contracts](DOMAIN_MODELS.md), [GDC strategy](GDC_STRATEGY.md), [budgets](GDC_BUDGETS.md),
 [invariants](SCIENTIFIC_INVARIANTS.md) and [testing](TESTING.md). Skill guidance does not
 authorize discovery lanes, new endpoints or paid calls.

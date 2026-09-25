@@ -78,8 +78,8 @@ web origin can read the provenance values. Run projection and `last_sequence` ar
 consistently; events expose a high-water mark. The UI tolerates a newer event page than the
 summary and refreshes the summary without independently executing state transitions.
 
-The Python routes are the current read contract. `apps/web/` is explicitly **not part of the
-Stage 3 hard cutover**: this document does not audit or change frontend code and makes no
+The Python routes are the current read contract. `apps/web/` is presentation-only and outside the
+research runtime: this document does not audit or change frontend code and makes no
 frontend schema-parity claim. Do not add another API proxy/business backend in Next.js. No SSE
 or WebSocket routes.
 

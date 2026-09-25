@@ -1,24 +1,28 @@
 # Persistence and local runtime
 
-Current storage state after the Stage 3 hard cutover (2026-09-25). SQLite schema is **5**.
-Scientific artifact schemas are StatisticalState **4**, EvidenceState **4** and ResearchSpec
-**3**. Older or unknown schemas are rejected fail-closed; there are **no migrations and no
+Current storage state after the Stage 3 hard cutover and the Stage 4-8 implementations
+(2026-09-25). The SQLite schema and the scientific artifact schema versions are the
+machine-checked values in [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md); they are not restated
+here. Older or unknown schemas are rejected fail-closed; there are **no migrations and no
 legacy readers**. Historical databases and artifacts are retained, not rewritten.
 
 ## Schema bootstrap and reset
 
 - IMPLEMENTED: bootstrap opens an existing database read-only and compares its recorded version
   before changing journal mode or creating current tables/triggers. An unsupported version fails
-  with an actionable `unsupported database schema N; this build expects schema 5` error and the
+  with an actionable `unsupported database schema N; this build expects schema M` error naming
+  the expected current version and the
   database bytes are not modified.
-- IMPLEMENTED: schema 5 keeps the schema-4 table design (relational provenance constraints,
-  immutable triggers, version-qualified `gdc_cache`) and rejects schema-4 stores rather than
+- IMPLEMENTED: the current SQLite schema keeps the earlier table design (relational provenance
+  constraints,
+  immutable triggers, version-qualified `gdc_cache`) and rejects older-version stores rather than
   reinterpreting them.
 - Reset instructions: stop the research process and the API, move or delete the whole data
   directory (including any `-wal`/`-shm` files and the `research.lock`), then start the API or
-  CLI again. Bootstrap creates a fresh schema-5 database. Never edit `schema_info` by hand and
+  CLI again. Bootstrap creates a fresh current-version database. Never edit `schema_info` by
+  hand and
   never leave a copied live `.db` without its WAL when preserving evidence.
-- Retain historical databases and artifacts. A schema-4 or earlier directory must be moved to a
+- Retain historical databases and artifacts. An older-version directory must be moved to a
   separate location (or deleted only if it is disposable); it is not migrated, reset or
   silently reinterpreted. No stale database or acceptance directory is retained in the
   repository: `data/` holds only its `.gitkeep`.

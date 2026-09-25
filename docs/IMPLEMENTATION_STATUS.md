@@ -1,11 +1,18 @@
 # Implementation status
 
-Factual source of truth for the current repository state after the Stage 3 hard cutover and the
-Stage 4-8 implementations (discovery, cutover, the full investigation loop, and candidate
-finalization with the no-Jev comparison; 2026-09-25). Every
-claim is labeled IMPLEMENTED, PLANNED or UNVERIFIED. Historical stage narratives, handoff documents
-and audit journals are retired (git history is the archive of record); they are not current
-instructions or current capability claims.
+Factual source of truth for the current repository state: the Stage 3 hard cutover plus the
+Stage 4-8 implementations (systematic discovery, cutover, the full investigation loop, and
+candidate finalization with the no-Jev comparison; 2026-09-25). Every claim is labeled
+IMPLEMENTED, PLANNED or UNVERIFIED. Current schema, projection, question-set, policy and
+registry identities are the machine-checked values in
+[REPOSITORY_FACTS.md](REPOSITORY_FACTS.md) and are not restated here. Historical stage
+narratives, handoff documents and audit journals are retired (git history is the archive of
+record); they are not current instructions or current capability claims.
+
+**Stage 8 recovery point:** the annotated tag `stage8-pre-stage9-cutover-9fb9192` (commit
+`9fb9192`, verified Stage 8 baseline) marks the recovery point before any future fail-closed
+schema cutover; there are no migrations, so recovery is a checkout of that tag, not a data
+migration. See [CHANGELOG.md](../CHANGELOG.md).
 
 ## Current architecture — IMPLEMENTED
 
@@ -14,8 +21,8 @@ One typed runtime chain:
 ```text
 GDC open-access API -> strict parsers -> typed acquisition/lane records
  -> canonical typed StatisticalState
- -> deterministic Wide Jev projection (jev-state-projection-v4)
- -> validated typed answers -> Python admission (wide-policy-v2) -> Candidate
+ -> deterministic Wide Jev projection
+ -> validated typed answers -> Python admission -> Candidate
  -> immutable typed EvidenceState E0
  -> operator-authorized registered action (explicit deep action id)
      -> immutable revision E1/E2
@@ -32,26 +39,26 @@ Systematic pre-Wide mutation funnel (Stage 4, python -m cancerjev discover --liv
  -> indexed /genes universe enumeration (fixed protein_coding gene_id-asc prefix, <=10 pages)
  -> <=100-gene indexed mutation-count batches (coverage acquired once)
  -> per-gene typed outcome -> deterministic count-descending reduction (<=10 survivors)
- -> immutable persisted MutationDiscoveryResult (schema 1)
+ -> immutable persisted MutationDiscoveryResult
 
 Independent expression arm (Stage 5, python -m cancerjev discover-expression --live):
  same release/project/case frame and fixed indexed 1,000-gene universe
  -> <=100-gene x <=250-case availability/value batches (UQFPKM)
  -> typed local log2(UQFPKM+1) summaries with complete missingness accounting
  -> n>=20 within-gene Tukey 1.5xIQR tails, or explicit insufficient/degenerate outcome
- -> immutable persisted ExpressionDiscoveryResult (schema 1); no Jev or cross-lane inference
+ -> immutable persisted ExpressionDiscoveryResult; no Jev or cross-lane inference
 
 Survivor-only CNV arm (Stage 6, python -m cancerjev discover-cnv --live --stage4-run RUN_ID):
  Stage 4 release, cohort frame and <=10 survivor IDs
  -> fixed /cnv_occurrences pages (<=250 rows, <=10 pages per survivor)
  -> strict occurrence parsing with category, caller/source and missing-sample context
  -> unique positive cases per provider category, explicit conflicts and no neutral inference
- -> immutable persisted CnvDiscoveryResult (schema 1); no Jev or cross-lane inference
+ -> immutable persisted CnvDiscoveryResult; no Jev or cross-lane inference
 
 Stage 7 cutover and descriptive actions (`research/cutover.py`, `science/descriptors.py`,
-`science/actions.py` registry version 3):
+`science/actions.py`):
  Stages 4-6 artifacts bound exactly (spec, release, cohort, universe, frame, survivors, entities)
- -> one canonical schema-5 StatisticalState per Stage 4 survivor
+ -> one canonical typed StatisticalState per Stage 4 survivor
  -> registered held-data descriptive actions SUMMARIZE_EXPRESSION_TAIL_V1 and
     SUMMARIZE_CNV_CATEGORIES_V1 (zero acquisition, zero model calls); several eligible actions
     require one explicitly operator-requested action id; deep dispatch never auto-selects
@@ -74,24 +81,19 @@ Optional evaluation harness (outside the numbered runtime stages; never invoked 
   `ResearchSpec`, `Candidate`, `HypothesisDraft`). Operational ids/hashes travel in
   `StateRecord` / `EvidenceRecord` / `HypothesisRecord` envelopes and never enter scientific
   identity.
-- IMPLEMENTED: serialized schema versions. StatisticalState 5; EvidenceState 4; ResearchSpec 7;
-  MutationDiscoveryResult 1; ExpressionDiscoveryResult 1; CnvDiscoveryResult 1; dossier 3;
-  FinalCandidateResult 1; SQLite schema 5.
-  Older/unknown schemas are rejected fail-closed;
-  there are **no migrations and no legacy readers**. Historical databases and artifacts are
-  retained, not rewritten.
-- IMPLEMENTED: question sets `wide-v3`, `deep-v1` and `hypothesis-v2` with unchanged semantics;
-  projections `jev-state-projection-v4`, `jev-evidence-projection-v2` and
-  `jev-hypothesis-projection-v2`; policies `wide-policy-v2` and `deep-policy-v2`. The v4 state
+- IMPLEMENTED: versioned fail-closed serialization; current schema versions are the
+  machine-checked values in [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md). Older/unknown schemas
+  are rejected fail-closed; there are **no migrations and no legacy readers**. Historical
+  databases and artifacts are retained, not rewritten.
+- IMPLEMENTED: versioned question sets, projections and policies (current identities in
+  [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md)) with unchanged semantics. The current state
   projection adds the observed CNV fields and the Python-computed `eligible_followups` list; it
   introduces no new semantic question.
-- IMPLEMENTED: registered deterministic actions are exactly `CHECK_EVIDENCE_INTEGRITY_V1`
-  (input `STATISTICAL_STATE`, 5 checks), `CHECK_REVISION_FAITHFULNESS_V1` (input
-  `EVIDENCE_STATE`, 4 checks), `SUMMARIZE_EXPRESSION_TAIL_V1` (input `STATISTICAL_STATE`,
-  held-data Tukey tail) and `SUMMARIZE_CNV_CATEGORIES_V1` (input `STATISTICAL_STATE`, held-data
-  positive-case category summary), registry version 3. They acquire no data, call no model and
-  compute no new biological quantity; the two descriptor actions only restate held case-labelled
-  values with the fixed predeclared methods.
+- IMPLEMENTED: registered deterministic actions (current roster and registry version in
+  [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md)): the integrity actions verify recorded evidence
+  from retained response artifacts; the held-data descriptor actions restate held case-labelled
+  values with fixed predeclared methods. They acquire no data, call no model and compute no new
+  biological quantity; an action failure is a typed outcome that promotes nothing.
 - IMPLEMENTED: Python owns loops, routing, budgets, dispatch, stopping and abstention.
   `FOLLOWUP_LIMIT = 3` and `EVIDENCE_ITERATION_LIMIT = 2` bound one candidate arc; deep policy
   records exactly one typed move (`COMPLETE` / `FOLLOW_UP` / `GENERATE_HYPOTHESES` / `ABSTAIN`)
@@ -124,7 +126,7 @@ Optional evaluation harness (outside the numbered runtime stages; never invoked 
   (`research/expression_discovery.py`, `python -m cancerjev discover-expression --live`). It uses fixed two-dimensional request batching, retains
   case-labelled UQFPKM values and explicit missing rows/columns, computes only local
   `log2(UQFPKM+1)` summaries and the predeclared within-gene empirical-tail descriptor, and
-  persists one immutable schema-1 result. The recorded request plan stays 97 under the unchanged
+  persists one immutable typed result. The recorded request plan stays 97 under the unchanged
   150-request/64-MiB run caps. It performs no mutation selection, Jev/model work, differential expression,
   tumor-normal comparison or cross-lane association.
 - IMPLEMENTED and live-verified: Stage 6 survivor-only CNV discovery
@@ -132,12 +134,12 @@ Optional evaluation harness (outside the numbered runtime stages; never invoked 
   It binds a completed Stage 4 artifact, exact release and cohort case frame; queries only its
   at-most-10 survivors with fixed 250-row pages and at most 10 pages per gene; preserves provider
   five-category labels, callers, source/sample context and explicit category conflicts; and
-  persists one immutable schema-1 result. Absence is never neutral, overlapping case
+  persists one immutable typed result. Absence is never neutral, overlapping case
   categories are not summed, and no Jev/model or cross-lane inference occurs.
 - IMPLEMENTED and live-verified: Stage 7 cutover and descriptive actions (`research/cutover.py`,
-  `science/descriptors.py`, registry version 3). `compose_discovery_states` binds Stages 4-6
+  `science/descriptors.py`). `compose_discovery_states` binds Stages 4-6
   artifacts exactly — spec, release, cohort/project, universe membership, population frame,
-  survivor list and per-gene entities — and composes one schema-5 `StatisticalState` per Stage 4
+  survivor list and per-gene entities — and composes one canonical `StatisticalState` per Stage 4
   survivor with the mutation, expression and CNV lanes and the selection-bias limitation recorded
   in `TestedContext`. Any cross-stage drift is a typed `CutoverError` refusal. The shared
   deterministic descriptors (`science/descriptors.py`) back both Stage 5/6 discovery and the
@@ -185,7 +187,7 @@ Optional evaluation harness (outside the numbered runtime stages; never invoked 
 - NOT IMPLEMENTED / not representable: universe enumeration beyond the fixed deterministic
   prefix (no full-genome scan, no random sample, no caller-controlled filters), broad-universe
   CNV acquisition, combined cross-lane discovery/reduction, further registered actions beyond
-  registry version 3, offline autoresearch, and any incremental-value result.
+  the current roster, offline autoresearch, and any incremental-value result.
 
 ## Removed architecture (git history is the archive; do not reintroduce)
 
@@ -205,25 +207,26 @@ documents (`STAGE_01_HANDOFF`, `STAGE_02_HANDOFF`, `STAGE_03_HANDOFF`, `PHASE_3_
 | Capability | Status |
 |---|---|
 | Anonymous bounded GDC acquisition + deterministic measurements | IMPLEMENTED; one production LUAD ResearchSpec; LUAD/LUSC never pooled |
-| Typed domain runtime (state, evidence, candidate, hypotheses, envelopes) | IMPLEMENTED; state/evidence 5/4, ResearchSpec 7, mutation/expression/CNV discovery results 1/1/1, SQLite 5, fail-closed rejection of older schemas |
-| Wide semantic judgment and admission | IMPLEMENTED: `jev-state-projection-v4`, `wide-v3`, `wide-policy-v2`, at most three promoted candidates; zero promotions is valid |
+| Typed domain runtime (state, evidence, candidate, hypotheses, envelopes) | IMPLEMENTED; versioned fail-closed schemas (current versions in REPOSITORY_FACTS.md); fail-closed rejection of older schemas |
+| Wide semantic judgment and admission | IMPLEMENTED: state projection + wide question set + admission policy (identities in REPOSITORY_FACTS.md), at most three promoted candidates; zero promotions is valid |
 | Deep evidence/actions | IMPLEMENTED: E0/E1/E2, four registered actions (two integrity, two held-data descriptors), explicit operator selection/authorization; several eligible actions require one explicit action id |
-| Deep judgment and next move | IMPLEMENTED: `jev-evidence-projection-v2`, `deep-v1`, `deep-policy-v2`; recorded move never dispatched by the policy |
-| Hypotheses | IMPLEMENTED: deterministic default, optional injected OpenRouter adapter, at most three per candidate, `hypothesis-v2` critique; generated text is never evidence |
-| Dossiers | IMPLEMENTED: authoritative JSON + derived Markdown with per-section availability, schema 3 (embeds the Stage 8 final result and no-Jev comparison), live notice |
+| Deep judgment and next move | IMPLEMENTED: evidence projection + deep question set + deep next-move policy (identities in REPOSITORY_FACTS.md); recorded move never dispatched by the policy |
+| Hypotheses | IMPLEMENTED: deterministic default, optional injected OpenRouter adapter, at most three per candidate, Jev critique; generated text is never evidence |
+| Dossiers | IMPLEMENTED: authoritative JSON + derived Markdown with per-section availability (dossier schema in REPOSITORY_FACTS.md), embedding the Stage 8 final result and no-Jev comparison, live notice |
 | Evaluation harness | IMPLEMENTED offline: `python -m cancerjev evaluate` compares recorded rankings against operator-supplied, pre-registered labels; no superiority claim |
 | Enforcement | GDC request/byte/page caps and candidate/follow-up/revision/hypothesis caps exist; SDK retries are disabled; a total paid-model spend gate does not exist |
 | Scientific domain typing | IMPLEMENTED for the runtime chain; JSON remains the boundary for events, storage, API/dossier presentation and artifact envelopes |
-| Persistence/API | SQLite schema 5, immutable artifacts/events, read-only API, version 3.0.0 |
+| Persistence/API | Versioned SQLite schema (REPOSITORY_FACTS.md), immutable artifacts/events, read-only API (API version in REPOSITORY_FACTS.md) |
 | Systematic mutation discovery (bounded indexed prefix) | IMPLEMENTED (Stage 4): 1,000-gene protein-coding prefix, ≤100-gene batches, deterministic ≤10 survivors, persisted result; prefix-biased by construction |
 | Independent expression arm | IMPLEMENTED and live-verified (Stage 5): live acceptance PASSED (2026-09-25) |
 | Survivor-only CNV arm | IMPLEMENTED and live-verified (Stage 6): full live workload completed, all 10 survivors |
-| Discovery cutover to canonical states | IMPLEMENTED and live-verified (Stage 7): exact Stage 4-6 binding over the live persisted artifacts, one schema-5 state per survivor |
+| Discovery cutover to canonical states | IMPLEMENTED and live-verified (Stage 7): exact Stage 4-6 binding over the live persisted artifacts, one canonical state per survivor |
 | Held-data descriptive actions | IMPLEMENTED and live-verified (Stage 7): `SUMMARIZE_EXPRESSION_TAIL_V1`, `SUMMARIZE_CNV_CATEGORIES_V1` VERIFIED over the composed live states; zero acquisition, zero model calls |
-| Stage 8 candidate finalization | IMPLEMENTED and offline-verified: FinalCandidateResult + authoritative dossier (schema 3) + `no-jev-baseline-v1` comparison; DOSSIER_READY -> CANDIDATE_COMPLETE per candidate; no human review; multi-candidate loop + queue-exhausted RUN_COMPLETED |
+| Stage 8 candidate finalization | IMPLEMENTED and offline-verified: FinalCandidateResult + authoritative dossier + `no-jev-baseline-v1` comparison; DOSSIER_READY -> CANDIDATE_COMPLETE per candidate; no human review; multi-candidate loop + queue-exhausted RUN_COMPLETED |
 | Jev-vs-No-Jev runtime comparison | IMPLEMENTED and offline-verified: read-only deterministic replay of `no-jev-baseline-v1` over the same evidence; decision deltas only, never a superiority claim |
 | Prospective protocol evaluation | OPTIONAL evaluation/calibration harness (`research/prospective.py`, `research/evaluation.py`), outside the numbered runtime stages and never invoked by the runtime; no protocol executed (no labelled corpus exists) |
-| Combined multi-lane reduction and inferential extensions | PLANNED (Stage 9+); not current runtime |
+| Combined multi-lane reduction and inferential extensions | DEFERRED behind source/matching/reference/censoring/statistical gates; not current runtime |
+| Multi-modal Stage 9 target skeleton (Arm Jev, candidate union, integrated states) | PROVISIONAL PLANNED, pending source-grounded Stage 9 design reviews; not current runtime |
 | Offline autoresearch and demonstrated Jev incremental value | NOT IMPLEMENTED / UNVERIFIED |
 
 ## Verification performed in this environment (2026-09-25)
@@ -274,7 +277,7 @@ no limit enlarged, no result retried for a favorable outcome:
   `e2035487`): 20 live attempts, 1,860,737 bytes; all 10 survivors complete with two strict
   250-row pages each; provider categories Gain/Amplification/Loss with caller and
   sample-source context; no category summed across overlapping cases.
-- Stage 7 cutover over the live persisted artifacts: 10 schema-5 states composed with exact
+- Stage 7 cutover over the live persisted artifacts: 10 canonical states composed with exact
   spec/release/universe/frame/survivor/entity binding; USH2A rank 1 (402 affected cases, 339 CNV
   occurrences, explicit missingness); `SUMMARIZE_EXPRESSION_TAIL_V1` and
   `SUMMARIZE_CNV_CATEGORIES_V1` executed VERIFIED (n=518 expression values, n=339 occurrences).
@@ -346,13 +349,22 @@ the implemented contracts, and the optional blinded evaluation has no executed p
   mutation batches, per-gene outcomes and dispositions, the reducer identity, survivor IDs,
   warnings and limitations. No Jev, TypeSafe, OpenRouter or provider-ranked input participated.
 
-## Next: Stage 9
+## Next: Stage 9 (provisional, pending source-grounded design reviews)
 
-Conditional inferential extensions (matched mutation-expression / CNV-expression association,
-survival) are the next separately authorized work and remain deferred behind their source,
-matching, reference, censoring and statistical-review gates. Stages 4-7 live acceptance is
-VERIFIED as of 2026-09-25; Stage 8 finalization is offline-verified and requires no human review;
-the optional blinded evaluation harness has no executed protocol or labelled corpus. Do not
-convert any of that into a scientific-readiness claim.
-[The roadmap](DISCOVERY_ROADMAP.md) indexes the remaining evidence gates. Do not extend the action
-registry or question sets without a separately authorized task.
+The provisional Stage 9 direction reorients the completed Stage 8 infrastructure toward the
+core scientific objective: the autonomous multi-modal target-discovery loop described in
+[ARCHITECTURE.md](ARCHITECTURE.md) (PROVISIONAL TARGET ARCHITECTURE, SUBJECT TO THE
+SOURCE-GROUNDED STAGE 9 DESIGN REVIEWS). No part of that skeleton — Arm Jev, the candidate
+union, the integrated-gene-state generalization or the campaign-selection policy — is
+implemented; no Stage 9 contract is frozen. When scientific follow-up work is separately
+authorized, the first sequence stays narrow and sequential (provisional):
+`BUILD_MATCHED_ASSAY_FRAME_V1` → `ACQUIRE_CANDIDATE_SSM_CASES_V1` →
+`MUTATION_EXPRESSION_ASSOCIATION_V1`. CNV-expression, survival, pathway and scRNA analyses
+are explicitly deferred, not simultaneous. Conditional inferential extensions remain deferred
+behind their source, matching, reference, censoring and statistical-review gates.
+
+Stages 4-7 live acceptance is VERIFIED as of 2026-09-25; Stage 8 finalization is
+offline-verified and requires no human review; the optional blinded evaluation harness has no
+executed protocol or labelled corpus. Do not convert any of that into a scientific-readiness
+claim. [The roadmap](DISCOVERY_ROADMAP.md) indexes the remaining evidence gates. Do not extend
+the action registry or question sets without a separately authorized task.

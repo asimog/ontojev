@@ -1,4 +1,4 @@
-name: Stage 3 typed-architecture verification
+name: OntoJev verification
 
 on:
   push:

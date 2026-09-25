@@ -1,62 +1,135 @@
 # Repository rules
 
-OntoJev is a bounded, deterministic-first research tool for public open-access GDC
-evidence with narrow Jev semantic judgment. Work from `main`. The user's current
-instructions override implementation steps embedded in reference documents.
+OntoJev is an autonomous computational-genomics target-discovery system composed of bounded,
+reproducible research campaigns over public open-access GDC evidence: deterministic genomic
+analysis creates structured evidence, Jev makes narrow semantic judgments about potentially
+interesting patterns, bounded LLM-generated hypotheses are proposed where useful and critiqued
+by Jev, and Python controls all execution and evidence creation. Work from `main`. The user's
+current instructions override implementation steps embedded in reference documents.
+
+## Scientific invariants (never negotiable)
+
+- Raw genomics never goes to Jev: `raw genomics → strict parsing → deterministic
+  computational genomics → typed genomic features → Jev`.
+- `Jev judges. Python decides. Python executes.` Jev/LLM outputs are inputs to Python policy,
+  never control flow; they never compute measurements, select or execute actions, authorize
+  acquisition, or create evidence.
+- Missing is not negative; unavailable mutation evidence is not wild type; a missing
+  expression column is not zero; absence is not a neutral result. Never hide partial retrieval.
+- Discovery is not mutation-conditioned: each modality (mutation, expression, CNV)
+  independently preserves genes; a gene need not be mutation-significant for expression or CNV
+  evidence to contribute.
+- The system discovers **potential importance** of target candidates; it does not establish
+  biological significance, dependency, druggability, efficacy or clinical value.
+
+## Primary execution model
+
+- The primary product is a **system-owned autonomous research program** made of bounded,
+  independently reproducible campaigns: bounded campaign → multi-modal target discovery →
+  target investigation → Stage 8 finalization → campaign complete → next bounded campaign.
+  Never describe or build this as one infinite run.
+- Researchers are an optional, isolated future route (Researcher Lab). Researcher-run state,
+  evidence, candidates, hypotheses and results are isolated from the autonomous program at
+  runtime. Testable rule: researcher activity cannot influence the system-owned autonomous
+  program at runtime; any influence on future autonomous behavior must occur through an
+  explicit versioned code/scientific change outside runtime. This does not claim humans can
+  never influence the project.
+- Today's CLI operator controls (deep-candidate selection, follow-up authorization,
+  hypothesis generation) are explicit, recorded manual paths. The autonomous-program target
+  is a runtime that requires no human control of candidate selection, Jev promotion,
+  follow-up selection, hypothesis approval, iteration authorization or candidate completion,
+  with manual CLI controls remaining only as debug overrides. That reorientation is the
+  provisional Stage 9 direction, subject to the source-grounded Stage 9 design reviews.
+
+## Source-of-truth hierarchy
+
+Facts flow downward; never restate a fact from a higher level in a lower level, and never
+hardcode mutable facts (schema numbers, projection/question-set versions, policy versions,
+action counts, registry versions, "Stage X is next") in prose outside their owning level:
+
+```text
+code / constants / registries
+        ↓
+docs/REPOSITORY_FACTS.md (machine-checked by tests/test_repository_facts.py)
+        ↓
+docs/IMPLEMENTATION_STATUS.md (factual claims: what is IMPLEMENTED / PLANNED / UNVERIFIED)
+        ↓
+docs/ARCHITECTURE.md (structural description)
+        ↓
+docs/DISCOVERY_ROADMAP.md (stage ordering, gates, deferred work)
+        ↓
+specialized docs
+```
+
+- The repository facts table is checked against code constants by
+  `python tests/repository_facts.py check` (also enforced in pytest). After an authorized
+  version change: change the constant, run `python tests/repository_facts.py render`, commit.
+- Label claims IMPLEMENTED, PLANNED or UNVERIFIED. Do not publish unverified live claims or
+  claim scientific readiness from a demonstration. Changed ranking is not evidence that Jev
+  improved a research decision.
 
 ## Current architecture (do not rebuild)
 
 - One typed runtime chain: GDC open-access API → strict parsers → typed acquisition/lane
-  records → canonical typed `StatisticalState` → deterministic Wide Jev projection
-  (`jev-state-projection-v3`) → validated typed answers → Python admission (`wide-policy-v2`)
-  → `Candidate` → immutable typed `EvidenceState` E0 → registered deterministic action →
-  immutable revision E1/E2 → Deep Jev (`jev-evidence-projection-v2`, question set `deep-v1`)
-  → Python next-move policy (`deep-policy-v2`) → optional bounded hypothesis generation
-  (deterministic template by default; injected OpenRouter adapter on an explicitly authorized
-  path) → Jev hypothesis critique (`jev-hypothesis-projection-v2`, question set `hypothesis-v2`)
-  → dossier (schema 2).
-- Systematic pre-Wide funnel (Stage 4, IMPLEMENTED): `research/discovery.py` +
-  `python -m cancerjev discover --live` — fixed release-bound 1,000-gene protein-coding
-  gene-id-asc `/genes` prefix (≤10 strict pages), ≤100-gene indexed mutation-count batches with
-  coverage acquired once, one typed outcome/disposition per requested gene, deterministic
-  `MUTATION_LUAD_AFFECTED_COUNT_DESC_V1` reduction (≤10 survivors), one immutable persisted
-  `MutationDiscoveryResult` (schema 1). No provider rank, Jev, LLM, census status or hidden
-  biological knowledge enters the reduction; the provider top-mutated ranking is a labelled
-  comparator; Stage 4 terminates at the survivor result.
+  records → canonical typed `StatisticalState` → deterministic Wide Jev projection → validated
+  typed answers → Python wide admission → `Candidate` → immutable typed `EvidenceState` E0 →
+  registered deterministic action → immutable revision E1/E2 → Deep Jev evidence projection →
+  Python next-move policy → optional bounded hypothesis generation (deterministic template by
+  default; injected OpenRouter adapter on an explicitly authorized path) → Jev hypothesis
+  critique → Stage 8 finalization: deterministic `FinalCandidateResult`, read-only
+  no-Jev-baseline comparison, authoritative dossier (JSON + derived Markdown) →
+  `CANDIDATE_COMPLETE` → next candidate → run completes when the queue is exhausted.
+  Current schema/projection/question-set/policy identities live in
+  `docs/REPOSITORY_FACTS.md`; do not restate them here.
+- Systematic pre-Wide discovery is implemented as separately invoked bounded commands:
+  `discover` (release-bound indexed protein-coding universe prefix → indexed mutation-count
+  batches → deterministic count-descending reduction to ≤10 survivors → immutable
+  `MutationDiscoveryResult`), `discover-expression` (same release-bound universe → batched
+  case-labelled UQFPKM values → local `log2` summaries and within-gene Tukey tails → immutable
+  `ExpressionDiscoveryResult`) and `discover-cnv` (Stage 4 survivors only → bounded complete
+  CNV occurrences with provider categories/callers → immutable `CnvDiscoveryResult`). A
+  cutover step composes one canonical `StatisticalState` per survivor with exact cross-stage
+  binding, and held-data descriptor actions restate those values on demand. No provider rank,
+  Jev, LLM, census status or hidden biological knowledge enters any reduction; the provider
+  top-mutated ranking is a labelled comparator.
 - Python domain names are unsuffixed: `StatisticalState`, `EvidenceState`, `ResearchSpec`,
   `Candidate`, `HypothesisDraft`. Operational ids/hashes travel in `StateRecord` /
   `EvidenceRecord` / `HypothesisRecord` envelopes and never enter scientific identity.
-- Serialized schema versions: StatisticalState 4; EvidenceState 4; ResearchSpec 4;
-  MutationDiscoveryResult 1; SQLite schema 5. Older/unknown schemas are rejected fail-closed;
-  there are no migrations and no legacy readers.
-- Question sets remain `wide-v3`, `deep-v1` and `hypothesis-v2`. Do not silently change their
-  semantics; a new question set requires a separate versioned task and validation.
-- Registered actions are exactly `CHECK_EVIDENCE_INTEGRITY_V1` (input `STATISTICAL_STATE`) and
-  `CHECK_REVISION_FAITHFULNESS_V1` (input `EVIDENCE_STATE`), registry version 2. They acquire
-  no data, call no model and compute no new biological quantity. `FOLLOWUP_LIMIT = 3` and
-  `EVIDENCE_ITERATION_LIMIT = 2` bound one candidate arc; deep policy records exactly one typed
-  move (`COMPLETE` / `FOLLOW_UP` / `GENERATE_HYPOTHESES` / `ABSTAIN`) and never dispatches it.
-  Dispatch is a separate Python step requiring explicit operator authorization.
+- Serialization is versioned and fail-closed: older/unknown schemas are rejected; there are
+  no migrations and no legacy readers. Historical databases and artifacts are retained, not
+  rewritten.
+- Question sets are versioned and must not be silently changed; a new question set requires a
+  separate versioned task and validation. Registered actions have explicit contracts (question,
+  falsifiable interpretation, method/version, unit, required evidence, limitations) and a
+  declared input kind; they acquire no data, call no model, compute no new biological quantity
+  and never rewrite the evidence they read; an action failure is a typed outcome that promotes
+  nothing. New actions require a concrete operation, not foresight. The current action roster
+  and registry version live in `docs/REPOSITORY_FACTS.md`.
+- Bounded candidate arc: follow-up attempts and evidence revisions are capped, hypotheses are
+  capped, the deep policy records exactly one typed move (`COMPLETE` / `FOLLOW_UP` /
+  `GENERATE_HYPOTHESES` / `ABSTAIN`) and never dispatches it. Dispatch is a separate Python
+  step requiring explicit authorization; with several eligible actions it fails closed rather
+  than choosing silently.
 - `run --fixture demo` runs the same shared `LiveOrchestrator` offline with `FixtureTransport`
   and `FixtureJevAdapter` (mode `FIXTURE`, synthetic notice in the dossier). There is no second
-  execution engine and no independent Phase-1 engine.
+  execution engine.
 - One canonical `ResearchSpec`, `LUAD_RESEARCH_V1` (`domain=lung cancer`, `cohort_id=TCGA-LUAD`,
   `project_id=TCGA-LUAD`): single explicit TCGA-LUAD cohort, bounded acquisition, implemented
-  composition (provider-ranked mutation discovery plus local `log2(UQFPKM+1)` expression
-  summary). TCGA-LUAD and TCGA-LUSC are never pooled. Unsupported configurations are rejected
-  or not representable: indexed genome-wide universe, independent expression arm and CNV
-  acquisition are not implemented.
+  composition (systematic mutation discovery, expression summary, survivor CNV discovery,
+  cutover, investigation, finalization). TCGA-LUAD and TCGA-LUSC are never pooled. Unsupported
+  configurations are rejected or not representable: indexed genome-wide universe, broad CNV
+  acquisition and pooled cohorts are not implemented.
 - Deleted architecture (git history is the archive): `legacy_codecs.py`, dictionary scientific
   identity payloads, `state_summary.py` / `ComputedStatisticalState` / `StateSummary`,
   `LegacyArtifact` / `LegacyMetric` / `LegacyPopulation`, `build_statistical_state`,
   schema-1/2/3 readers, the `DemoOrchestrator` independent engine (the surviving name is only
   a fixture-mode wrapper that constructs `LiveOrchestrator` with `FixtureTransport` +
-  `FixtureJevAdapter`) and fake actions
-  (`DROP_INFLUENTIAL_FIXTURE_POINTS_V1`), `ResearchSpecV2`/lane/universe composition contracts,
-  and the retired handoff/plan/audit documents. Do not reintroduce them.
-- Still absent: offline autoresearch (needs a labelled historical corpus and human review), a
-  systematic multi-lane discovery architecture, and any incremental-value result. The
-  independent expression arm is the next Stage 5 task in [the roadmap](docs/DISCOVERY_ROADMAP.md).
+  `FixtureJevAdapter`), fake actions (`DROP_INFLUENTIAL_FIXTURE_POINTS_V1`),
+  `ResearchSpecV2`/lane/universe composition contracts, and the retired handoff/plan/audit
+  documents. Do not reintroduce them.
+- Still absent: offline autoresearch (needs a labelled historical corpus and human review),
+  the multi-modal Stage 9 target skeleton described in
+  [the roadmap](docs/DISCOVERY_ROADMAP.md), and any incremental-value result.
 
 ## Ownership boundaries
 
@@ -72,14 +145,9 @@ instructions override implementation steps embedded in reference documents.
   eligibility, budgets. Jev owns narrow atomic semantic judgment and never computes a
   measurement. Generated hypotheses never write measured fields.
 - Python owns loops, routing, state transitions, budgets, side effects, action eligibility,
-  stopping and abstention. Jev/LLM outputs are inputs to Python policy, never control flow. A Jev
-  judgment never selects, authorizes or executes an action, and a recorded next move is never
-  dispatched by the policy that recorded it.
-- Deterministic follow-up actions are registered in code with an explicit contract (question,
-  falsifiable interpretation, method/version, unit, required evidence, limitations) and a declared
-  input kind (`STATISTICAL_STATE` or `EVIDENCE_STATE`). They acquire no data, call no model, compute no
-  new biological quantity and never rewrite the evidence they read; an action failure is a typed
-  outcome that promotes nothing. New actions require a concrete operation, not foresight.
+  stopping, abstention and campaign progression. Jev/LLM outputs are inputs to Python policy,
+  never control flow. A Jev judgment never selects, authorizes or executes an action, and a
+  recorded next move is never dispatched by the policy that recorded it.
 - `storage` is the only layer that writes SQL. `research` and `jev` register records through
   narrow `Repository` methods inside the same event + registrations transaction; they must not
   contain raw SQL or touch `repository.database`. No ORM, DAO hierarchy or second repository.
@@ -93,15 +161,13 @@ instructions override implementation steps embedded in reference documents.
 
 - Public anonymous official GDC API only. No token, credential seeking, bulk acquisition or
   file download. `/data`, manifests and slicing are outside the allowlist.
-- GDC never authenticates. Exactly one allow-listed module (`cancerjev/llm/openrouter.py`) may carry a
-  provider authorization header for generated hypothesis text: the credential is environment-only,
-  never persisted or logged, and its output is bounded, validated and never evidence. Pinned model
-  identity is the policy requirement; current OpenRouter construction checks only non-blank identity,
-  not immutability. Tightening that check is planned, not an implemented guarantee. Any other module
-  adding an authorization header fails the guard test.
+- GDC never authenticates. Exactly one allow-listed module (`cancerjev/llm/openrouter.py`) may
+  carry a provider authorization header for generated hypothesis text: the credential is
+  environment-only, never persisted or logged, and its output is bounded, validated and never
+  evidence. Any other module adding an authorization header fails the guard test. The current
+  identity-check gap on that construction is tracked in
+  [implementation status](docs/IMPLEMENTATION_STATUS.md).
 - Respect the caps in `docs/GDC_BUDGETS.md`. Never enlarge a limit to finish work.
-- Missing is not negative; unavailable mutation evidence is not wild type; a missing
-  expression column is not zero. Never hide partial retrieval.
 - Preserve source requests, response hashes, examined populations, sample/workflow context,
   tested families, method versions and missingness. Evidence is immutable; revisions are new
   states. Provider ranking metadata never fills a measured field.
@@ -110,6 +176,9 @@ instructions override implementation steps embedded in reference documents.
   attempt/cache/artifact ids and timestamps never enter scientific identity.
 - One canonical RunEvent stream. CLI and UI consume committed records; no second status
   authority and no console-text parsing.
+- Stage 8 candidate finalization is deterministic and requires no human review; dossier
+  refusal leaves a candidate failed, never complete. A dossier is not proof of adequate
+  scientific evidence.
 
 ## Engineering
 
@@ -120,11 +189,11 @@ instructions override implementation steps embedded in reference documents.
   concepts that a Python function or a new bounded `ResearchRun` can express.
 - Default tests are offline and must not contact GDC, TypeSafe/Jev or an LLM. Run focused
   tests before broader checks. Never weaken a scientific test to obtain a pass.
-- Generated hypothesis text is never evidence and never writes a measured field. The generator seam
-  defaults to deterministic behavior; the CLI may inject `OpenRouterHypothesisGenerator` using its
-  environment-only credential. Provider failure or invalid required output is a typed `UNAVAILABLE`
-  outcome. Unknown-field rejection and nested text/list bounds are IMPLEMENTED for hypothesis
-  drafts.
+- Generated hypothesis text is never evidence and never writes a measured field. The generator
+  seam defaults to deterministic behavior; the CLI may inject `OpenRouterHypothesisGenerator`
+  using its environment-only credential. Provider failure or invalid required output is a typed
+  `UNAVAILABLE` outcome. Unknown-field rejection and nested text/list bounds are enforced for
+  hypothesis drafts.
 
 ## Testing
 
@@ -146,7 +215,8 @@ instructions override implementation steps embedded in reference documents.
   `live*` markers. Test count and coverage percentage are not quality objectives.
 - Gates: FAST everyday `python -m pytest -m fast`; OFFLINE FULL `python -m pytest`;
   BROWSER `cd tests/browser && npx playwright test`;
-  LIVE `python -m pytest -m "live or live_gdc or live_jev or live_llm or live_acceptance"`.
+  LIVE `python -m pytest -m "live or live_gdc or live_jev or live_llm or live_acceptance"`;
+  DOC FACTS `python tests/repository_facts.py check` (pytest-enforced).
 
 ## Development skills
 
@@ -169,11 +239,12 @@ instructions override implementation steps embedded in reference documents.
 
 ## Documentation
 
-- `docs/IMPLEMENTATION_STATUS.md` is the factual source of truth. Keep it accurate.
-- `docs/DISCOVERY_ROADMAP.md` indexes the next Stage 5 discovery work and evidence gates. Proposed
-  lane, typed-state and acquisition-capable action contracts are not current runtime behavior.
-  Historical plans are evidence only, not active implementation instructions. Do not import
+- Maintain the source-of-truth hierarchy above. `docs/IMPLEMENTATION_STATUS.md` is the factual
+  record of what is implemented and verified; `docs/ARCHITECTURE.md` owns the structural
+  description; `docs/DISCOVERY_ROADMAP.md` owns stage ordering and deferred work; specialized
+  docs own their topics. `docs/REPOSITORY_FACTS.md` is the machine-checked facts table —
+  never duplicate its values elsewhere.
+- Stage 9 (autonomous multi-modal target discovery) is provisional pending source-grounded
+  design reviews; do not freeze its contracts into implementation guides before those reviews.
+- Historical plans are evidence only, not active implementation instructions. Do not import
   prior-project architecture into OntoJev.
-- Label claims IMPLEMENTED, PLANNED or UNVERIFIED. Do not publish unverified live claims or
-  claim scientific readiness from a demonstration. Changed ranking is not evidence that Jev
-  improved a research decision.

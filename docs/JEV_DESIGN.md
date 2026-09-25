@@ -28,10 +28,11 @@ IDs are program keys, not question meaning. Calculations and exact lookups remai
 
 ## Current implementation
 
-wide-v3 (6 Noul+1 Choice), deep-v1 (4 Noul+1 Choice), hypothesis-v2 (2 Noul+1 Choice) are IMPLEMENTED
-and unchanged by the Stage 3 hard cutover. Projection versions are current and typed:
-jev-state-projection-v4, jev-evidence-projection-v2 and jev-hypothesis-projection-v2. Existing
-versions and provisional thresholds remain unchanged. See [questions](JEV_QUESTIONS.md). The current
+The current question sets (wide, deep, hypothesis — identities and roster sizes in
+[REPOSITORY_FACTS.md](REPOSITORY_FACTS.md) and [questions](JEV_QUESTIONS.md)) are IMPLEMENTED and
+unchanged by the Stage 3 hard cutover. Projection versions are current and typed (identities in
+[REPOSITORY_FACTS.md](REPOSITORY_FACTS.md)). Existing
+versions and provisional thresholds remain unchanged. The current
 Deep policy has four moves including GENERATE_HYPOTHESES; policy never dispatches its own decision.
 
 The Stage 3 cutover validates cached-answer hydration against recorded artifacts, original question
@@ -113,7 +114,8 @@ incremental-value and resource-accounting gates.
 ## Post-cutover capability revalidation (2026-09-25)
 
 Scope: confirm KEEP / ADOPT NOW / DEFER / REJECT for the capabilities below against the final typed
-StatisticalState (schema 4) and EvidenceState (schema 4), the actual registered action contracts
+StatisticalState and EvidenceState (current schema versions in
+[REPOSITORY_FACTS.md](REPOSITORY_FACTS.md)), the actual registered action contracts
 (`CHECK_EVIDENCE_INTEGRITY_V1` on `STATISTICAL_STATE`, `CHECK_REVISION_FAITHFULNESS_V1` on
 `EVIDENCE_STATE`), and the current projections. This adds no Jev semantics and changes no version.
 
@@ -136,7 +138,7 @@ UNVERIFIED against any future provider documentation change.
 | Semantic features | DEFER | No typed semantic-feature contract exists outside StatisticalState; adding features before a labelled corpus and identity rules risks leaking model output into measured identity. |
 | Autoresearch feature discovery | DEFER | Requires a labelled historical corpus, held-out splits and human review; installing CatBoost or an autoresearch agent now is unjustified. |
 | Composite scoring | DEFER new weights | The current lexicographic policy with hard gates stays; weighted scores are an ablation, not a replacement, and must never compensate a hard scientific gate. |
-| Action-value judgments | DEFER | Only two integrity actions exist; an action-value Noul over them would judge integrity checks, not biological utility. Requires new eligible measurement/acquisition actions first. |
+| Action-value judgments | DEFER | Only the current registered actions exist (see [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md)); an action-value Noul over them would judge integrity or descriptor checks, not biological utility. Requires new eligible measurement/acquisition actions first. |
 | Hypothesis verification | KEEP critique, DEFER new review sets | `hypothesis-v2` already critiques generated text and never promotes it. Additional verification questions need reviewed entailment labels. |
 | Escalation cascades | DEFER | No generator-to-verifier-to-reasoning cascade: it introduces correlated errors, unknown paid cost and an automatic paid path. Human review remains the escalation. |
 | typed projection inputs | ADOPT NOW (already in force) | Wide/Deep/Hypothesis projections consume typed records; operational ids stay out of scientific identity. |
