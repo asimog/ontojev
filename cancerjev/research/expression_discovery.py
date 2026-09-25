@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Callable
 from dataclasses import asdict
@@ -11,10 +12,16 @@ from uuid import uuid4
 from cancerjev.domain.codecs import write_expression_discovery
 from cancerjev.domain.discovery import (
     EXPRESSION_LIMITATIONS,
+    EXPRESSION_REQUEST_AVERAGE_BYTES,
+    EXPRESSION_RUN_MAX_BYTES,
+    EXPRESSION_RUN_MAX_REQUESTS,
+    ExpressionDisposition,
     ExpressionDiscoveryEntry,
     ExpressionDiscoveryResult,
+    ExpressionRunPlan,
 )
 from cancerjev.domain.measurements import (
+    ContractError,
     EntityRef,
     MetricAvailability,
     PopulationFrame,
@@ -31,26 +38,33 @@ from cancerjev.research.acquisition import (
     response_meta,
     response_operational_source,
 )
-from cancerjev.research.discovery import acquire_gene_universe
+from cancerjev.research.discovery import UNIVERSE_PAGE_SIZE, acquire_gene_universe
 from cancerjev.research.shards import ledger_summary, publish_shard_ledger
 from cancerjev.research.specs import ResearchSpec
-from cancerjev.science.descriptors import expression_tail_descriptor
+from cancerjev.science.descriptors import expression_lane_disposition, expression_tail_descriptor
 from cancerjev.science.expression import expression_observation
 from cancerjev.science.methods import ProjectFrame, expression_result
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
 
 
-def _request_plan_max(spec: ResearchSpec) -> int:
+def _expression_run_plan(spec: ResearchSpec, *, gene_count: int, case_count: int) -> ExpressionRunPlan:
+    """Declared pre-run volume plan over the enumerated universe and cohort."""
     acquisition = spec.acquisition
-    discovery = spec.discovery
     expression = spec.expression_discovery
     cohort_pages = math.ceil(acquisition.max_cohort_cases / acquisition.case_page_size)
-    universe_pages = math.ceil(discovery.universe_limit / 100)
-    case_batches = math.ceil(acquisition.max_cohort_cases / acquisition.case_batch_size)
-    gene_batches = math.ceil(discovery.universe_limit / expression.gene_batch_size)
-    # status + project inventory + cohort + universe + file provenance + availability/values matrices
-    return 2 + cohort_pages + universe_pages + 1 + 2 * case_batches * gene_batches
+    universe_pages = math.ceil(gene_count / UNIVERSE_PAGE_SIZE)
+    case_batches = math.ceil(case_count / acquisition.case_batch_size)
+    gene_batches = math.ceil(gene_count / expression.gene_batch_size)
+    # status + project inventory + cohort + universe + workflow facets
+    # + availability/values matrices over every gene and case batch
+    request_count = 2 + cohort_pages + universe_pages + 1 + 2 * case_batches * gene_batches
+    return ExpressionRunPlan(
+        gene_count=gene_count, case_count=case_count, gene_batches=gene_batches,
+        case_batches=case_batches, request_count=request_count,
+        projected_bytes=request_count * EXPRESSION_REQUEST_AVERAGE_BYTES,
+        max_requests=EXPRESSION_RUN_MAX_REQUESTS, max_bytes=EXPRESSION_RUN_MAX_BYTES,
+    )
 
 
 def run_expression_discovery(
@@ -63,15 +77,10 @@ def run_expression_discovery(
 ) -> ExpressionDiscoveryResult:
     """Execute and persist Stage 5; this path performs no mutation or model work."""
     cohort_spec = research_spec.cohort
-    plan_max = _request_plan_max(research_spec)
-    if plan_max > 150:
-        raise LiveRunError("EXPRESSION_REQUEST_PLAN_EXCEEDS_CAP",
-                           f"worst-case plan needs {plan_max} requests")
     emit("EXPRESSION_DISCOVERY_STARTED", f"expression-discovery:started:{uuid4()}",
          "Independent expression discovery started.",
          data={"spec_id": research_spec.spec_id,
-               "expression_discovery": asdict(research_spec.expression_discovery),
-               "request_plan_max": plan_max})
+               "expression_discovery": asdict(research_spec.expression_discovery)})
     status_response = transport.request(status_request())
     status = parse_status(status_response.body, response_meta(status_response, None))
     release = status.data_release
@@ -100,6 +109,23 @@ def run_expression_discovery(
          data={"returned": len(universe.universe.ordered_ids),
                "membership_hash": universe.universe.membership_hash,
                "release": universe.universe.release})
+    try:
+        run_plan = _expression_run_plan(
+            research_spec, gene_count=len(universe.universe.ordered_ids),
+            case_count=len(cohort.cases))
+    except ContractError as exc:
+        raise LiveRunError("EXPRESSION_RUN_PLAN_EXCEEDS_BUDGET", str(exc)) from exc
+    plan_artifact = artifacts.publish(
+        f"runs/{run_id}/expression-discovery/run-plan.json",
+        json.dumps({"kind": "EXPRESSION_RUN_PLAN", **run_plan.payload()},
+                   sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        "application/json", "expression-run-plan",
+    )
+    repository.register_artifact(plan_artifact, run_id)
+    emit("EXPRESSION_RUN_PLANNED", f"expression-discovery:plan:{uuid4()}",
+         "Expression run volume plan admitted against the declared budgets.",
+         data={"run_plan": run_plan.payload()},
+         artifact_refs=[plan_artifact.ref()])
     acquired = acquire_batched_expression(
         transport, project, research_spec.acquisition, release, cohort,
         list(universe.universe.ordered_ids), research_spec.expression_discovery.gene_batch_size,
@@ -152,18 +178,23 @@ def run_expression_discovery(
             outcome = expression_result(
                 frame, population, gene, observation, universe.universe.release, batch.sources)
             entity = EntityRef(gene_id, gene.symbol, universe.universe.release)
+            tail = expression_tail_descriptor(outcome, research_spec.expression_discovery)
+            disposition, reason, trigger = expression_lane_disposition(outcome, tail)
             entries_by_id[gene_id] = ExpressionDiscoveryEntry(
-                entity, outcome,
-                expression_tail_descriptor(outcome, research_spec.expression_discovery),
-            )
+                entity, outcome, tail, disposition, reason, trigger)
     entries = tuple(entries_by_id[gene_id] for gene_id in universe.universe.ordered_ids)
+    retained_ids = tuple(sorted(entry.entity.gene_id for entry in entries
+                                if entry.disposition is ExpressionDisposition.RETAIN))
+    review_ids = tuple(sorted(entry.entity.gene_id for entry in entries
+                              if entry.disposition is ExpressionDisposition.JEV_REVIEW))
     result = ExpressionDiscoveryResult(
         research_spec.spec_id, cohort_spec.cohort_id, cohort_spec.project_id,
         universe.universe.release, research_spec.expression_discovery, universe.universe,
         population, entries, acquired.workflows, acquired.strategies, tuple(sources),
-        tuple(warnings), EXPRESSION_LIMITATIONS, plan_max,
+        tuple(warnings), EXPRESSION_LIMITATIONS, run_plan.request_count,
         workflow_file_counts=acquired.workflow_file_counts,
         workflow_coverage_complete=acquired.workflow_coverage_complete,
+        retained_ids=retained_ids, jev_review_ids=review_ids,
     )
     artifact = artifacts.publish(
         f"runs/{run_id}/expression-discovery/result.json", write_expression_discovery(result),
@@ -175,6 +206,7 @@ def run_expression_discovery(
     emit("EXPRESSION_DISCOVERY_COMPLETED", f"expression-discovery:completed:{uuid4()}",
          f"Independent expression discovery completed for {len(entries)} gene(s).",
          data={"entries": len(entries), "observed": observed, "tail_eligible": tails,
+               "retained": len(retained_ids), "jev_review": len(review_ids),
                "universe_membership_hash": universe.universe.membership_hash,
                "artifact_id": artifact.artifact_id, "artifact_sha256": artifact.sha256},
          artifact_refs=[artifact.ref()],

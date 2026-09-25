@@ -31,6 +31,7 @@ from cancerjev.domain.discovery import (
     ExpressionDiscoveryResult,
     ExpressionDiscoverySpec,
     ExpressionTailDescriptor,
+    ExpressionDisposition,
     MutationDescriptiveEvidence,
     MutationDiscoveryEntry,
     MutationDiscoveryResult,
@@ -770,10 +771,18 @@ def _tail_descriptor(value: object) -> ExpressionTailDescriptor:
     )
 
 
-def _expression_discovery_entry(value: object) -> ExpressionDiscoveryEntry:
-    d = obj(value, "entity outcome tail")
+def _expression_entry(value: object) -> ExpressionDiscoveryEntry:
+    d = obj(value)
+    required = {"entity", "outcome", "tail"}
+    allowed = required | {"disposition", "disposition_reason", "review_trigger"}
+    require(set(d) <= allowed, "expression entry carries unexpected fields")
+    require(set(d) >= required, "expression entry is missing required fields")
+    disposition = d.get("disposition")
     return ExpressionDiscoveryEntry(
         _entity(d["entity"]), _expression(d["outcome"]), _tail_descriptor(d["tail"]),
+        None if disposition is None else ExpressionDisposition(string(disposition)),
+        optional_string(d.get("disposition_reason")),
+        optional_string(d.get("review_trigger")),
     )
 
 
@@ -785,6 +794,14 @@ def expression_discovery_identity(result: ExpressionDiscoveryResult) -> str:
         payload.pop("workflow_file_counts", None)
     if payload.get("workflow_coverage_complete") is True:
         payload.pop("workflow_coverage_complete", None)
+    if payload.get("retained_ids") == []:
+        payload.pop("retained_ids", None)
+    if payload.get("jev_review_ids") == []:
+        payload.pop("jev_review_ids", None)
+    for entry in payload.get("entries", []):
+        if isinstance(entry, dict) and entry.get("disposition") is None:
+            for key in ("disposition", "disposition_reason", "review_trigger"):
+                entry.pop(key, None)
     return digest({"schema_version": EXPRESSION_DISCOVERY_SCHEMA_VERSION,
                    "kind": "EXPRESSION_DISCOVERY_RESULT", **payload})
 
@@ -807,14 +824,15 @@ def read_expression_discovery(
             "schema_version kind spec_id cohort_id project_id release expression_discovery "
             "universe population entries workflows strategies sources warnings limitations "
             "request_plan_max expression_discovery_hash".split())
-        allowed = required | {"workflow_file_counts", "workflow_coverage_complete"}
+        allowed = required | {"workflow_file_counts", "workflow_coverage_complete",
+                              "retained_ids", "jev_review_ids"}
         require(set(d) <= allowed, "expression discovery carries unexpected fields")
         require(set(d) >= required, "expression discovery is missing required fields")
         result = ExpressionDiscoveryResult(
             string(d["spec_id"]), string(d["cohort_id"]), string(d["project_id"]),
             string(d["release"]), _expression_discovery_spec(d["expression_discovery"]),
             _universe(d["universe"]), _frame(d["population"]),
-            tuple(_expression_discovery_entry(item) for item in seq(d["entries"])),
+            tuple(_expression_entry(item) for item in seq(d["entries"])),
             string_tuple(d["workflows"]), string_tuple(d["strategies"]),
             tuple(_operational_source(item) for item in seq(d["sources"])),
             string_tuple(d["warnings"]), string_tuple(d["limitations"]),
@@ -822,6 +840,8 @@ def read_expression_discovery(
             tuple((string(item[0]), integer(item[1]))
                   for item in seq(d.get("workflow_file_counts", []))),
             True if "workflow_coverage_complete" not in d else boolean(d["workflow_coverage_complete"]),
+            string_tuple(d["retained_ids"]) if "retained_ids" in d else (),
+            string_tuple(d["jev_review_ids"]) if "jev_review_ids" in d else (),
         )
         _binding(expression_discovery_identity(result), d["expression_discovery_hash"], expected_hash)
         return result

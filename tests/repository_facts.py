@@ -29,6 +29,8 @@ from cancerjev.domain.codecs import (
     STATE_SCHEMA_VERSION,
 )
 from cancerjev.domain.discovery import (
+    EXPRESSION_ALIQUOT_IDENTITY_STATUS,
+    EXPRESSION_DISPOSITION_POLICY_VERSION,
     MUTATION_CANONICAL_COMPOSITION_METHOD_ID,
     MUTATION_CANONICAL_COMPOSITION_VERSION,
     REDUCER_METHOD_ID,
@@ -86,6 +88,8 @@ def collect_facts() -> dict[str, object]:
             f"{MUTATION_CANONICAL_COMPOSITION_METHOD_ID} v{MUTATION_CANONICAL_COMPOSITION_VERSION}"),
         "mutation_inference_decision": (
             f"{MUTATION_INFERENCE_DECISION_ID} v{MUTATION_INFERENCE_DECISION_VERSION}"),
+        "expression_disposition_policy": EXPRESSION_DISPOSITION_POLICY_VERSION,
+        "expression_aliquot_identity": EXPRESSION_ALIQUOT_IDENTITY_STATUS,
         "hypothesis_projection_version": HYPOTHESIS_PROJECTION_VERSION,
         "hypothesis_question_set": HYPOTHESIS_QUESTION_SET_VERSION,
         "mutation_discovery_result_schema_version": DISCOVERY_SCHEMA_VERSION,

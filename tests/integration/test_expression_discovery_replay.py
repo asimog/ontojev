@@ -71,6 +71,17 @@ def test_expression_discovery_replay_is_complete_hash_bound_and_model_free(runti
         assert len(entry.outcome.coverage.missing[0].ids) == 2
         assert entry.tail.availability is MetricAvailability.OBSERVED
         assert entry.tail.valid_n == 23
+        assert entry.disposition is not None
+    assert result.retained_ids == tuple(GENES)
+    assert result.jev_review_ids == ()
+    assert all(entry.disposition.value == "RETAIN" for entry in result.entries)
+    assert any("matched tumor aliquots" in limitation for limitation in result.limitations)
+
+    plan_events = [event for event in events if event["type"] == "EXPRESSION_RUN_PLANNED"]
+    assert len(plan_events) == 1
+    assert plan_events[0]["data"]["run_plan"]["request_count"] == result.request_plan_max
+    plan_row = repository.artifact_at_path(f"runs/{run_id}/expression-discovery/run-plan.json")
+    assert plan_row is not None
 
     names = [request.endpoint.name for request in transport.requests]
     assert names.count("files") == 1

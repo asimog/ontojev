@@ -269,6 +269,8 @@ Implemented now: `ScientificSource` carries optional `workflow_family`, `caller_
 
 The mutation scan's canonical consequence fields were measured on the live provider (500-record A/B: 297,136 → 612,999 bytes, ×2.06). To keep every page under the 5 MiB per-response cap, the declared scan page size is 2,500 records and the scan page cap is 128; the 256 MiB scan byte budget still fails closed on exhaustion. Transcript protein-position fields are not exposed by `/ssm_occurrences`, so protein-position recurrence and hotspot descriptors stay unavailable from the API plane and are recorded as such.
 
+Stage 5 expression additionally publishes a declared run-volume plan (genes, cases, batches, requests, projected bytes) and refuses a run whose plan exceeds the 1,500-request / 384 MiB budgets. Aliquot identity is `NOT_API_DERIVABLE`: the harmonized expression endpoints key values by case, so expression values remain case-labelled and never support matched cross-modal claims.
+
 ## 13. Testing and reconciliation
 
 Selection-critical scientific measurements require independent validation where feasible.

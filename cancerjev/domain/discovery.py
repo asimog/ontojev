@@ -114,6 +114,18 @@ COMPARATOR_LIMITATION = (
 EXPRESSION_TAIL_METHOD_ID = "EXPRESSION_TUKEY_TAIL_V1"
 EXPRESSION_TAIL_VERSION = "1"
 EXPRESSION_SELECTION_RULE = "SAME_RELEASE_BOUND_SYSTEMATIC_UNIVERSE"
+EXPRESSION_DISPOSITION_POLICY_VERSION = "expression-dispositions-v1"
+EXPRESSION_JEV_REVIEW_ASYMMETRY_RATIO = 5.0
+EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER = "EXTREME_TAIL_ASYMMETRY"
+EXPRESSION_RETAIN_REASON = "OBSERVED_TAIL_WITH_MINIMUM_VALUES"
+EXPRESSION_DROP_OBSERVED_REASON = "EXPRESSION_NOT_OBSERVED"
+EXPRESSION_DROP_INSUFFICIENT_REASON = "INSUFFICIENT_VALID_VALUES"
+EXPRESSION_REQUEST_AVERAGE_BYTES = 200 * 1024
+EXPRESSION_ALIQUOT_IDENTITY_STATUS = "NOT_API_DERIVABLE"
+EXPRESSION_ALIQUOT_IDENTITY_NOTE = (
+    "The harmonized expression endpoints key values by case; no per-value aliquot identity is "
+    "exposed, so case-labelled values never support matched cross-modal claims."
+)
 EXPRESSION_LIMITATIONS = (
     "Expression values are case-labelled GDC UQFPKM observations summarized as log2(UQFPKM+1); "
     "they are not raw counts, differential expression, tumor-normal contrasts or causal effects.",
@@ -303,6 +315,53 @@ class DiscoveryDisposition(StrEnum):
     ACQUISITION_UNAVAILABLE = "ACQUISITION_UNAVAILABLE"
 
 
+class ExpressionDisposition(StrEnum):
+    """Exactly one declared disposition per expression universe gene."""
+
+    RETAIN = "RETAIN"
+    JEV_REVIEW = "JEV_REVIEW"
+    DROP = "DROP"
+
+
+@dataclass(frozen=True)
+class ExpressionRunPlan:
+    """Declared pre-run volume plan for one expression lane run (operational)."""
+
+    gene_count: int
+    case_count: int
+    gene_batches: int
+    case_batches: int
+    request_count: int
+    projected_bytes: int
+    max_requests: int
+    max_bytes: int
+
+    def __post_init__(self) -> None:
+        for name in ("gene_count", "case_count", "gene_batches", "case_batches",
+                     "request_count", "projected_bytes", "max_requests", "max_bytes"):
+            count(getattr(self, name), name)
+        require(self.gene_batches >= 1 and self.case_batches >= 1,
+                "a run plan needs at least one gene and case batch")
+        require(self.request_count >= 2 * self.gene_batches * self.case_batches,
+                "a run plan must cover the availability and values matrices")
+        require(self.request_count <= self.max_requests,
+                "expression request plan exceeds the declared budget")
+        require(self.projected_bytes <= self.max_bytes,
+                "expression projected bytes exceed the declared budget")
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "gene_count": self.gene_count,
+            "case_count": self.case_count,
+            "gene_batches": self.gene_batches,
+            "case_batches": self.case_batches,
+            "request_count": self.request_count,
+            "projected_bytes": self.projected_bytes,
+            "max_requests": self.max_requests,
+            "max_bytes": self.max_bytes,
+        }
+
+
 @dataclass(frozen=True)
 class MutationDiscoveryEntry:
     """One universe gene's mutation outcome, disposition and deterministic rank."""
@@ -459,6 +518,9 @@ class ExpressionDiscoveryEntry:
     entity: EntityRef
     outcome: ExpressionSummaryResult | UnavailableLane
     tail: ExpressionTailDescriptor
+    disposition: ExpressionDisposition | None = None
+    disposition_reason: str | None = None
+    review_trigger: str | None = None
 
     def __post_init__(self) -> None:
         require(isinstance(self.entity, EntityRef), "invalid expression entry entity")
@@ -485,6 +547,32 @@ class ExpressionDiscoveryEntry:
                     if value > self.tail.upper_fence)), "upper tail membership mismatch")
         else:
             require(self.tail.valid_n == 0, "unavailable expression cannot have tail values")
+        if self.disposition is None:
+            require(self.disposition_reason is None and self.review_trigger is None,
+                    "a legacy entry carries no disposition fields")
+            return
+        require(isinstance(self.disposition, ExpressionDisposition),
+                "invalid expression disposition")
+        require(bool(self.disposition_reason), "an expression disposition carries its reason")
+        if self.disposition is ExpressionDisposition.RETAIN:
+            require(isinstance(self.outcome, ExpressionSummaryResult)
+                    and self.tail.availability is MetricAvailability.OBSERVED,
+                    "RETAIN requires an observed expression tail")
+            require(self.disposition_reason == EXPRESSION_RETAIN_REASON, "RETAIN reason mismatch")
+            require(self.review_trigger is None, "RETAIN carries no review trigger")
+        elif self.disposition is ExpressionDisposition.DROP:
+            require(self.disposition_reason in {EXPRESSION_DROP_OBSERVED_REASON,
+                                                EXPRESSION_DROP_INSUFFICIENT_REASON},
+                    "DROP reason mismatch")
+            require(self.review_trigger is None, "DROP carries no review trigger")
+        else:
+            require(self.disposition_reason == EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER,
+                    "JEV_REVIEW reason must name the declared trigger")
+            require(self.review_trigger == EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER,
+                    "JEV_REVIEW requires the declared asymmetry trigger")
+            require(isinstance(self.outcome, ExpressionSummaryResult)
+                    and self.tail.availability is MetricAvailability.OBSERVED,
+                    "JEV_REVIEW requires an observed expression tail")
             require(self.outcome.lane.value == "EXPRESSION", "wrong unavailable lane")
 
 
@@ -506,6 +594,8 @@ class ExpressionDiscoveryResult:
     request_plan_max: int
     workflow_file_counts: tuple[tuple[str, int], ...] = ()
     workflow_coverage_complete: bool = True
+    retained_ids: tuple[str, ...] = ()
+    jev_review_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for value in (self.spec_id, self.cohort_id, self.project_id, self.release):
@@ -541,7 +631,24 @@ class ExpressionDiscoveryResult:
             EXPRESSION_TAIL_METHOD_ID, EXPRESSION_TAIL_VERSION, expected_method_hash)
                     for entry in self.entries), "tail method identity mismatch")
         count(self.request_plan_max, "request_plan_max")
-        require(self.request_plan_max <= 150, "expression request plan exceeds run cap")
+        require(self.request_plan_max <= EXPRESSION_RUN_MAX_REQUESTS,
+                "expression request plan exceeds the declared run budget")
+        for name, ids in (("retained", self.retained_ids), ("jev-review", self.jev_review_ids)):
+            strings(ids, f"expression {name} ids")
+            require(ids == tuple(sorted(ids)) and len(set(ids)) == len(ids),
+                    f"expression {name} ids must be sorted and unique")
+        require(not set(self.retained_ids) & set(self.jev_review_ids),
+                "expression retained and review ids must be disjoint")
+        dispositioned = [entry for entry in self.entries if entry.disposition is not None]
+        if dispositioned:
+            require(len(dispositioned) == len(self.entries),
+                    "expression dispositions must cover every entry or none")
+            retained = tuple(sorted(entry.entity.gene_id for entry in dispositioned
+                                    if entry.disposition is ExpressionDisposition.RETAIN))
+            review = tuple(sorted(entry.entity.gene_id for entry in dispositioned
+                                  if entry.disposition is ExpressionDisposition.JEV_REVIEW))
+            require(retained == self.retained_ids and review == self.jev_review_ids,
+                    "expression nomination sets must match entry dispositions")
         require(type(self.workflow_file_counts) is tuple
                 and all(isinstance(item, tuple) and len(item) == 2
                         and isinstance(item[0], str) and bool(item[0])

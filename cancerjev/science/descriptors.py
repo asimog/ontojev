@@ -8,9 +8,15 @@ from typing import Any
 from cancerjev.domain.discovery import (
     CNV_SUMMARY_METHOD_ID,
     CNV_SUMMARY_VERSION,
+    EXPRESSION_DROP_INSUFFICIENT_REASON,
+    EXPRESSION_DROP_OBSERVED_REASON,
+    EXPRESSION_JEV_REVIEW_ASYMMETRY_RATIO,
+    EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER,
+    EXPRESSION_RETAIN_REASON,
     EXPRESSION_TAIL_METHOD_ID,
     EXPRESSION_TAIL_VERSION,
     CnvCategorySummary,
+    ExpressionDisposition,
     ExpressionTailDescriptor,
 )
 from cancerjev.domain.measurements import MethodIdentityRef, MetricAvailability, digest
@@ -99,3 +105,27 @@ def cnv_category_summaries(
 
 def cnv_summary_method(parameters: dict[str, object]) -> MethodIdentityRef:
     return MethodIdentityRef(CNV_SUMMARY_METHOD_ID, CNV_SUMMARY_VERSION, digest(parameters))
+
+
+def expression_lane_disposition(
+    outcome: ExpressionSummaryResult | UnavailableLane,
+    tail: ExpressionTailDescriptor,
+) -> tuple[ExpressionDisposition, str, str | None]:
+    """Declared expression-lane disposition; descriptive-only and deterministic.
+
+    RETAIN = an observed tail eligible at the declared minimum; DROP = no observed
+    values or an ineligible tail; JEV_REVIEW = the declared extreme-tail asymmetry
+    trigger (both tails present and the larger at least
+    ``EXPRESSION_JEV_REVIEW_ASYMMETRY_RATIO`` times the smaller).
+    """
+    if not isinstance(outcome, ExpressionSummaryResult):
+        return ExpressionDisposition.DROP, EXPRESSION_DROP_OBSERVED_REASON, None
+    if tail.availability is not MetricAvailability.OBSERVED:
+        return ExpressionDisposition.DROP, EXPRESSION_DROP_INSUFFICIENT_REASON, None
+    lower = len(tail.lower_case_ids)
+    upper = len(tail.upper_case_ids)
+    if (lower and upper
+            and max(lower, upper) >= EXPRESSION_JEV_REVIEW_ASYMMETRY_RATIO * min(lower, upper)):
+        return (ExpressionDisposition.JEV_REVIEW, EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER,
+                EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER)
+    return ExpressionDisposition.RETAIN, EXPRESSION_RETAIN_REASON, None
