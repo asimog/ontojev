@@ -135,8 +135,10 @@ def test_child_lists_are_filtered_and_cursor_mismatch_is_rejected(runtime, monke
 
     candidates = client.get(f"/api/runs/{run_id}/candidates").json()["items"]
     assert len(candidates) == 2
-    assert {candidate["status"] for candidate in candidates} == {"DOSSIER_READY", "WIDE_EVALUATED"}
-    ready = next(candidate for candidate in candidates if candidate["status"] == "DOSSIER_READY")
+    assert {candidate["status"] for candidate in candidates} == {
+        "CANDIDATE_COMPLETE", "WIDE_EVALUATED"}
+    ready = next(candidate for candidate in candidates
+                 if candidate["status"] == "CANDIDATE_COMPLETE")
     assert ready["promotion_slot"] == 1
     assert ready["latest_evidence_state_id"]
 
@@ -237,7 +239,7 @@ def test_hypotheses_dossiers_and_rankings(runtime, monkeypatch):
     assert document["warning"] == SYNTHETIC_NOTICE
     assert "SYNTHETIC DEMONSTRATION" in document["warning"]
     assert "NO REAL GDC DATA" in document["warning"]
-    assert len(document["sections"]) == 25
+    assert len(document["sections"]) == 27
     assert document["candidate_id"] == dossiers[0]["candidate_id"]
     metadata = repository.artifact(dossiers[0]["json_artifact_id"])
     assert json_response.headers["etag"] == f'"{metadata["sha256"]}"'

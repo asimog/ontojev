@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from cancerjev.domain._json import decode, obj, optional_string, string, version
 from cancerjev.domain.codecs import read_evidence, read_state
+from cancerjev.domain.dossier import DOSSIER_SCHEMA_VERSION
 from cancerjev.domain.envelopes import EvidenceRecord, StateRecord
 from cancerjev.domain.evidence import EvidenceState
 from cancerjev.domain.hypotheses import DRAFT_FIELDS, HypothesisDraft, read_hypothesis_draft
@@ -339,14 +340,13 @@ def read_dossier_record(repository: Repository, artifacts: ArtifactStore,
     try:
         payload = artifact.boundary_representation()
         schema = version(payload)
-        if schema != 2:
+        if schema != DOSSIER_SCHEMA_VERSION:
             raise ScientificReadError("UNSUPPORTED_SCHEMA_VERSION", "dossier version")
         for key in ("dossier_id", "candidate_id", "run_id"):
             require_equal(payload[key], row[key], f"dossier {key}")
-        if schema == 2:
-            chain = read_revision_chain(repository, artifacts, row["candidate_id"])
-            require_equal(payload["evidence_state_ids"], [r.evidence_state_id for r in chain],
-                          "dossier authoritative revision chain")
+        chain = read_revision_chain(repository, artifacts, row["candidate_id"])
+        require_equal(payload["evidence_state_ids"], [r.evidence_state_id for r in chain],
+                      "dossier authoritative revision chain")
     except (ContractError, KeyError, TypeError) as exc:
         raise ScientificReadError("INVALID_DOSSIER", str(exc)) from exc
     return artifact

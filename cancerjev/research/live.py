@@ -304,9 +304,14 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
             "status": "COMPLETED", "reason_code": "BOUNDED_SWEEP_COMPLETE", "coverage": coverage,
             "states": len(states), "gdc_attempts": totals["attempts"], "gdc_bytes": totals["bytes"],
             "gdc_cache_hits": totals["cache_hits"],
+            "run_scope": "CANDIDATE_QUEUE_EXHAUSTED",
         }
         if deep_summary is not None:
             completion_data["deep"] = deep_summary
+            completion_data["candidate_queue_exhausted"] = deep_summary["candidate_queue_exhausted"]
+            completion_data["run_scope"] = (
+                "CANDIDATE_QUEUE_EXHAUSTED" if deep_summary["candidate_queue_exhausted"]
+                else "CANDIDATES_INCOMPLETE")
         self._event(
             run_id, "RUN_COMPLETED", "run:completed",
             (f"Live bounded sweep completed with {len(states)} statistical states."
@@ -502,8 +507,10 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
             if candidate is None:
                 summaries.append({
                     "selection": selection, "candidate_id": None, "status": "DEEP_SELECTION_UNAVAILABLE",
+                    "investigation_status": "DEEP_SELECTION_UNAVAILABLE", "candidate_status": None,
                     "final_move": None, "stop_reason": "DEEP_SELECTION_UNAVAILABLE", "error_code": None,
-                    "first_step": {}, "steps": [], "decisions": [], "hypothesis": None, "dossier": None,
+                    "first_step": {}, "steps": [], "decisions": [], "hypothesis": None,
+                    "dossier": None, "final_result": None,
                 })
                 continue
             investigation = run_candidate_investigation(
@@ -518,8 +525,20 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
                 mode=self.run_mode,
             )
             summaries.append(investigation.summary())
+        completed = [summary for summary in summaries
+                     if summary.get("candidate_status") == "CANDIDATE_COMPLETE"]
         return {"selections": list(selections), "candidate_count": len(summaries),
-                "candidates": summaries}
+                "candidates": summaries,
+                "completed_count": len(completed),
+                "candidate_queue_exhausted": len(completed) == len(summaries) and bool(summaries),
+                "candidates_completed": [
+                    {"candidate_id": summary["candidate_id"],
+                     "final_result_id": (summary.get("final_result") or {}).get("final_result_id"),
+                     "dossier_id": (summary.get("dossier") or {}).get("dossier_id"),
+                     "candidate_status": summary.get("candidate_status"),
+                     "comparison_status": (summary.get("final_result") or {}).get("comparison_status")}
+                    for summary in summaries
+                ]}
 
     # ----------------------------------------------------------------- inventory
 

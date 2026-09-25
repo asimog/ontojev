@@ -14,7 +14,7 @@ RunEventV1
   timestamp: UTC RFC3339                    # ordering uses sequence, not clock
   stage: INVENTORY|GDC_FAST_SEARCH|STATE_GENERATION|JEV_WIDE|
          DEEP_ANALYSIS|EVIDENCE_BUILD|JEV_DEEP|HYPOTHESIS_GENERATION|
-         HYPOTHESIS_VERIFICATION|FOLLOWUP|DOSSIER|null
+         HYPOTHESIS_VERIFICATION|FOLLOWUP|DOSSIER|FINALIZATION|null
   type: registered event discriminator
   level: debug|info|warning|error
   message: string, schema max 2,048 characters (UTF-8 byte counting is PLANNED)
@@ -60,6 +60,7 @@ event.
 | HYPOTHESES_GENERATED, HYPOTHESIS_EVALUATED | hypothesis refs, evidence hash, evaluation refs, usage |
 | DEEP_SELECTION_UNAVAILABLE | explicit selection, promoted candidate count, reason_code (`DUPLICATE_SELECTION`, unmatched, …), detail (wide admission never dispatches a follow-up itself) |
 | CANDIDATE_TERMINATED/DEFERRED/FAILED, DOSSIER_CREATED, DOSSIER_UNAVAILABLE | terminal state, reason, candidate_id, dossier refs when applicable; unavailable publication names its error code |
+| FINAL_CANDIDATE_RESULT_RECORDED / CANDIDATE_COMPLETED / CANDIDATE_NOT_COMPLETED | Stage 8 finalization: final_result_id, candidate_id, final_move, stop_reason, comparison_status, dossier_id; completion is recorded only after the final result and dossier are persisted |
 
 Use stage start/completion records for every stage. Operation-specific records provide detail;
 counters are updated only by their designated records, never double-counted by stage completion.

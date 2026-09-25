@@ -32,13 +32,23 @@ Proposed discovery changes are separate in the [roadmap](DISCOVERY_ROADMAP.md).
 accepted StatisticalState -> baseline EvidenceState E0
    -> CHECK_EVIDENCE_INTEGRITY_V1 -> E1
    -> deep-v1 judgment (jev-evidence-projection-v2) -> deep-policy-v2 recorded move
-        COMPLETE / ABSTAIN -> stop arc
+        COMPLETE / ABSTAIN -> stop arc with the policy's actual reason code
+            (a terminal move is never routed through the follow-up dispatcher)
         FOLLOW_UP + authorization + eligible distinct action + budget
+          -> 0 eligible -> NO_DISTINCT_ELIGIBLE_ACTION
+          -> 1 eligible -> dispatched
+          -> >1 eligible -> fail closed EXPLICIT_ACTION_REQUIRED
           -> CHECK_REVISION_FAITHFULNESS_V1 -> E2 -> deep judgment/policy
         GENERATE_HYPOTHESES + authorization + budget
           -> deterministic or injected generator -> bounded hypotheses
           -> hypothesis-v2 critique (jev-hypothesis-projection-v2)
-   -> dossier (schema 2) over the current revision and recorded history
+   -> STAGE 8 FINALIZATION:
+        FinalCandidateResult derived from the recorded run state
+        -> no-jev-baseline-v1 deterministic comparison (read-only replay)
+        -> authoritative JSON dossier (schema 3) + derived Markdown
+        -> FINAL_CANDIDATE_RESULT_RECORDED + DOSSIER_READY
+        -> CANDIDATE_COMPLETE -> next candidate
+   -> candidate queue exhausted -> RUN_COMPLETED
 ```
 
 The current actions inspect retained integrity, not new biological measurements. They acquire
@@ -54,11 +64,24 @@ is an implemented optional paid-model path. Generated text is labelled and never
 Python validates output and decides subsequent steps. Jev does not authorize execution or choose
 arbitrary action IDs.
 
-A completed arc with a current revision produces authoritative JSON and derived Markdown and can
-become `DOSSIER_READY`. If an authoritative revision or required artifact is unavailable or
-corrupt, publication is refused as `DOSSIER_UNAVAILABLE`; earlier revisions never substitute.
-Early selection/eligibility/action failure paths may end without a dossier. A dossier is not
-proof of adequate scientific evidence.
+Every investigated candidate whose evidence was accepted finalizes in Stage 8
+(`research/finalize.py`): one deterministic `FINAL_CANDIDATE_RESULT` artifact, the authoritative
+dossier (schema 3, including the final result and the `jev_vs_no_jev_comparison` section), and
+then `CANDIDATE_COMPLETE` with the dossier attached. No human review participates; the candidate
+loop continues automatically to the next selection, and the run completes only after the queue is
+exhausted (`RUN_COMPLETED` with `candidate_queue_exhausted`). If an authoritative revision or
+required artifact is unavailable or corrupt, publication is refused as `DOSSIER_UNAVAILABLE` and
+the candidate does NOT become complete (status `FAILED`); earlier revisions never substitute.
+A dossier is not proof of adequate scientific evidence.
+
+Stage 8 also records the Jev-vs-no-Jev comparison (`no-jev-baseline-v1`): the observed Jev-assisted
+path versus a declared deterministic replay over the same evidence. The replay is read-only — it
+never mutates EvidenceState, executes actions or generates hypotheses, and no model is called.
+Comparisons that cannot honestly be computed are `NOT_COMPARABLE`, never invented. The comparison
+shows decision deltas only; superiority claims require a separate empirical evaluation design. The
+human-labelled prospective harness (`research/prospective.py`) is an OPTIONAL evaluation/calibration
+capability outside the numbered runtime stages: the runtime never invokes it and candidate
+completion never depends on it.
 
 ## Fixture demonstration
 

@@ -117,8 +117,7 @@ def test_template_generation_is_labelled_bounded_and_judged_once(runtime, monkey
     assert summary["hypothesis"]["requested_reason"] is None
     dispatch = [event for event in _events(repository, run_id)
                 if event["type"] == "NEXT_MOVE_DISPATCHED"]
-    assert dispatch and dispatch[-1]["data"]["reason_code"] == "MOVE_NOT_FOLLOW_UP"
-    assert dispatch[-1]["data"]["dispatched"] is False
+    assert not dispatch, "the GENERATE_HYPOTHESES terminal move is never dispatched"
 
     rows = _hypothesis_rows(repository, run_id)
     assert len(rows) == 2
@@ -235,7 +234,7 @@ def test_injected_text_never_writes_a_measured_field(runtime, monkeypatch):
         assert entries[0]["statement"] not in body
     for row in _hypothesis_rows(repository, run_id):
         assert "not a measured result" in " ".join(row["hypothesis"]["unsupported_assumptions"])
-    assert candidate["status"] == "DOSSIER_READY", "the dossier is published after the text is stored"
+    assert candidate["status"] == "CANDIDATE_COMPLETE", "the dossier is published after the text is stored"
 
 
 @pytest.mark.parametrize("bad_payload", [

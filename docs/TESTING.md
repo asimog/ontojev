@@ -92,7 +92,20 @@ substitute for the Python offline suite and vice versa.
   carry `access=open`; a controlled or access-missing record fails closed; 401/403 become
   `UNAVAILABLE_ACCESS` with no retry or credential lookup.
 
-## IMPLEMENTED (offline): prospective protocol validator; PLANNED executed protocol
+## IMPLEMENTED (runtime): Stage 8 finalization and no-Jev comparison; OPTIONAL: prospective harness
+
+The runtime Stage 8 contract (`tests/integration/test_stage8_finalize.py`) proves per candidate:
+one deterministic `FINAL_CANDIDATE_RESULT` bound to the final evidence revision, the actual policy
+stop reason (COMPLETE/ABSTAIN keep their reason; terminal moves are never routed through the
+follow-up dispatcher), the authoritative schema-3 dossier with Markdown derived from the same
+structured payload, accurate admission provenance (`wide-policy-v2` vs `operator-selection-v1`
+from persisted records), the read-only `no-jev-baseline-v1` replay (same evidence, no mutation,
+no actions, no hypotheses, no model call, `NOT_COMPARABLE` where unsupported), the fail-closed
+multi-action rule, `CANDIDATE_COMPLETE` only after final result + dossier persistence, automatic
+continuation to the next candidate, and queue-exhausted `RUN_COMPLETED`. Multi-candidate
+lifecycle is covered end to end; no `HUMAN_REVIEW_REQUIRED` appears in the runtime lifecycle.
+
+## OPTIONAL evaluation / calibration harness; PLANNED executed protocol
 
 Objective: does a semantic stage improve *reviewable bounded research decisions* over
 deterministic selection at matched workload, without increasing unsupported claims? This is not a
@@ -100,8 +113,10 @@ clinical or biological target-validation study. `python -m cancerjev evaluate` r
 and labelled hits against operator-supplied labels; it does not implement this protocol or
 establish superiority.
 
-IMPLEMENTED (offline, Stage 8): `research/prospective.py` is the protocol validator for the
-planned executed study. It fail-closes on unblinded, unreviewed or duplicate labels, on any
+IMPLEMENTED (offline, optional evaluation harness): `research/prospective.py` is the protocol
+validator for the planned executed study. It is NOT part of the numbered runtime stages: the
+runtime never invokes it, and Stage 8 candidate completion never depends on it. It fail-closes on
+unblinded, unreviewed or duplicate labels, on any
 group crossing fixed splits, on a gene reassigned across groups, and on arm outputs that do not
 bind the protocol or cover every item once. It computes per-arm metrics over one fixed split and
 grouped-bootstrap precision@3 differences against the required baseline arm using the declared

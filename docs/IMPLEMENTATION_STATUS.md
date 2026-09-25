@@ -1,7 +1,8 @@
 # Implementation status
 
 Factual source of truth for the current repository state after the Stage 3 hard cutover and the
-Stage 6/7/8 discovery, cutover-action and prospective-protocol implementations (2026-09-25). Every
+Stage 4-8 implementations (discovery, cutover, the full investigation loop, and candidate
+finalization with the no-Jev comparison; 2026-09-25). Every
 claim is labeled IMPLEMENTED, PLANNED or UNVERIFIED. Historical stage narratives, handoff documents
 and audit journals are retired (git history is the archive of record); they are not current
 instructions or current capability claims.
@@ -24,7 +25,7 @@ GDC open-access API -> strict parsers -> typed acquisition/lane records
       (deterministic template by default; injected OpenRouter adapter on an
        explicitly authorized path)
  -> Jev hypothesis critique (jev-hypothesis-projection-v2, question set hypothesis-v2)
- -> dossier (schema 2)
+ -> dossier (schema 3)
 
 Systematic pre-Wide mutation funnel (Stage 4, python -m cancerjev discover --live):
  GDC release/project inventory -> cohort case frame
@@ -55,11 +56,18 @@ Stage 7 cutover and descriptive actions (`research/cutover.py`, `science/descrip
     SUMMARIZE_CNV_CATEGORIES_V1 (zero acquisition, zero model calls); several eligible actions
     require one explicitly operator-requested action id; deep dispatch never auto-selects
 
-Stage 8 prospective protocol (`research/prospective.py`, offline operator tool):
- declared blinded grouped labels (>=2 reviewers, adjudicated, no split/group leakage)
- -> arm outputs bound to the protocol and covering every item
- -> grouped-bootstrap precision@3 differences by fixed seed; report always says
-    HUMAN_REVIEW_REQUIRED and makes no value/superiority claim
+Stage 8 finalization (`research/finalize.py`, `research/investigation.py`):
+ terminal recorded move (COMPLETE/ABSTAIN/GENERATE_HYPOTHESES) ends the arc with its
+ actual policy reason (never routed through the follow-up dispatcher)
+ -> FinalCandidateResult derived deterministically from the recorded run state
+ -> no-jev-baseline-v1 read-only deterministic comparison (observed Jev path vs declared
+    baseline replay; NOT_COMPARABLE where unsupported; read-only, no model call)
+ -> authoritative JSON dossier (schema 3) embedding result and comparison; Markdown derived
+ -> DOSSIER_READY -> CANDIDATE_COMPLETE -> next candidate -> RUN_COMPLETED
+
+Optional evaluation harness (outside the numbered runtime stages; never invoked by the runtime):
+ `research/prospective.py` blinded grouped labels + grouped-bootstrap arm comparison and
+ `research/evaluation.py` label-based ranking overlap; operator-supplied documents only
 ```
 
 - IMPLEMENTED: Python domain names are unsuffixed (`StatisticalState`, `EvidenceState`,
@@ -67,7 +75,8 @@ Stage 8 prospective protocol (`research/prospective.py`, offline operator tool):
   `StateRecord` / `EvidenceRecord` / `HypothesisRecord` envelopes and never enter scientific
   identity.
 - IMPLEMENTED: serialized schema versions. StatisticalState 5; EvidenceState 4; ResearchSpec 7;
-  MutationDiscoveryResult 1; ExpressionDiscoveryResult 1; CnvDiscoveryResult 1; SQLite schema 5.
+  MutationDiscoveryResult 1; ExpressionDiscoveryResult 1; CnvDiscoveryResult 1; dossier 3;
+  FinalCandidateResult 1; SQLite schema 5.
   Older/unknown schemas are rejected fail-closed;
   there are **no migrations and no legacy readers**. Historical databases and artifacts are
   retained, not rewritten.
@@ -133,14 +142,30 @@ Stage 8 prospective protocol (`research/prospective.py`, offline operator tool):
   in `TestedContext`. Any cross-stage drift is a typed `CutoverError` refusal. The shared
   deterministic descriptors (`science/descriptors.py`) back both Stage 5/6 discovery and the
   registered `SUMMARIZE_*` actions. Cutover performed no acquisition and no model call.
-- IMPLEMENTED and offline-verified: Stage 8 prospective protocol validation
-  (`research/prospective.py`). It is an offline operator tool: declared blinded grouped labels
-  (at least two independent reviewers, adjudicated, no split/group leakage), arm outputs strictly
-  bound to the protocol and covering every item, per-arm metrics over a fixed split, and a
-  grouped-bootstrap precision@3 difference against the required baseline arm using the declared
-  seed. The report always records `HUMAN_REVIEW_REQUIRED` and makes no incremental-value or
-  superiority claim. It runs on supplied documents only; no historical corpus exists and no live
-  protocol has been executed.
+- IMPLEMENTED and offline-verified: Stage 8 candidate finalization (`research/finalize.py`,
+  `research/investigation.py`). For every candidate whose evidence was accepted, Stage 8 derives
+  one deterministic `FinalCandidateResult` from the recorded run state (final revision, actual
+  policy reason, evidence sufficiency, remaining uncertainty, hypothesis status, limitations,
+  full provenance), computes the `no-jev-baseline-v1` comparison as a read-only deterministic
+  replay over the same evidence (never mutating EvidenceState, never executing actions, never
+  generating hypotheses, calling no model; unsupported dimensions are `NOT_COMPARABLE`, never
+  invented), persists the authoritative dossier (schema 3, Markdown derived from the same
+  structured payload) and the final result artifact, records `DOSSIER_READY`, and marks the
+  candidate `CANDIDATE_COMPLETE` only after both are persisted. Terminal moves stop the arc with
+  their actual reason (`INVESTIGATION_COMPLETE`, `DEEP_JUDGMENT_UNAVAILABLE`, ...); several
+  eligible actions fail closed with `EXPLICIT_ACTION_REQUIRED`; admission provenance comes from
+  the persisted candidate record (`wide-policy-v2` vs `operator-selection-v1`); no human review
+  participates; the candidate loop continues automatically and the run completes only after the
+  candidate queue is exhausted. Dossier refusal (`DOSSIER_UNAVAILABLE`) leaves the candidate
+  failed, never complete.
+- IMPLEMENTED and offline-verified: OPTIONAL evaluation/calibration harness, outside the numbered
+  runtime stages and never invoked by them (`research/prospective.py`, `research/evaluation.py`).
+  The prospective validator fail-closes on unblinded, unreviewed or duplicate labels, on any
+  group crossing fixed splits, and on arm outputs that do not bind the protocol; it computes
+  per-arm metrics and a grouped-bootstrap precision@3 difference by declared seed and always
+  records `HUMAN_REVIEW_REQUIRED`. It is an operator-supplied document tool for future blinded
+  studies, not a Stage 8 dependency; candidate completion never reads it. No protocol has been
+  executed and no labelled corpus exists.
 - IMPLEMENTED: `run --fixture demo` runs the **same shared `LiveOrchestrator`** offline with
   `FixtureTransport` + `FixtureJevAdapter` (mode `FIXTURE`, synthetic notice in the dossier).
   There is no second execution engine.
@@ -185,7 +210,7 @@ documents (`STAGE_01_HANDOFF`, `STAGE_02_HANDOFF`, `STAGE_03_HANDOFF`, `PHASE_3_
 | Deep evidence/actions | IMPLEMENTED: E0/E1/E2, four registered actions (two integrity, two held-data descriptors), explicit operator selection/authorization; several eligible actions require one explicit action id |
 | Deep judgment and next move | IMPLEMENTED: `jev-evidence-projection-v2`, `deep-v1`, `deep-policy-v2`; recorded move never dispatched by the policy |
 | Hypotheses | IMPLEMENTED: deterministic default, optional injected OpenRouter adapter, at most three per candidate, `hypothesis-v2` critique; generated text is never evidence |
-| Dossiers | IMPLEMENTED: authoritative JSON + derived Markdown with per-section availability, schema 2, live notice |
+| Dossiers | IMPLEMENTED: authoritative JSON + derived Markdown with per-section availability, schema 3 (embeds the Stage 8 final result and no-Jev comparison), live notice |
 | Evaluation harness | IMPLEMENTED offline: `python -m cancerjev evaluate` compares recorded rankings against operator-supplied, pre-registered labels; no superiority claim |
 | Enforcement | GDC request/byte/page caps and candidate/follow-up/revision/hypothesis caps exist; SDK retries are disabled; a total paid-model spend gate does not exist |
 | Scientific domain typing | IMPLEMENTED for the runtime chain; JSON remains the boundary for events, storage, API/dossier presentation and artifact envelopes |
@@ -195,7 +220,9 @@ documents (`STAGE_01_HANDOFF`, `STAGE_02_HANDOFF`, `STAGE_03_HANDOFF`, `PHASE_3_
 | Survivor-only CNV arm | IMPLEMENTED and live-verified (Stage 6): full live workload completed, all 10 survivors |
 | Discovery cutover to canonical states | IMPLEMENTED and live-verified (Stage 7): exact Stage 4-6 binding over the live persisted artifacts, one schema-5 state per survivor |
 | Held-data descriptive actions | IMPLEMENTED and live-verified (Stage 7): `SUMMARIZE_EXPRESSION_TAIL_V1`, `SUMMARIZE_CNV_CATEGORIES_V1` VERIFIED over the composed live states; zero acquisition, zero model calls |
-| Prospective protocol evaluation | IMPLEMENTED and offline-verified (Stage 8): blinded grouped labels, grouped bootstrap by declared seed, `HUMAN_REVIEW_REQUIRED` always; no protocol executed (no labelled corpus exists) |
+| Stage 8 candidate finalization | IMPLEMENTED and offline-verified: FinalCandidateResult + authoritative dossier (schema 3) + `no-jev-baseline-v1` comparison; DOSSIER_READY -> CANDIDATE_COMPLETE per candidate; no human review; multi-candidate loop + queue-exhausted RUN_COMPLETED |
+| Jev-vs-No-Jev runtime comparison | IMPLEMENTED and offline-verified: read-only deterministic replay of `no-jev-baseline-v1` over the same evidence; decision deltas only, never a superiority claim |
+| Prospective protocol evaluation | OPTIONAL evaluation/calibration harness (`research/prospective.py`, `research/evaluation.py`), outside the numbered runtime stages and never invoked by the runtime; no protocol executed (no labelled corpus exists) |
 | Combined multi-lane reduction and inferential extensions | PLANNED (Stage 9+); not current runtime |
 | Offline autoresearch and demonstrated Jev incremental value | NOT IMPLEMENTED / UNVERIFIED |
 
@@ -258,7 +285,7 @@ no limit enlarged, no result retried for a favorable outcome:
   its natural ABSTAIN. Paid spend was bounded to one evaluation by configuration.
 
 No incremental-value or scientific-readiness claim follows: these are bounded acceptance runs of
-the implemented contracts, and Stage 8 still has no executed protocol.
+the implemented contracts, and the optional blinded evaluation has no executed protocol.
 
 ## Known limitations and open gaps
 
@@ -324,7 +351,8 @@ the implemented contracts, and Stage 8 still has no executed protocol.
 Conditional inferential extensions (matched mutation-expression / CNV-expression association,
 survival) are the next separately authorized work and remain deferred behind their source,
 matching, reference, censoring and statistical-review gates. Stages 4-7 live acceptance is
-VERIFIED as of 2026-09-25; Stage 8 has no executed protocol or labelled corpus. Do not convert any
-of that into a scientific-readiness claim.
+VERIFIED as of 2026-09-25; Stage 8 finalization is offline-verified and requires no human review;
+the optional blinded evaluation harness has no executed protocol or labelled corpus. Do not
+convert any of that into a scientific-readiness claim.
 [The roadmap](DISCOVERY_ROADMAP.md) indexes the remaining evidence gates. Do not extend the action
 registry or question sets without a separately authorized task.

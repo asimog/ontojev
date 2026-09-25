@@ -165,7 +165,7 @@ def test_typed_reads_are_bound_to_verified_ids_and_hashes(runtime, monkeypatch):
     dossier_row = repository.list_table("dossiers", run_id)[0]
     dossier = read_dossier_record(repository, runtime[2], dossier_row["dossier_id"])
     payload = json.loads(dossier.content)
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["evidence_state_ids"] == [stored.evidence_state_id for stored in chain]
     assert payload["hypothesis_ids"] == [row["hypothesis_id"] for row in
                                          repository.page_child("hypotheses", run_id, 20, None, {})["items"]]

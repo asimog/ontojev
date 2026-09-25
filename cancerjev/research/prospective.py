@@ -1,4 +1,15 @@
-"""Stage 8 provider-free prospective protocol validation and arm comparison."""
+"""OPTIONAL evaluation / calibration harness: blinded grouped labels and arm comparison.
+
+This module is deliberately OUTSIDE the numbered runtime stages. The runtime Stage 8
+(candidate finalization, dossier, no-Jev comparison, CANDIDATE_COMPLETE) never
+invokes it, never requires human labels, and never calls into this module: normal
+candidate completion does not need or read anything from here.
+
+Its optional future uses are offline operator-driven studies: human-labelled
+evaluation, blinded comparative studies, calibration, external reviewer assessment,
+prospective validation, and formal superiority/non-inferiority studies. It must not
+gate Stage 8, dossier creation, candidate completion or next-candidate processing.
+"""
 
 from __future__ import annotations
 

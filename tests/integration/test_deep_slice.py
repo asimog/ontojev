@@ -154,19 +154,21 @@ def test_deep_selection_grammar_is_bounded_and_typed(runtime, monkeypatch):
 def test_live_deep_slice_creates_e0_and_e1_from_one_explicit_action(runtime, monkeypatch):
     run_id, summary, repository = _completed_slice(runtime, monkeypatch)
     assert summary["status"] == "COMPLETED"
+    assert summary["investigation_status"] == "COMPLETED"
+    assert summary["candidate_status"] == "CANDIDATE_COMPLETE"
     assert summary["final_move"] == "COMPLETE"
-    assert summary["stop_reason"] == "MOVE_NOT_FOLLOW_UP"
+    assert summary["stop_reason"] == "INVESTIGATION_COMPLETE"
     assert summary["first_step"]["next_move"]["reason_code"] == "INVESTIGATION_COMPLETE"
     assert summary["first_step"]["action_id"] == "CHECK_EVIDENCE_INTEGRITY_V1"
     assert summary["first_step"]["checks_total"] == 5
     assert summary["first_step"]["checks_verified"] == 5
     assert summary["first_step"]["deep_model"] == "jev-1.13.0"
     assert summary["first_step"]["deep_question_set_version"] == "deep-v1"
-    assert summary["dispatch"]["dispatched"] is False
-    assert summary["dispatch"]["reason_code"] == "MOVE_NOT_FOLLOW_UP"
+    assert summary["dispatch"] is None, "a terminal move is never routed through the dispatcher"
+    assert summary["last_dispatch"] is None
 
     candidate = repository.get_candidate(summary["candidate_id"])
-    assert candidate["status"] == "DOSSIER_READY"
+    assert candidate["status"] == "CANDIDATE_COMPLETE"
     assert candidate["entity"]["gene_symbol"] == "GENEONE"
 
     chain = _candidate_chain(runtime, repository, candidate)
@@ -231,10 +233,8 @@ def test_live_deep_slice_creates_e0_and_e1_from_one_explicit_action(runtime, mon
         "eligible_action_ids", "distinct_eligible_action_ids",
     }
     assert decision["dimensions"]["eligible_action_ids"] == ["CHECK_REVISION_FAITHFULNESS_V1"]
-    dispatch_event = next(event for event in _events(repository, run_id)
-                          if event["type"] == "NEXT_MOVE_DISPATCHED")
-    assert dispatch_event["data"]["authorized"] is False
-    assert dispatch_event["data"]["dispatched"] is False
+    # The COMPLETE terminal move is never routed through the dispatcher: no
+    # NEXT_MOVE_DISPATCHED event exists for a terminal arc.
 
 
 # ------------------------------------------------------- recorded FOLLOW_UP dispatch
@@ -271,10 +271,11 @@ def test_recorded_follow_up_is_dispatched_once_when_authorized(runtime, monkeypa
     assert summary["steps"][0]["dispatch"]["reason_code"] == "DISPATCHED"
     assert summary["steps"][1]["action_id"] == "CHECK_REVISION_FAITHFULNESS_V1"
     assert summary["steps"][1]["iteration"] == 2
-    assert summary["steps"][1]["dispatch"]["dispatched"] is False
-    assert summary["steps"][1]["dispatch"]["reason_code"] == "MOVE_NOT_FOLLOW_UP"
+    assert "dispatch" not in summary["steps"][1], "the ABSTAIN terminal move is not dispatched"
     assert summary["final_move"] == "ABSTAIN"
     assert summary["status"] == "ABSTAINED"
+    assert summary["stop_reason"] == "NO_FURTHER_REGISTERED_ACTION"
+    assert summary["candidate_status"] == "CANDIDATE_COMPLETE"
 
     candidate = repository.get_candidate(summary["candidate_id"])
     chain = _candidate_chain(runtime, repository, candidate)
@@ -421,7 +422,9 @@ def test_budget_exhaustion_abstains_and_stops(runtime, monkeypatch, limit_name, 
     assert [stored.evidence.revision_index
             for stored in _candidate_chain(runtime, repository, candidate)] == [0]
     assert repository.followup_executions_for(candidate["candidate_id"]) == []
-    assert repository.list_table("dossiers", run_id) == []
+    assert len(repository.list_table("dossiers", run_id)) == 1, \
+        "Stage 8 still records the dossier for the accepted-evidence abstention"
+    assert candidate["status"] == "CANDIDATE_COMPLETE"
 
 
 def test_unknown_action_selection_abstains_before_any_attempt(runtime, monkeypatch):
@@ -561,7 +564,7 @@ def test_deep_judgment_failure_is_contained_and_typed(runtime, monkeypatch):
     run_id, summary, repository = _completed_slice(runtime, monkeypatch, jev_adapter=adapter)
     assert summary["status"] == "ABSTAINED"
     assert summary["final_move"] == "ABSTAIN"
-    assert summary["stop_reason"] == "MOVE_NOT_FOLLOW_UP"
+    assert summary["stop_reason"] == "DEEP_JUDGMENT_UNAVAILABLE"
     assert summary["first_step"]["deep_error_code"] == "INVALID_DISTRIBUTION"
     assert summary["first_step"]["next_move"]["reason_code"] == "DEEP_JUDGMENT_UNAVAILABLE"
     candidate = repository.get_candidate(summary["candidate_id"])

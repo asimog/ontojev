@@ -792,10 +792,18 @@ def dispatch_recorded_move(*, run_id: str, candidate: CandidateEvidence, result:
                       "dispatching a recorded move requires explicit operator authorization")
     if result.revision is None or result.evidence_state_id is None or result.iteration is None:
         return refuse("INPUT_REVISION_MISSING", "no immutable revision is available to continue from")
-    action_ids = sorted(decision.get("dimensions", {}).get("distinct_eligible_action_ids") or [])
+    # No hidden lexicographic selection: 0 eligible -> refusal, 1 -> dispatch it,
+    # more than one -> fail closed. A deterministic optimizer or ranking agent must
+    # never choose a scientific follow-up.
+    distinct = decision.get("dimensions", {}).get("distinct_eligible_action_ids") or []
+    action_ids = sorted(set(distinct))
     if not action_ids:
         return refuse("NO_DISTINCT_ELIGIBLE_ACTION",
                       "no registered action other than the producing one is eligible for this revision")
+    if len(action_ids) > 1:
+        return refuse("EXPLICIT_ACTION_REQUIRED",
+                      f"{len(action_ids)} distinct registered actions are eligible; an explicit "
+                      "selection is required, ordering does not choose one")
     action_id = action_ids[0]
     attempts = repository.followup_executions_for(candidate.candidate_id)
     if len(attempts) >= FOLLOWUP_LIMIT:

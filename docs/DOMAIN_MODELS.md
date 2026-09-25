@@ -104,7 +104,9 @@ summaries. It does not add a neutral denominator, broad CNV universe or cross-la
   enforces finite ranges, exact roster, distribution sum and rubric consistency. A Jev evaluation
   binds input/projection/question/model/adapter identities, applicability, and
   success/failure/cache outcomes. A semantic score is not an effect size or cancer probability.
-- Dossiers are JSON (schema 2) with the `DOSSIER_SECTIONS` roster. Corrupt or unverifiable
+- Dossiers are JSON (schema 3) with the `DOSSIER_SECTIONS` roster, embedding the Stage 8
+  `FinalCandidateResult` (schema 1) and the `JEV_NO_JEV_COMPARISON` payload; Markdown is derived
+  from the same structured payload, never authored separately. Corrupt or unverifiable
   authoritative input refuses publication (`DOSSIER_UNAVAILABLE`) or yields explicit unavailable
   sections; an earlier revision never substitutes for a corrupt latest revision.
 

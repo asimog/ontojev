@@ -30,7 +30,9 @@ Deep Jev projection (jev-evidence-projection-v2) + questions (deep-v1)
 Python next-move policy (deep-policy-v2): COMPLETE / FOLLOW_UP /
 GENERATE_HYPOTHESES / ABSTAIN
         ↓
-optional bounded hypothesis generation → Jev critique (hypothesis-v2) → dossier (schema 2)
+optional bounded hypothesis generation → Jev critique (hypothesis-v2) → Stage 8 finalization:
+final candidate result → authoritative dossier (schema 3) → no-Jev comparison (no-jev-baseline-v1)
+→ DOSSIER_READY → CANDIDATE_COMPLETE → next candidate
 ```
 
 `ResearchSpec` owns reproducible research configuration (domain, cohort, project, bounded

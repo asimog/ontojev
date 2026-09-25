@@ -212,7 +212,7 @@ current unless labeled otherwise; none preserves a historical architecture instr
 
 Stages 4–6 are implemented as separately invoked bounded discovery tasks. Stage 6 survivor-only
 CNV discovery is offline verified; the bounded anonymous shape probe does not establish full live
-acceptance. Stages 7–9 (descriptive actions, prospective
-evaluation, conditional inferential extensions) remain as indexed in the
+acceptance. Stages 4â€“8 are implemented; the optional human-labelled prospective harness and the
+deferred Stage 9 conditional inferential extensions remain as indexed in the
 [roadmap](DISCOVERY_ROADMAP.md). Engineering success cannot establish Jev incremental value; a
 labelled, human-reviewed corpus is required.

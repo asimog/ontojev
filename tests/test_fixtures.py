@@ -144,7 +144,7 @@ def test_demo_run_event_stream_and_caps_are_canonical(runtime):
     completed_stages = {event["stage"] for event in events if event["type"] == "STAGE_COMPLETED"}
     assert {
         "INVENTORY", "GDC_FAST_SEARCH", "STATE_GENERATION", "JEV_WIDE", "DEEP_ANALYSIS",
-        "FOLLOWUP", "JEV_DEEP", "HYPOTHESIS_GENERATION", "DOSSIER",
+        "FOLLOWUP", "JEV_DEEP", "HYPOTHESIS_GENERATION", "DOSSIER", "FINALIZATION",
     } <= completed_stages
     assert completed_stages <= set(STAGES)
 
@@ -182,7 +182,8 @@ def test_demo_wide_admission_promotes_within_the_bound(runtime):
     assert all(candidate["summary"]["policy_version"] == "wide-policy-v2"
                for candidate in candidates)
     assert sorted(candidate["promotion_slot"] for candidate in candidates) == [1, 2]
-    assert sorted(candidate["status"] for candidate in candidates) == ["DOSSIER_READY", "WIDE_EVALUATED"]
+    assert sorted(candidate["status"] for candidate in candidates) == [
+        "CANDIDATE_COMPLETE", "WIDE_EVALUATED"]
     evaluations = repository.page_child("jev_evaluations", run_id, 50, None,
                                         {"purpose": "WIDE"})["items"]
     assert len(evaluations) == 2
@@ -203,7 +204,7 @@ def test_demo_evidence_revisions_are_immutable_and_judged_once(runtime):
     candidate = next(row for row in repository.list_table("candidates", run_id)
                      if row["entity"]["gene_symbol"] == "GENEONE")
     assert candidate["promotion_slot"] == 1
-    assert candidate["status"] == "DOSSIER_READY"
+    assert candidate["status"] == "CANDIDATE_COMPLETE"
     assert candidate["latest_evidence_state_id"] is not None
     assert candidate["dossier_id"] is not None
 
@@ -265,7 +266,7 @@ def test_demo_dossier_declares_itself_a_synthetic_demonstration(runtime):
     dossier_row = repository.list_table("dossiers", run_id)[0]
     artifact = read_dossier_record(repository, artifacts, dossier_row["dossier_id"])
     dossier = json.loads(artifact.content)
-    assert dossier["schema_version"] == 2
+    assert dossier["schema_version"] == 3
     assert dossier["mode"] == "FIXTURE"
     assert dossier["warning"] == SYNTHETIC_NOTICE
     assert dossier["warning"].startswith("SYNTHETIC DEMONSTRATION")

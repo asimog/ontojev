@@ -93,7 +93,9 @@ uses 40 CLERC queries/30-candidate lists and jev-1.12; parallel questions uses 1
 GDPR article and repeated jev-1.12 calls. None demonstrates cancer-discovery benefit.
 Consistency notebooks include borderline flips even for TypeSafe. Do not copy their thresholds or
 claim model determinism. Historical OntoJev measurements and scenario costs are in
-[budgets](GDC_BUDGETS.md); prospective acceptance is in [testing](TESTING.md).
+[budgets](GDC_BUDGETS.md); Stage 8's runtime Jev-vs-no-Jev comparison is a deterministic replay
+(`no-jev-baseline-v1`), and the optional blinded human-labelled evaluation harness is in
+[testing](TESTING.md).
 
 ## Adoption boundaries
 

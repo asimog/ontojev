@@ -22,7 +22,7 @@ GDC open-access API
        (deterministic template by default; injected OpenRouter adapter on an
         explicitly authorized CLI path)
   -> jev-hypothesis-projection-v2 -> hypothesis-v2 critique
-  -> dossier (schema 2), JSON + derived Markdown
+  -> dossier (schema 3), JSON + derived Markdown
 
 Systematic pre-Wide funnel (Stage 4, `python -m cancerjev discover --live`):
 
@@ -46,11 +46,21 @@ Stage 7 cutover and held-data descriptor actions:
      SUMMARIZE_EXPRESSION_TAIL_V1 / SUMMARIZE_CNV_CATEGORIES_V1 actions
   -> several eligible actions require one explicit operator action id
 
-Stage 8 prospective protocol (`research/prospective.py`, offline operator tool):
+Stage 8 finalization (`research/finalize.py`, `research/investigation.py`):
 
-  blinded grouped labels -> arm outputs bound to the protocol
-  -> grouped-bootstrap precision@3 difference vs the required baseline arm
-  -> report always requires human review and claims no value
+  terminal recorded move stops the arc with its actual policy reason
+  -> FinalCandidateResult derived from the recorded run state
+  -> no-jev-baseline-v1 read-only deterministic comparison
+     (observed Jev path vs declared baseline replay; NOT_COMPARABLE when unsupported)
+  -> authoritative JSON dossier (schema 3) embedding the result and comparison;
+     Markdown derived from the same structured payload
+  -> DOSSIER_READY -> CANDIDATE_COMPLETE -> next candidate -> RUN_COMPLETED
+
+Optional evaluation harness (outside the numbered runtime stages):
+
+  `research/prospective.py` + `research/evaluation.py`: blinded grouped labels,
+  arm comparison, grouped bootstrap — operator-supplied documents only; the
+  runtime never invokes them and candidate completion never depends on them
 ```
 
 - `research/live.py` runs the shared `LiveOrchestrator`; `research/orchestrator.py` runs the
