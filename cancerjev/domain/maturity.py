@@ -12,28 +12,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from cancerjev.domain.measurements import require, sha256, strings, text
-from cancerjev.domain.scientific import StatisticalState
+from cancerjev.domain.scientific import (
+    EVIDENCE_LEVEL_ORDER,
+    EvidenceLevel,
+    StatisticalState,
+)
 
 EVIDENCE_MATURITY_POLICY_VERSION = "evidence-maturity-v1"
-
-
-class EvidenceLevel(StrEnum):
-    MEASURED = "MEASURED"
-    DESCRIPTIVE_CANDIDATE = "DESCRIPTIVE_CANDIDATE"
-    STATISTICALLY_SUPPORTED = "STATISTICALLY_SUPPORTED"
-    INTERNALLY_REPLICATED = "INTERNALLY_REPLICATED"
-    EXTERNALLY_REPLICATED = "EXTERNALLY_REPLICATED"
-    FUNCTIONALLY_SUPPORTED = "FUNCTIONALLY_SUPPORTED"
-
-
-EVIDENCE_LEVEL_ORDER = (
-    EvidenceLevel.MEASURED,
-    EvidenceLevel.DESCRIPTIVE_CANDIDATE,
-    EvidenceLevel.STATISTICALLY_SUPPORTED,
-    EvidenceLevel.INTERNALLY_REPLICATED,
-    EvidenceLevel.EXTERNALLY_REPLICATED,
-    EvidenceLevel.FUNCTIONALLY_SUPPORTED,
-)
 
 
 class KnowledgeRole(StrEnum):

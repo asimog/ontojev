@@ -16,6 +16,7 @@ from typing import Any
 
 from cancerjev.domain.dossier import DOSSIER_SCHEMA_VERSION, DOSSIER_SECTIONS
 from cancerjev.domain.events import canonical_json, utc_now
+from cancerjev.domain.maturity import derive_evidence_maturity
 from cancerjev.dossier.renderer import render_markdown
 from cancerjev.research.deep import stable_id
 from cancerjev.science.actions import ACTION_REGISTRY
@@ -190,6 +191,15 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: StoredS
         reason=(f"a single cohort is examined; {cohort_label} is never pooled with another cohort"
                 if cohort_label else
                 "a single cohort is examined; no cross-cohort pooling is performed"))
+    if state is not None:
+        maturity = derive_evidence_maturity(state.state)
+        sections["evidence_maturity"] = _section(
+            "OBSERVED",
+            narrative=(f"level {maturity.level.value}; " + "; ".join(
+                f"{level} requires {reason}" for level, reason in maturity.unattained)))
+    else:
+        sections["evidence_maturity"] = _section(
+            "NOT_ACQUIRED", reason="no statistical state was recorded for this candidate")
     sections["cross_modal_evidence"] = _section(
         "NOT_ACQUIRED", reason="case-to-sample resolution for expression values is UNVERIFIED")
     sections["contradictory_evidence"] = _section(

@@ -604,6 +604,8 @@ def _state_identity_payload(state: StatisticalState) -> dict[str, object]:
     payload.pop("operational_sources")
     if payload.get("nominations") == []:
         payload.pop("nominations", None)
+    if payload.get("evidence_level") == "MEASURED":
+        payload.pop("evidence_level", None)
     tested_context = payload["tested_context"]
     if isinstance(tested_context, dict):
         tested_context.pop("selection_artifact_id", None)
@@ -685,7 +687,7 @@ def read_state(data: bytes, *, expected_hash: str | None = None) -> StatisticalS
             "schema_version kind entity annotation research universe tested_context projects "
             "cross_project quality warnings missingness methods environment_hash sources "
             "operational_sources state_hash".split())
-        allowed = required | {"nominations"}
+        allowed = required | {"nominations", "evidence_level"}
         require(set(d) <= allowed, "state carries unexpected fields")
         require(set(d) >= required, "state is missing required fields")
         state = StatisticalState(
@@ -697,6 +699,7 @@ def read_state(data: bytes, *, expected_hash: str | None = None) -> StatisticalS
             _sources(d["sources"]),
             tuple(_operational_source(item) for item in seq(d["operational_sources"])),
             tuple(_string_string_pair(item) for item in seq(d.get("nominations", []))),
+            "MEASURED" if "evidence_level" not in d else string(d["evidence_level"]),
         )
         _binding(state_identity(state), d["state_hash"], expected_hash)
         return state

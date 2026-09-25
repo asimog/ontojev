@@ -533,6 +533,27 @@ class CrossProjectSummary:
         strings(self.notes, "cross-project notes")
 
 
+class EvidenceLevel(StrEnum):
+    """Deterministic evidence-maturity vocabulary; higher levels name prerequisites."""
+
+    MEASURED = "MEASURED"
+    DESCRIPTIVE_CANDIDATE = "DESCRIPTIVE_CANDIDATE"
+    STATISTICALLY_SUPPORTED = "STATISTICALLY_SUPPORTED"
+    INTERNALLY_REPLICATED = "INTERNALLY_REPLICATED"
+    EXTERNALLY_REPLICATED = "EXTERNALLY_REPLICATED"
+    FUNCTIONALLY_SUPPORTED = "FUNCTIONALLY_SUPPORTED"
+
+
+EVIDENCE_LEVEL_ORDER = (
+    EvidenceLevel.MEASURED,
+    EvidenceLevel.DESCRIPTIVE_CANDIDATE,
+    EvidenceLevel.STATISTICALLY_SUPPORTED,
+    EvidenceLevel.INTERNALLY_REPLICATED,
+    EvidenceLevel.EXTERNALLY_REPLICATED,
+    EvidenceLevel.FUNCTIONALLY_SUPPORTED,
+)
+
+
 @dataclass(frozen=True)
 class StatisticalState:
     """The sole canonical scientific state object of a research run."""
@@ -552,6 +573,7 @@ class StatisticalState:
     sources: tuple[ScientificSource, ...]
     operational_sources: tuple[OperationalSource, ...] = ()
     nominations: tuple[tuple[str, str], ...] = ()
+    evidence_level: str = "MEASURED"
 
     def __post_init__(self) -> None:
         require(isinstance(self.entity, EntityRef) and isinstance(self.annotation, GeneAnnotation)
@@ -559,6 +581,8 @@ class StatisticalState:
                 and isinstance(self.tested_context, TestedContext)
                 and isinstance(self.cross_project, CrossProjectSummary) and isinstance(self.quality, Quality),
                 "invalid state context")
+        require(self.evidence_level in {member.value for member in EVIDENCE_LEVEL_ORDER},
+                "undeclared evidence level")
         require(type(self.nominations) is tuple
                 and all(isinstance(item, tuple) and len(item) == 2
                         and isinstance(item[0], str) and bool(item[0])

@@ -33,6 +33,7 @@ def test_nominated_state_is_a_descriptive_candidate_with_declared_prerequisites(
 
     maturity = derive_evidence_maturity(state)
 
+    assert state.evidence_level == maturity.level.value
     assert maturity.level is EvidenceLevel.DESCRIPTIVE_CANDIDATE
     assert any("nominated by validated modality" in reason for reason in maturity.reasons)
     assert [level for level, _ in maturity.unattained] == [
@@ -53,3 +54,18 @@ def test_measured_state_and_census_invariance(runtime):
     census_false = replace(state, annotation=GeneAnnotation(None, False, None, "note"))
     assert derive_evidence_maturity(census_true) == derive_evidence_maturity(census_false)
     assert derive_evidence_maturity(census_true) == derive_evidence_maturity(state)
+
+
+def test_evidence_level_is_not_a_jev_input(runtime):
+    import json
+
+    from cancerjev.jev.projection import build_projection
+    from tests.jev.test_service import state_record
+
+    state = _states(runtime)[0]
+    baseline = build_projection(state_record("union-1", state))
+    altered = build_projection(
+        state_record("union-1", replace(state, evidence_level="FUNCTIONALLY_SUPPORTED")))
+
+    assert altered == baseline
+    assert "evidence_level" not in json.dumps(baseline)

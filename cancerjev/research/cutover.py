@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from cancerjev.domain.codecs import discovery_identity
 from cancerjev.domain.discovery import (
     CNV_SCAN_SELECTION_RULE,
@@ -12,6 +14,7 @@ from cancerjev.domain.discovery import (
     ExpressionDiscoveryResult,
     MutationDiscoveryResult,
 )
+from cancerjev.domain.maturity import derive_evidence_maturity
 from cancerjev.domain.measurements import (
     Acquisition,
     Compatibility,
@@ -251,6 +254,7 @@ def _compose_union_states(
             sources=scientific_sources, operational_sources=sources,
             nominations=modal_nominations,
         )
+        state = replace(state, evidence_level=derive_evidence_maturity(state).level.value)
         states.append(state)
     return tuple(states)
 
@@ -377,5 +381,6 @@ def _compose_legacy_survivor_states(
             methods=_state_methods(), environment_hash=_environment_hash(),
             sources=scientific_sources, operational_sources=sources,
         )
+        state = replace(state, evidence_level=derive_evidence_maturity(state).level.value)
         states.append(state)
     return tuple(states)
