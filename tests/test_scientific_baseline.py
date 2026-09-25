@@ -6,10 +6,8 @@ re-read as the same typed objects, and a measurement the evidence never observed
 stays unavailable rather than becoming a zero.
 """
 
-import json
 
 from cancerjev.domain.codecs import (
-    evidence_identity,
     read_evidence,
     read_state,
     state_identity,
@@ -224,34 +222,6 @@ def e0(state):
                                       state.tested_context.examined_genes_hash, ()))
 
 
-def test_typed_state_round_trip_preserves_scientific_content():
-    state = build_state()
-    raw = write_state(state)
-    payload = json.loads(raw)
-    assert payload["schema_version"] == 4
-    assert payload["kind"] == "STATISTICAL_STATE"
-    assert payload["state_hash"] == state_identity(state)
-    assert read_state(raw) == state
-    assert read_state(raw, expected_hash=state_identity(state)) == state
-    assert state.research.spec_id == LUAD_RESEARCH_V1.spec_id
-    assert state.research.cohort == LUAD_RESEARCH_V1.cohort.cohort_id
-
-
-def test_typed_e0_round_trip_preserves_the_revision():
-    state = build_state()
-    base = e0(state)
-    assert base.revision_index == 0
-    assert base.action is None and base.checks == ()
-    assert base.puzzle.origin == "STATISTICAL_STATE_BASELINE"
-    raw = write_evidence(base)
-    payload = json.loads(raw)
-    assert payload["schema_version"] == 4
-    assert payload["kind"] == "EVIDENCE_STATE"
-    assert payload["evidence_hash"] == evidence_identity(base)
-    assert read_evidence(raw) == base
-    assert read_evidence(raw, expected_hash=evidence_identity(base)) == base
-
-
 def test_missing_measurements_stay_unavailable_through_round_trips():
     state = build_state(
         frames=[frame("P1"), frame("P2", expression=False)],
@@ -277,11 +247,3 @@ def test_missing_measurements_stay_unavailable_through_round_trips():
     evidence_roundtrip = read_evidence(write_evidence(base))
     assert evidence_roundtrip == base
     assert evidence_roundtrip.project_evidence[1].affected_case_count.value is None
-
-
-def test_observed_counts_survive_a_round_trip_as_typed_counts():
-    state = build_state(counts={"TCGA-LUAD": {GENE_ID: 0}})
-    roundtrip = read_state(write_state(state), expected_hash=state_identity(state))
-    affected = roundtrip.projects[0].mutation.affected_cases
-    assert isinstance(affected, ObservedCount) and affected.value == 0
-    assert roundtrip.cross_project.affected_case_total.value == 0

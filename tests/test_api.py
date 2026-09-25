@@ -1,14 +1,40 @@
 from __future__ import annotations
 
+import shutil
 import sqlite3
 
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
 from apps.api.serializers import PRESENTATION_SCHEMA_VERSION, response_etag
+from cancerjev.config import Settings
 from cancerjev.research.dossier import SYNTHETIC_NOTICE
 from cancerjev.research.orchestrator import DemoOrchestrator
-from cancerjev.storage.database import SCHEMA_VERSION
+from cancerjev.storage.artifacts import ArtifactStore
+from cancerjev.storage.database import SCHEMA_VERSION, Database
+from cancerjev.storage.repositories import Repository
+
+
+@pytest.fixture(scope="module")
+def _canned_demo(tmp_path_factory):
+    data_dir = tmp_path_factory.mktemp("api-canned")
+    settings = Settings(data_dir, 0, 60, "http://localhost:3000")
+    database = Database(settings.database_path)
+    database.bootstrap()
+    run_id = DemoOrchestrator(settings, Repository(database), ArtifactStore(data_dir),
+                              lambda event: None).run()
+    with database.connect(write=True) as connection:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    return data_dir, run_id
+
+
+@pytest.fixture
+def runtime(tmp_path, _canned_demo):
+    data_dir = tmp_path / "data"
+    shutil.copytree(_canned_demo[0], data_dir)
+    settings = Settings(data_dir, 0, 60, "http://localhost:3000")
+    return settings, Repository(Database(settings.database_path)), ArtifactStore(data_dir)
 
 
 def _client(settings, monkeypatch) -> TestClient:
@@ -20,7 +46,7 @@ def _client(settings, monkeypatch) -> TestClient:
 
 
 def _run_demo(settings, repository, artifacts) -> str:
-    return DemoOrchestrator(settings, repository, artifacts, lambda event: None).run()
+    return repository.list_runs()[0]["run_id"]
 
 
 def test_health_and_system_report_the_current_configuration(runtime, monkeypatch):
@@ -131,6 +157,11 @@ def test_child_lists_are_filtered_and_cursor_mismatch_is_rejected(runtime, monke
     ).json()
     assert len(filtered["items"]) == 2
     assert all(row["candidate_id"] == ready["candidate_id"] for row in filtered["items"])
+
+    followups = client.get(f"/api/runs/{run_id}/followups",
+                           params={"candidate_id": ready["candidate_id"]}).json()["items"]
+    assert [(row["action_id"], row["status"]) for row in followups] == [
+        ("CHECK_EVIDENCE_INTEGRITY_V1", "COMPLETED")]
 
 
 def test_typed_state_and_evidence_presentations(runtime, monkeypatch):
@@ -258,8 +289,9 @@ def test_corrupt_ranking_artifact_is_refused(runtime, monkeypatch):
     assert "Traceback" not in response.text
 
 
-def test_unknown_identifiers_are_not_found(runtime, monkeypatch):
+def test_error_envelope_for_missing_and_invalid_requests(runtime, monkeypatch):
     settings, repository, artifacts = runtime
+    run_id = _run_demo(settings, repository, artifacts)
     client = _client(settings, monkeypatch)
     missing = "00000000-0000-0000-0000-000000000000"
     for path in (
@@ -273,12 +305,8 @@ def test_unknown_identifiers_are_not_found(runtime, monkeypatch):
         response = client.get(path)
         assert response.status_code == 404, path
         assert response.json()["error"]["code"] == "HTTP_404"
+        assert "Traceback" not in response.text
 
-
-def test_validation_errors_use_the_documented_envelope(runtime, monkeypatch):
-    settings, repository, artifacts = runtime
-    run_id = _run_demo(settings, repository, artifacts)
-    client = _client(settings, monkeypatch)
     for path in (
         "/api/runs/not-a-uuid",
         "/api/runs?limit=0",

@@ -70,7 +70,8 @@ class LoopbackServer:
                 return
 
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread = threading.Thread(
+            target=lambda: self._server.serve_forever(poll_interval=0.02), daemon=True)
         self._thread.start()
 
     @property
@@ -105,7 +106,8 @@ def transport_builder(runtime, loopback):
     settings, repository, artifacts = runtime
 
     def build(*, caps: BudgetCaps | None = None, cache_enabled: bool = True,
-              emit: Callable[..., Any] | None = None) -> GDCTransport:
+              emit: Callable[..., Any] | None = None,
+              connection_factory: Callable[[], Any] | None = None) -> GDCTransport:
         effective = caps or BudgetCaps(max_requests=50, max_bytes=1_000_000)
         budget = RunBudget(caps=effective)
         run_id = repository.create_run("transport-test")
@@ -114,8 +116,10 @@ def transport_builder(runtime, loopback):
             emit or (lambda *args, **kwargs: None),
             cache_enabled=cache_enabled,
             host="127.0.0.1",
-            connection_factory=lambda: http.client.HTTPConnection(
-                "127.0.0.1", loopback.port, timeout=effective.timeout_seconds,
+            connection_factory=connection_factory or (
+                lambda: http.client.HTTPConnection(
+                    "127.0.0.1", loopback.port, timeout=effective.timeout_seconds,
+                )
             ),
         )
 

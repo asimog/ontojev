@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 
 import pytest
 
+from cancerjev.config import Settings
 from cancerjev.domain.codecs import canonical_bytes, state_identity
 from cancerjev.science.actions import ACTION_REGISTRY
-from cancerjev.storage.artifacts import artifact_id_for
+from cancerjev.storage.artifacts import ArtifactStore, artifact_id_for
+from cancerjev.storage.database import Database
 from cancerjev.storage.readers import (
     ScientificReadError,
     read_candidate_state,
@@ -23,13 +26,44 @@ from cancerjev.storage.readers import (
     read_hypothesis_record,
     read_revision_chain,
 )
-from tests.integration.test_hypothesis_stage import _run as _hypothesis_run
-from tests.integration.test_live_replay import _api_client
+from cancerjev.storage.repositories import Repository
+from tests.integration.test_hypothesis_stage import _hypothesis_adapter
+from tests.integration.test_live_replay import _api_client, _orchestrator
+
+
+@pytest.fixture(scope="module")
+def _canned_run(tmp_path_factory):
+    """Build the canonical hypothesis arc once; each test reads a private copy."""
+    data_dir = tmp_path_factory.mktemp("reads-canned")
+    settings = Settings(data_dir, 0, 60, "http://localhost:3000")
+    database = Database(settings.database_path)
+    database.bootstrap()
+    repository = Repository(database)
+    orchestrator, _, _ = _orchestrator(
+        (settings, repository, ArtifactStore(data_dir)), jev_adapter=_hypothesis_adapter(),
+        deep_selection="GENEONE", deep_followup_authorized=True)
+    run_id = orchestrator.run()
+    assert repository.get_run(run_id)["status"] == "COMPLETED"
+    candidate = next(row for row in repository.list_table("candidates", run_id)
+                     if row["entity"]["gene_symbol"] == "GENEONE")
+    with database.connect(write=True) as connection:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    return data_dir, run_id, candidate["candidate_id"]
+
+
+@pytest.fixture
+def runtime(tmp_path, _canned_run):
+    data_dir = tmp_path / "data"
+    shutil.copytree(_canned_run[0], data_dir)
+    settings = Settings(data_dir, 0, 60, "http://localhost:3000")
+    return settings, Repository(Database(settings.database_path)), ArtifactStore(data_dir)
 
 
 def _fixture_run(runtime, monkeypatch, **kwargs):
-    run_id, summary, repository = _hypothesis_run(runtime, monkeypatch, **kwargs)
-    candidate = repository.get_candidate(summary["candidate_id"])
+    repository = runtime[1]
+    run_id = repository.list_runs()[0]["run_id"]
+    candidate = next(row for row in repository.list_table("candidates", run_id)
+                     if row["entity"]["gene_symbol"] == "GENEONE")
     return run_id, repository, candidate
 
 

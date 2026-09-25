@@ -2,26 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 
 from cancerjev.jev.projection import (
-    INCLUDED_FIELDS,
     PROJECTION_BYTE_CAP,
     PROJECTION_VERSION,
     ProjectionError,
     build_projection,
     projection_hash,
 )
-from cancerjev.jev.questions import (
-    WIDE_QUESTION_SET_VERSION,
-    WIDE_QUESTIONS,
-    applicability_map,
-    question_set_hash,
-    wide_question_set_hash,
-)
+from cancerjev.jev.questions import WIDE_QUESTIONS, applicability_map
 from tests.jev.test_service import GENE, PROJECT, state_record, statistical_state
 
 COHORT_FIELDS = {
@@ -55,14 +47,6 @@ def test_projection_is_deterministic_and_compact():
     assert len(str(first)) < PROJECTION_BYTE_CAP
 
 
-def test_projection_contains_no_raw_or_operational_fields():
-    projection = build_projection(state_record("state-1", statistical_state()))
-    rendered = str(projection)
-    for forbidden in ("artifact_id", "retrieved_at", "state_id", "state_hash", "request_hash",
-                      "response_sha256", "_score", "provider_discovery_rank"):
-        assert forbidden not in rendered
-
-
 def test_projection_field_contract_is_exact():
     projection = build_projection(state_record("state-1", statistical_state()))
     assert set(projection) == {
@@ -70,12 +54,10 @@ def test_projection_field_contract_is_exact():
         "eligible_followups",
     }
     assert set(projection["cohort"]) == COHORT_FIELDS
-
-
-def test_included_field_contract_is_declared():
-    assert "cohort.affected_cases" in INCLUDED_FIELDS
-    assert "missingness[]" in INCLUDED_FIELDS
-    assert "eligible_followups[]" in INCLUDED_FIELDS
+    rendered = str(projection)
+    for forbidden in ("artifact_id", "retrieved_at", "state_id", "state_hash", "request_hash",
+                      "response_sha256", "_score", "provider_discovery_rank"):
+        assert forbidden not in rendered
 
 
 def test_projection_preserves_missingness_and_limitations():
@@ -137,20 +119,3 @@ def test_applicability_rules_follow_the_evidence():
     mutation_only = applicability_map(mutation_only_projection, WIDE_QUESTIONS)
     assert mutation_only["expression_evidence_coherent"]["applicable"] is False
     assert mutation_only["mutation_evidence_coherent"]["applicable"] is True
-
-
-def test_question_set_hash_changes_with_wording():
-    assert WIDE_QUESTION_SET_VERSION == "wide-v3"
-    assert len(wide_question_set_hash()) == 64
-    altered = tuple(
-        replace(definition, instructions=definition.instructions + " ")
-        for definition in WIDE_QUESTIONS
-    )
-    assert question_set_hash(altered, WIDE_QUESTION_SET_VERSION) != wide_question_set_hash()
-
-
-def test_every_question_has_full_semantics():
-    for definition in WIDE_QUESTIONS:
-        assert len(definition.instructions) > 80
-        assert definition.criteria
-        assert definition.applicability_rule

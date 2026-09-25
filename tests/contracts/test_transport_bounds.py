@@ -4,6 +4,7 @@ import dataclasses
 import hashlib
 import json
 import time
+import urllib.parse
 
 import pytest
 
@@ -43,13 +44,16 @@ def _error_code(exc_info) -> str:
 def test_query_parameters_are_sorted_and_encoded(transport_builder, loopback):
     loopback.json("/projects", json.dumps({"data": {"hits": []}}).encode())
     transport = transport_builder()
-    transport.request(projects_request(size=2))
+    request = projects_request(size=2)
+    transport.request(request)
     recorded = loopback.requests[0]
     assert recorded.path.startswith("/projects?")
     query = recorded.path.split("?", 1)[1]
     assert query.startswith("fields=")
     assert "&size=2" in query
     assert "%20" not in query and " " not in query
+    decoded = dict(urllib.parse.parse_qsl(query))
+    assert decoded == dict(request.params), "the wire query must decode to the recorded params"
 
 
 def test_request_completes_records_ledger_and_cache(transport_builder, loopback, runtime):
@@ -104,35 +108,19 @@ def test_declared_content_length_over_cap_is_rejected(transport_builder, loopbac
     assert _error_code(exc) == TransportErrorCode.RESPONSE_TOO_LARGE
 
 
-def test_exact_cap_plus_one_is_truncated(transport_builder, loopback):
-    body = b"z" * 101
-    loopback.raw("/status", lambda request: (200, {"Content-Type": "application/json",
-                                                   "Transfer-Encoding": "chunked"}, body))
-    transport = transport_builder(caps=BudgetCaps(max_requests=5, max_bytes=1_000_000, per_response_bytes=100))
-    with pytest.raises(TransportError) as exc:
-        transport.request(status_request())
-    assert _error_code(exc) == TransportErrorCode.RESPONSE_TRUNCATED
-
-
-def test_chunked_body_over_cap_is_truncated(transport_builder, loopback):
-    body = b"y" * 900
-    loopback.raw("/status", lambda request: (200, {"Content-Type": "application/json",
-                                                   "Transfer-Encoding": "chunked"}, body))
-    transport = transport_builder(caps=BudgetCaps(max_requests=5, max_bytes=1_000_000, per_response_bytes=100))
-    with pytest.raises(TransportError) as exc:
-        transport.request(status_request())
-    assert _error_code(exc) == TransportErrorCode.RESPONSE_TRUNCATED
-
-
-def test_oversized_body_sentinel_is_charged_once(transport_builder, loopback):
-    body = b"z" * 101
-    loopback.raw("/status", lambda request: (200, {"Content-Type": "application/json",
-                                                   "Transfer-Encoding": "chunked"}, body))
-    transport = transport_builder(caps=BudgetCaps(max_requests=5, max_bytes=1_000_000, per_response_bytes=100))
-    with pytest.raises(TransportError) as exc:
-        transport.request(status_request())
-    assert _error_code(exc) == TransportErrorCode.RESPONSE_TRUNCATED
-    assert transport.budget.bytes_read == 101, "the read allowance and sentinel must be charged exactly once"
+def test_body_over_cap_is_truncated_and_charged_once(transport_builder, loopback):
+    for size in (101, 900):
+        body = b"z" * size
+        loopback.raw("/status", lambda request, body=body: (
+            200, {"Content-Type": "application/json", "Transfer-Encoding": "chunked"}, body))
+        transport = transport_builder(
+            caps=BudgetCaps(max_requests=5, max_bytes=1_000_000, per_response_bytes=100))
+        with pytest.raises(TransportError) as exc:
+            transport.request(status_request())
+        assert _error_code(exc) == TransportErrorCode.RESPONSE_TRUNCATED
+        if size == 101:
+            assert transport.budget.bytes_read == 101, (
+                "the read allowance and sentinel must be charged exactly once")
 
 
 def test_error_body_is_bounded_by_response_and_run_allowance(transport_builder, loopback):
@@ -184,7 +172,7 @@ def test_401_and_403_fail_closed_without_retry_or_credentials(transport_builder,
     assert _error_code(exc) == TransportErrorCode.UNAVAILABLE_ACCESS
 
 
-def test_retryable_status_retries_bounded_then_succeeds(transport_builder, loopback):
+def test_retryable_status_is_bounded(transport_builder, loopback):
     state = {"count": 0}
 
     def responder(request):
@@ -199,14 +187,13 @@ def test_retryable_status_retries_bounded_then_succeeds(transport_builder, loopb
     assert response.http_status == 200
     assert len(loopback.requests) == 2
 
-
-def test_retryable_status_exhausts_bounded_retries(transport_builder, loopback):
     loopback.raw("/status", lambda request: (503, {"Content-Type": "application/json"}, b"{}"))
-    transport = transport_builder(caps=BudgetCaps(max_requests=10, max_bytes=100_000, max_retries=1))
+    exhausting = transport_builder(
+        caps=BudgetCaps(max_requests=10, max_bytes=100_000, max_retries=1), cache_enabled=False)
     with pytest.raises(TransportError) as exc:
-        transport.request(status_request())
+        exhausting.request(status_request())
     assert _error_code(exc) == TransportErrorCode.PROVIDER_ERROR
-    assert len(loopback.requests) == 2
+    assert len(loopback.requests) == 4, "retries are bounded by max_retries"
 
 
 def test_compressed_response_is_rejected(transport_builder, loopback):
@@ -220,20 +207,29 @@ def test_compressed_response_is_rejected(transport_builder, loopback):
 
 def test_timeout_is_typed(transport_builder, loopback):
     def responder(request):
-        time.sleep(1.5)
+        time.sleep(0.5)
         return 200, {"Content-Type": "application/json"}, STATUS_BODY
 
     loopback.raw("/status", responder)
     transport = transport_builder(caps=BudgetCaps(max_requests=5, max_bytes=100_000, max_retries=0,
-                                                  timeout_seconds=0.3))
+                                                  timeout_seconds=0.1))
     with pytest.raises(TransportError) as exc:
         transport.request(status_request())
     assert _error_code(exc) == TransportErrorCode.TIMEOUT
 
 
-def test_connection_error_is_typed(transport_builder, loopback):
-    transport = transport_builder(caps=BudgetCaps(max_requests=5, max_bytes=100_000, max_retries=0))
-    loopback.stop()
+class _RefusingConnection:
+    def request(self, *args, **kwargs):
+        raise ConnectionRefusedError("synthetic connection refused")
+
+    def close(self) -> None:
+        return None
+
+
+def test_connection_error_is_typed(transport_builder):
+    transport = transport_builder(
+        caps=BudgetCaps(max_requests=5, max_bytes=100_000, max_retries=0),
+        connection_factory=_RefusingConnection)
     with pytest.raises(TransportError) as exc:
         transport.request(status_request())
     assert _error_code(exc) == TransportErrorCode.CONNECTION_ERROR

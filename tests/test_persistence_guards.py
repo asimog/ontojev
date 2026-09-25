@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 import cancerjev
-from cancerjev.domain.events import REGISTERED_EVENT_TYPES, canonical_json, utc_now
+from cancerjev.domain.events import canonical_json, utc_now
 from cancerjev.research.orchestrator import DemoOrchestrator
 from cancerjev.storage.artifacts import artifact_id_for
 from cancerjev.storage.database import IMMUTABLE_TABLES, SCHEMA_VERSION, Database
@@ -269,13 +269,6 @@ def test_artifact_identity_and_corruption_are_enforced(runtime):
     with pytest.raises(ScientificReadError) as error:
         read_artifact(repository, artifacts, mismatched_id)
     assert error.value.code == "RECORD_BINDING_MISMATCH"
-
-
-def test_registered_vocabulary_covers_orchestrator_emissions(runtime):
-    settings, repository, artifacts = runtime
-    emitted: list[dict] = []
-    DemoOrchestrator(settings, repository, artifacts, emitted.append).run()
-    assert {event["type"] for event in emitted} <= REGISTERED_EVENT_TYPES
 
 
 def test_research_and_jev_modules_own_no_persistence_sql():

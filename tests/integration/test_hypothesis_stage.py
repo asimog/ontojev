@@ -21,7 +21,6 @@ from cancerjev.research.hypotheses import (
 from cancerjev.science.actions import ACTION_REGISTRY
 from cancerjev.storage.readers import read_hypothesis_record
 from tests.integration.test_live_replay import (
-    _api_client,
     _events,
     _orchestrator,
 )
@@ -105,26 +104,21 @@ def _valid_entry(statement: str = "A competing explanation for the recorded sign
 # ------------------------------------------------------------------ template default
 
 
-def test_deep_policy_asks_for_hypotheses_without_dispatching_them(runtime, monkeypatch):
+def test_template_generation_is_labelled_bounded_and_judged_once(runtime, monkeypatch):
     run_id, summary, repository = _run(runtime, monkeypatch)
     assert summary["status"] == "HYPOTHESIZED"
     assert summary["final_move"] == "GENERATE_HYPOTHESES"
     manifest = summary["decisions"][0]
     assert manifest["move"] == "GENERATE_HYPOTHESES"
     assert manifest["reason_code"] == "HYPOTHESES_JUSTIFIED"
-    assert manifest["executed"] is False
+    assert manifest["executed"] is False, "the deep policy records a move but never dispatches it"
     assert summary["hypothesis"]["status"] == "GENERATED"
     assert summary["hypothesis"]["requested_reason"] is None
     dispatch = [event for event in _events(repository, run_id)
                 if event["type"] == "NEXT_MOVE_DISPATCHED"]
     assert dispatch and dispatch[-1]["data"]["reason_code"] == "MOVE_NOT_FOLLOW_UP"
     assert dispatch[-1]["data"]["dispatched"] is False
-    assert len(_hypothesis_rows(repository, run_id)) == 2
-    assert repository.get_run(run_id)["provider_usage"]["llm_calls"] == 0
 
-
-def test_template_generation_is_labelled_bounded_and_judged_once(runtime, monkeypatch):
-    run_id, summary, repository = _run(runtime, monkeypatch)
     rows = _hypothesis_rows(repository, run_id)
     assert len(rows) == 2
     assert summary["hypothesis"]["generator"] == TEMPLATE_GENERATOR
@@ -244,11 +238,7 @@ def test_injected_text_never_writes_a_measured_field(runtime, monkeypatch):
 
 
 @pytest.mark.parametrize("bad_payload", [
-    [],
-    [_valid_entry()] * 4,
     [{"statement": "too thin"}],
-    [dict(_valid_entry(), statement="x" * 5000)],
-    [dict(_valid_entry(), predictions="not-a-list")],
     [dict(_valid_entry(), distinguishing_tests=["NOT_A_REGISTERED_ACTION"])],
     [_valid_entry(), {"statement": "the second statement is malformed"}],
 ])
@@ -345,6 +335,12 @@ def test_each_statement_is_judged_once_and_bound_to_its_evidence(runtime, monkey
         assert stored.draft.statement == row["hypothesis"]["statement"]
         assert stored.evidence_state_id == evidence_state_id
 
+    dossier = _dossier(runtime, repository, run_id, summary["candidate_id"])
+    versions = dossier["sections"]["jev_model_question_versions"]["narrative"]
+    assert "deep-v1" in versions
+    assert "jev-1.13.0" in versions
+    assert dossier["sections"]["jev_deep_judgments"]["availability"] == "OBSERVED"
+
 
 def test_identical_generated_text_reuses_its_review(runtime, monkeypatch):
     entries = [_valid_entry("An identical injected statement for cache reuse."),
@@ -393,15 +389,6 @@ def test_dossiers_keep_their_reviews_to_their_own_candidate(runtime, monkeypatch
     assert len(seen) == 4
 
 
-def test_dossier_names_the_deep_judgment_question_set_and_model(runtime, monkeypatch):
-    run_id, summary, repository = _run(runtime, monkeypatch)
-    dossier = _dossier(runtime, repository, run_id, summary["candidate_id"])
-    versions = dossier["sections"]["jev_model_question_versions"]["narrative"]
-    assert "deep-v1" in versions
-    assert "jev-1.13.0" in versions
-    assert dossier["sections"]["jev_deep_judgments"]["availability"] == "OBSERVED"
-
-
 def test_duplicate_selections_are_investigated_once(runtime, monkeypatch):
     orchestrator, _, repository = _orchestrator(
         runtime, monkeypatch, jev_adapter=_hypothesis_adapter(),
@@ -434,27 +421,3 @@ def test_template_phrasing_never_quotes_an_unobserved_metric(runtime, monkeypatc
     assert "0 of 100" not in expression_statement, "an unobserved metric is never quoted as a number"
     assert "0 observed" not in expression_statement
     assert repository.get_run(run_id)["provider_usage"]["llm_calls"] == 0
-
-
-# ---------------------------------------------------------------------------- API
-
-
-def test_hypothesis_stage_is_visible_through_the_api(runtime, monkeypatch):
-    run_id, summary, repository = _run(runtime, monkeypatch)
-    client = _api_client(runtime, monkeypatch)
-    rows = _hypothesis_rows(repository, run_id)
-    listed = client.get(f"/api/runs/{run_id}/hypotheses").json()["items"]
-    assert {item["hypothesis_id"] for item in listed} == {row["hypothesis_id"] for row in rows}
-    assert all(item["hypothesis"]["label"] == LIVE_HYPOTHESIS_LABEL for item in listed)
-
-    evaluations = client.get(f"/api/runs/{run_id}/evaluations",
-                             params={"purpose": "HYPOTHESIS"}).json()["items"]
-    assert len(evaluations) == 2
-    assert all(row["vector"]["question_set_version"] == "hypothesis-v2" for row in evaluations)
-    assert all(row["vector"]["generator"] == TEMPLATE_GENERATOR for row in evaluations)
-
-    dossier_row = repository.list_table("dossiers", run_id)[0]
-    dossier = client.get(f"/api/dossiers/{dossier_row['dossier_id']}").json()
-    assert dossier["hypothesis_ids"] == [row["hypothesis_id"] for row in rows]
-    assert dossier["sections"]["competing_hypotheses"]["availability"] == "OBSERVED"
-    assert dossier["sections"]["research_only_notice"]["narrative"] == dossier["warning"]

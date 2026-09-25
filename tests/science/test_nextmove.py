@@ -7,8 +7,6 @@ recorded move is never dispatched here.
 
 from __future__ import annotations
 
-import pytest
-
 from cancerjev.domain.events import canonical_json
 from cancerjev.domain.evidence import CheckSummary
 from cancerjev.jev.contracts import EvaluationRecord, read_answers
@@ -83,31 +81,23 @@ def test_declared_move_vocabulary_is_the_only_output():
         decision = decide_next_move(checks=checks, judgment=judgment, eligible_action_ids=actions)
         assert decision["move"] in MOVES
         assert decision["executed"] is False
-
-
-def test_policy_records_one_versioned_move():
-    decision = decide_next_move(checks=_checks(), judgment=_judgment(),
-                                eligible_action_ids=[ACTION])
-    assert decision["policy_version"] == DEEP_POLICY_VERSION
-    assert decision["move"] in {"COMPLETE", "FOLLOW_UP", "ABSTAIN"}
-    assert decision["thresholds"] == THRESHOLDS
-    assert decision["executed"] is False, "the deep slice never dispatches its own decision"
-    assert decision["execution_note"]
-
-
-def test_unusable_judgment_abstains():
-    decision = decide_next_move(
-        checks=_checks(),
-        judgment=_judgment(reliable=None, error="PROVIDER_ERROR"),
-        eligible_action_ids=[ACTION],
-    )
-    assert (decision["move"], decision["reason_code"]) == ("ABSTAIN", "DEEP_JUDGMENT_UNAVAILABLE")
+        assert decision["policy_version"] == DEEP_POLICY_VERSION
+        assert decision["thresholds"] == THRESHOLDS
+        assert decision["execution_note"]
 
 
 def test_contradicted_check_abstains_before_any_dimension():
     decision = decide_next_move(checks=_checks(contradicted=1, verified=4), judgment=_judgment(),
                                 eligible_action_ids=[ACTION])
     assert (decision["move"], decision["reason_code"]) == (
+        "ABSTAIN", "REVISION_CONTRADICTS_RECORDED_EVIDENCE")
+
+    outranks = decide_next_move(
+        checks=_checks(contradicted=2, verified=3),
+        judgment=_judgment(reliable=1.0, sufficient=1.0, warranted=1.0, stopping=0.0),
+        eligible_action_ids=[ACTION, OTHER_ACTION],
+    )
+    assert (outranks["move"], outranks["reason_code"]) == (
         "ABSTAIN", "REVISION_CONTRADICTS_RECORDED_EVIDENCE")
 
 
@@ -123,18 +113,24 @@ def test_honest_stopping_completes_the_investigation():
     assert (decision["move"], decision["reason_code"]) == ("COMPLETE", "INVESTIGATION_COMPLETE")
 
 
-def test_warranted_step_without_a_distinct_action_abstains():
-    decision = decide_next_move(checks=_checks(), judgment=_judgment(warranted=0.9, stopping=0.1),
-                                eligible_action_ids=[ACTION])
-    assert (decision["move"], decision["reason_code"]) == ("ABSTAIN", "NO_FURTHER_REGISTERED_ACTION")
+def test_warranted_step_needs_a_distinct_action_and_is_never_dispatched():
+    no_alternative = decide_next_move(
+        checks=_checks(), judgment=_judgment(warranted=0.9, stopping=0.1),
+        eligible_action_ids=[ACTION])
+    assert (no_alternative["move"], no_alternative["reason_code"]) == (
+        "ABSTAIN", "NO_FURTHER_REGISTERED_ACTION")
 
+    follow_up = decide_next_move(
+        checks=_checks(), judgment=_judgment(warranted=0.9, stopping=0.1),
+        eligible_action_ids=[ACTION, OTHER_ACTION])
+    assert (follow_up["move"], follow_up["reason_code"]) == ("FOLLOW_UP", "FOLLOW_UP_WARRANTED")
+    assert follow_up["executed"] is False
+    assert follow_up["dimensions"]["distinct_eligible_action_ids"] == [OTHER_ACTION]
 
-def test_warranted_step_with_a_distinct_action_is_recorded_not_dispatched():
-    decision = decide_next_move(checks=_checks(), judgment=_judgment(warranted=0.9, stopping=0.1),
-                                eligible_action_ids=[ACTION, OTHER_ACTION])
-    assert (decision["move"], decision["reason_code"]) == ("FOLLOW_UP", "FOLLOW_UP_WARRANTED")
-    assert decision["executed"] is False
-    assert decision["dimensions"]["distinct_eligible_action_ids"] == [OTHER_ACTION]
+    none_producing = decide_next_move(
+        checks=_checks(), judgment=_judgment(warranted=0.9, stopping=0.1, producing_action=None),
+        eligible_action_ids=[ACTION, OTHER_ACTION])
+    assert none_producing["dimensions"]["distinct_eligible_action_ids"] == [ACTION, OTHER_ACTION]
 
 
 def test_insufficient_evidence_abstains():
@@ -205,16 +201,6 @@ def test_threshold_boundaries_are_named_and_used():
     assert at_sufficient["reason_code"] != "EVIDENCE_INSUFFICIENT"
 
 
-def test_contradicted_check_outranks_favourable_dimensions():
-    decision = decide_next_move(
-        checks=_checks(contradicted=2, verified=3),
-        judgment=_judgment(reliable=1.0, sufficient=1.0, warranted=1.0, stopping=0.0),
-        eligible_action_ids=[ACTION, OTHER_ACTION],
-    )
-    assert (decision["move"], decision["reason_code"]) == (
-        "ABSTAIN", "REVISION_CONTRADICTS_RECORDED_EVIDENCE")
-
-
 def test_typed_judgment_is_built_from_a_validated_evaluation_record():
     record = _evaluation_record(reliable=0.7, sufficient=0.6, warranted=0.65,
                                 stopping=0.3, limitation="SCOPE_LIMITS")
@@ -240,16 +226,3 @@ def test_failed_evaluation_record_abstains_instead_of_fabricating_dimensions():
     assert judgment.error_code == "PROVIDER_ERROR"
     decision = decide_next_move(checks=_checks(), judgment=judgment, eligible_action_ids=[ACTION])
     assert (decision["move"], decision["reason_code"]) == ("ABSTAIN", "DEEP_JUDGMENT_UNAVAILABLE")
-
-
-@pytest.mark.parametrize("producing_action, expected", [
-    (ACTION, [OTHER_ACTION]),
-    (None, [ACTION, OTHER_ACTION]),
-])
-def test_distinct_action_set_excludes_the_producing_action(producing_action, expected):
-    decision = decide_next_move(
-        checks=_checks(),
-        judgment=_judgment(warranted=0.9, stopping=0.1, producing_action=producing_action),
-        eligible_action_ids=[ACTION, OTHER_ACTION],
-    )
-    assert decision["dimensions"]["distinct_eligible_action_ids"] == expected

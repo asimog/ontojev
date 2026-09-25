@@ -116,6 +116,28 @@ instructions override implementation steps embedded in reference documents.
   outcome. Unknown-field rejection and nested text/list bounds are IMPLEMENTED for hypothesis
   drafts.
 
+## Testing
+
+- Before writing an isolated test, state the realistic failure mode it protects. Do not write a
+  unit test after implementing code merely to restate that code.
+- Prefer behavioral integration/replay tests through real current subsystem boundaries for complex
+  features. Mock only genuine external network seams (GDC, TypeSafe/Jev, OpenRouter). Do not mock
+  an internal function just to assert another internal function called it.
+- For complex work, define the important failure modes before implementation and test those
+  contracts. Keep focused tests for scientific/provider/persistence invariants that E2E cannot
+  localize or exhaustively protect (missing ≠ zero, NOT_ACQUIRED ≠ absence, fail-closed refusals,
+  wrong state/candidate/revision binding, malformed provider payloads, terminal ledger states).
+- Do not test private implementation structure, trivial wrappers, getters/setters, obvious
+  constants or internal call order without semantic importance. A harmless refactor must not
+  require widespread test rewrites.
+- Prefer a few durable end-to-end/replay artifacts (state hash, revision chain, event sequence,
+  final dossier, persisted policy result) over many implementation-coupled assertions.
+- Default tests are offline. Live GDC/Jev/LLM verification is explicit, bounded and opt-in via the
+  `live*` markers. Test count and coverage percentage are not quality objectives.
+- Gates: FAST everyday `python -m pytest -m fast`; OFFLINE FULL `python -m pytest`;
+  BROWSER `cd tests/browser && npx playwright test`;
+  LIVE `python -m pytest -m "live or live_gdc or live_jev or live_llm or live_acceptance"`.
+
 ## Development skills
 
 - GDC is the sole scientific runtime data source, including evidence supplied to hypothesis models.

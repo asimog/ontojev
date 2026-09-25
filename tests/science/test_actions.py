@@ -143,9 +143,16 @@ class _Evidence:
     outcome: object
 
 
+_EVIDENCE_CACHE: dict[tuple, _Evidence] = {}
+
+
 def _build(runtime, *, drop_columns: int = 0, empty_expression: bool = False,
            drop_gene: str | None = None, examined_genes_n: int = 2,
            blank_cell: bool = False) -> _Evidence:
+    key = (drop_columns, empty_expression, drop_gene, examined_genes_n, blank_cell)
+    cached = _EVIDENCE_CACHE.get(key)
+    if cached is not None:
+        return cached
     _, repository, artifacts = runtime
     run_id = repository.create_run("actions-test-worker", mode="LIVE", scope={
         "spec_id": LUAD_RESEARCH_V1.spec_id, "selected_project_ids": ["TCGA-LUAD"]})
@@ -202,8 +209,10 @@ def _build(runtime, *, drop_columns: int = 0, empty_expression: bool = False,
     revision = _followup_evidence(outcome, candidate, record, run_id=run_id, iteration=1,
                                   previous_evidence_id="evidence-0",
                                   previous_evidence_hash=evidence_identity(baseline))
-    return _Evidence(state, state_artifact.artifact_id, state_artifact.sha256,
-                     selection_artifact.artifact_id, blobs, record, baseline, revision, outcome)
+    built = _Evidence(state, state_artifact.artifact_id, state_artifact.sha256,
+                      selection_artifact.artifact_id, blobs, record, baseline, revision, outcome)
+    _EVIDENCE_CACHE[key] = built
+    return built
 
 
 # ------------------------------------------------------------------ contracts

@@ -5,32 +5,74 @@ adapter (``FixtureJevAdapter``); the strict parsers, deterministic methods, sche
 typed states, wide admission, registered actions, deep policy, hypothesis stage and
 dossier path are the production code paths. Conftest blocks sockets, so a fixture run
 that touched the network fails rather than passing.
+
+The canonical demonstration is built once per module and each test reads a private
+copy of its data directory, so a read-only assertion never pays for a full run.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 
+import pytest
+
+from cancerjev.config import Settings
 from cancerjev.domain.codecs import read_state, state_identity
+from cancerjev.domain.dossier import DOSSIER_SECTIONS
+from cancerjev.domain.events import REGISTERED_EVENT_TYPES
+from cancerjev.domain.states import STAGES
 from cancerjev.jev.questions import DEEP_QUESTIONS, HYPOTHESIS_QUESTIONS, WIDE_QUESTIONS
+from cancerjev.research.dossier import SYNTHETIC_NOTICE
 from cancerjev.research.fixtures import (
     FIXTURE_ID,
     FIXTURE_NOTICE,
     FIXTURE_VERSION,
     FixtureJevAdapter,
 )
-from cancerjev.research.orchestrator import DemoOrchestrator
+from cancerjev.research.hypotheses import LIVE_HYPOTHESIS_LABEL
+from cancerjev.research.orchestrator import DEMO_DEEP_SELECTION, DemoOrchestrator
+from cancerjev.research.specs import RESEARCH_SPEC_SCHEMA_VERSION
 from cancerjev.science.actions import ACTION_REGISTRY
+from cancerjev.storage.artifacts import ArtifactStore
+from cancerjev.storage.database import Database
 from cancerjev.storage.readers import (
     read_dossier_record,
     read_hypothesis_record,
     read_revision_chain,
     read_state_record,
 )
+from cancerjev.storage.repositories import Repository
+
+
+@pytest.fixture(scope="module")
+def _canned_demo(tmp_path_factory):
+    data_dir = tmp_path_factory.mktemp("demo-canned")
+    settings = Settings(data_dir, 0, 60, "http://localhost:3000")
+    database = Database(settings.database_path)
+    database.bootstrap()
+    repository = Repository(database)
+    run_id = DemoOrchestrator(settings, repository, ArtifactStore(data_dir),
+                              lambda event: None).run()
+    with database.connect(write=True) as connection:
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    return data_dir, run_id
+
+
+@pytest.fixture
+def runtime(tmp_path, _canned_demo):
+    data_dir = tmp_path / "data"
+    shutil.copytree(_canned_demo[0], data_dir)
+    settings = Settings(data_dir, 0, 60, "http://localhost:3000")
+    return settings, Repository(Database(settings.database_path)), ArtifactStore(data_dir)
 
 
 def _demo(runtime):
+    return runtime[1].list_runs()[0]["run_id"]
+
+
+def _fresh_demo(runtime):
     return DemoOrchestrator(runtime[0], runtime[1], runtime[2], lambda event: None).run()
 
 
@@ -46,18 +88,65 @@ def test_offline_demo_runs_the_shared_engine_end_to_end(runtime):
     assert run["mode"] == "FIXTURE"
     assert run["fixture_id"] == FIXTURE_ID
     assert run["fixture_version"] == FIXTURE_VERSION
+    assert run["outcome_reason"] == "BOUNDED_SWEEP_COMPLETE"
+    assert run["worker_id"] == "demo-worker"
     assert run["selected_project_ids"] == ["TCGA-LUAD"]
     assert run["coverage"] == "COMPLETE_FOR_SCOPE"
-    assert run["counts"]["states_generated"] == 2
-    assert run["counts"]["states_evaluated"] == 2
-    assert run["counts"]["candidates_promoted"] == 2
-    assert run["counts"]["evidence_revisions"] == 2
-    assert run["counts"]["followups_completed"] == 1
-    assert run["counts"]["hypotheses_created"] == 2
-    assert run["counts"]["dossiers_created"] == 1
-    assert run["provider_usage"]["gdc_requests"] == 0, "fixture responses never leave the process"
-    assert run["provider_usage"]["jev_calls"] == 5
-    assert run["provider_usage"]["llm_calls"] == 0
+    assert [row["run_id"] for row in repository.list_runs()] == [run_id]
+    counts = run["counts"]
+    assert counts["states_generated"] == counts["states_valid"] == 2
+    assert counts["states_evaluated"] == 2
+    assert counts["states_selected"] == 0
+    assert counts["candidates_promoted"] == 2
+    assert counts["hypotheses_created"] == 2
+    assert counts["evidence_revisions"] == 2
+    assert counts["dossiers_created"] == 1
+    assert counts["followups_started"] == counts["followups_completed"] == 1
+    assert counts["followups_failed"] == counts["candidates_failed"] == 0
+    assert counts["jev_evaluations"] == 5
+    usage = run["provider_usage"]
+    assert usage["gdc_requests"] == usage["gdc_bytes"] == usage["gdc_cache_hits"] == 0, \
+        "fixture responses never leave the process"
+    assert usage["jev_calls"] == 5
+    assert usage["llm_calls"] == 0
+    assert usage["jev_cost"] is None and usage["llm_cost"] is None
+
+
+def test_demo_run_event_stream_and_caps_are_canonical(runtime):
+    _, repository, _ = runtime
+    run_id = _demo(runtime)
+    events = repository.events(run_id, 0, 1000)["items"]
+    assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
+    assert all(event["run_id"] == run_id for event in events)
+    assert {event["type"] for event in events} <= REGISTERED_EVENT_TYPES
+    assert events[0]["type"] == "RUN_STARTED"
+    assert events[-1]["type"] == "RUN_COMPLETED"
+    assert repository.get_run(run_id)["last_sequence"] == len(events)
+
+    started = events[0]["data"]
+    assert started["mode"] == "FIXTURE"
+    assert started["deep_selection"] == DEMO_DEEP_SELECTION == "slot:1"
+    assert started["deep_followup_authorized"] is True
+    assert started["deep_hypotheses_requested"] is True
+    assert started["research_spec"]["schema_version"] == RESEARCH_SPEC_SCHEMA_VERSION
+    assert started["research_spec"]["spec_id"] == "LUAD_RESEARCH_V1"
+    assert started["caps"] == {
+        "max_requests": 150,
+        "max_bytes": 64 * 1024 * 1024,
+        "per_response_bytes": 5 * 1024 * 1024,
+        "max_case_ids": 250,
+        "max_gene_ids": 100,
+        "timeout_seconds": 30.0,
+        "cache_enabled": runtime[0].gdc_cache_enabled,
+        "jev_max_states": runtime[0].jev_max_states,
+    }
+
+    completed_stages = {event["stage"] for event in events if event["type"] == "STAGE_COMPLETED"}
+    assert {
+        "INVENTORY", "GDC_FAST_SEARCH", "STATE_GENERATION", "JEV_WIDE", "DEEP_ANALYSIS",
+        "FOLLOWUP", "JEV_DEEP", "HYPOTHESIS_GENERATION", "DOSSIER",
+    } <= completed_stages
+    assert completed_stages <= set(STAGES)
 
 
 def test_demo_states_are_typed_immutable_and_recomputable(runtime):
@@ -86,7 +175,7 @@ def test_demo_states_are_typed_immutable_and_recomputable(runtime):
 
 
 def test_demo_wide_admission_promotes_within_the_bound(runtime):
-    _, repository, artifacts = runtime
+    _, repository, _ = runtime
     run_id = _demo(runtime)
     candidates = repository.list_table("candidates", run_id)
     assert len(candidates) == 2
@@ -100,6 +189,12 @@ def test_demo_wide_admission_promotes_within_the_bound(runtime):
     assert {row["vector"]["resolved_model"] for row in evaluations} == {"jev-1.13.0"}
     assert {row["vector"]["question_set_version"] for row in evaluations} == {"wide-v3"}
     assert all(row["vector"]["cache_source_evaluation_id"] is None for row in evaluations)
+    assert {(row["purpose"], row["input_ref_kind"]) for row in repository.list_table(
+        "jev_evaluations", run_id)} == {
+        ("WIDE", "STATISTICAL_STATE"), ("DEEP", "EVIDENCE_STATE"),
+        ("HYPOTHESIS", "HYPOTHESIS"),
+    }
+    assert all(row["input_ref_id"] for row in repository.list_table("jev_evaluations", run_id))
 
 
 def test_demo_evidence_revisions_are_immutable_and_judged_once(runtime):
@@ -107,6 +202,11 @@ def test_demo_evidence_revisions_are_immutable_and_judged_once(runtime):
     run_id = _demo(runtime)
     candidate = next(row for row in repository.list_table("candidates", run_id)
                      if row["entity"]["gene_symbol"] == "GENEONE")
+    assert candidate["promotion_slot"] == 1
+    assert candidate["status"] == "DOSSIER_READY"
+    assert candidate["latest_evidence_state_id"] is not None
+    assert candidate["dossier_id"] is not None
+
     chain = read_revision_chain(repository, artifacts, candidate["candidate_id"])
     assert [stored.iteration for stored in chain] == [0, 1]
     assert chain[0].parent_id is None
@@ -125,6 +225,15 @@ def test_demo_evidence_revisions_are_immutable_and_judged_once(runtime):
     assert deep_evaluations[0]["vector"]["question_set_version"] == "deep-v1"
     assert deep_evaluations[0]["vector"]["evidence_state_id"] == chain[1].evidence_state_id
 
+    baseline = json.loads(chain[0].artifact.content)
+    assert baseline["kind"] == "EVIDENCE_STATE" and baseline["schema_version"] == 4
+    assert baseline["revision_index"] == 0 and baseline["action"] is None
+    assert baseline["source_state"]["state_identity_hash"] == baseline["accepted_state_hash"]
+    revised = json.loads(chain[1].artifact.content)
+    assert revised["revision_index"] == 1
+    assert revised["parent_evidence_hash"] == baseline["evidence_hash"]
+    assert revised["checks"] and all(check["input_hashes"] for check in revised["checks"])
+
 
 def test_demo_hypotheses_are_generated_labelled_and_judged_once(runtime):
     _, repository, artifacts = runtime
@@ -132,7 +241,12 @@ def test_demo_hypotheses_are_generated_labelled_and_judged_once(runtime):
     rows = repository.page_child("hypotheses", run_id, 50, None, {})["items"]
     assert len(rows) == 2
     assert all(row["hypothesis"]["generator"] == "deterministic-template-v1" for row in rows)
-    assert all(row["hypothesis"]["label"] == "GENERATED HYPOTHESIS — NOT EVIDENCE" for row in rows)
+    assert all(row["hypothesis"]["label"] == LIVE_HYPOTHESIS_LABEL for row in rows)
+    assert all("NOT EVIDENCE" in row["hypothesis"]["label"] for row in rows)
+    assert all(row["hypothesis"]["generator_model"] is None for row in rows)
+    assert all(row["hypothesis"]["factual_observation_refs"] == [] for row in rows)
+    assert all(row["hypothesis"]["statement"].strip() and row["hypothesis"]["predictions"]
+               and row["hypothesis"]["contradicted_if"] for row in rows)
     evaluations = repository.page_child("jev_evaluations", run_id, 50, None,
                                         {"purpose": "HYPOTHESIS"})["items"]
     assert len(evaluations) == 2
@@ -153,15 +267,18 @@ def test_demo_dossier_declares_itself_a_synthetic_demonstration(runtime):
     dossier = json.loads(artifact.content)
     assert dossier["schema_version"] == 2
     assert dossier["mode"] == "FIXTURE"
+    assert dossier["warning"] == SYNTHETIC_NOTICE
     assert dossier["warning"].startswith("SYNTHETIC DEMONSTRATION")
     assert "NO REAL GDC DATA WAS ANALYZED" in dossier["warning"]
     assert "NO REAL JEV CALL WAS MADE" in dossier["warning"]
     assert "NO REAL LLM CALL WAS MADE" in dossier["warning"]
     assert dossier["sections"]["research_only_notice"]["narrative"] == dossier["warning"]
+    assert set(dossier["sections"]) == set(DOSSIER_SECTIONS)
     assert dossier["sections"]["deterministic_deep_evidence"]["availability"] == "OBSERVED"
     assert dossier["sections"]["hypothesis_jev_reviews"]["availability"] == "OBSERVED"
     assert dossier["sections"]["llm_provider_model_metadata"]["availability"] == "NOT_ACQUIRED"
     assert dossier["next_moves"] == [{"move": "COMPLETE", "reason_code": "INVESTIGATION_COMPLETE"}]
+    assert dossier["candidate_id"] == dossier_row["candidate_id"]
     assert set(dossier["evidence_state_ids"]) == {
         stored.evidence_state_id
         for stored in read_revision_chain(repository, artifacts, dossier_row["candidate_id"])}
@@ -169,11 +286,15 @@ def test_demo_dossier_declares_itself_a_synthetic_demonstration(runtime):
                                          for row in repository.page_child(
                                              "hypotheses", run_id, 50, None, {})["items"]]
 
+    markdown_meta = repository.artifact(dossier_row["markdown_artifact_id"])
+    markdown = artifacts.read(markdown_meta["relative_path"], markdown_meta["sha256"]).decode()
+    assert dossier["warning"] in markdown
+
 
 def test_demo_replay_keeps_scientific_identity_and_isolates_operational_ids(runtime):
     _, repository, artifacts = runtime
     first = _demo(runtime)
-    second = _demo(runtime)
+    second = _fresh_demo(runtime)
     assert first != second
 
     first_states = {row["summary"]["entity"]["gene_id"]: row for row in _states(repository, first)}
@@ -201,6 +322,8 @@ def test_demo_replay_keeps_scientific_identity_and_isolates_operational_ids(runt
     first_chain = read_revision_chain(repository, artifacts, candidate_by_run[first]["candidate_id"])
     second_chain = read_revision_chain(repository, artifacts, candidate_by_run[second]["candidate_id"])
     assert revision_science(first_chain) == revision_science(second_chain)
+    assert [stored.record.evidence_hash for stored in first_chain] == \
+        [stored.record.evidence_hash for stored in second_chain], "evidence identity is reproducible"
     assert [stored.evidence_state_id for stored in first_chain] != \
         [stored.evidence_state_id for stored in second_chain]
 
@@ -209,21 +332,6 @@ def test_demo_replay_keeps_scientific_identity_and_isolates_operational_ids(runt
     second_hypotheses = [row["hypothesis"]["statement"] for row in repository.page_child(
         "hypotheses", second, 50, None, {})["items"]]
     assert first_hypotheses == second_hypotheses
-
-
-def test_demo_evidence_revision_identity_is_reproducible(runtime):
-    _, repository, _ = runtime
-    first = _demo(runtime)
-    second = _demo(runtime)
-    first_candidate = next(row for row in repository.list_table("candidates", first)
-                           if row["entity"]["gene_symbol"] == "GENEONE")
-    second_candidate = next(row for row in repository.list_table("candidates", second)
-                            if row["entity"]["gene_symbol"] == "GENEONE")
-    first_hashes = [row["evidence_hash"]
-                    for row in repository.evidence_revisions(first_candidate["candidate_id"])]
-    second_hashes = [row["evidence_hash"]
-                     for row in repository.evidence_revisions(second_candidate["candidate_id"])]
-    assert first_hashes == second_hashes
 
 
 def test_fixture_adapter_covers_every_current_question_set_offline():

@@ -7,7 +7,7 @@ import hashlib
 import pytest
 
 from cancerjev.domain.events import canonical_json
-from cancerjev.jev.contracts import EvaluationRecord, ValidatedAnswers
+from cancerjev.jev.contracts import ValidatedAnswers
 from cancerjev.jev.projection import build_projection, projection_hash
 from cancerjev.jev.questions import applicability_map, wide_question_set_hash
 from cancerjev.storage.readers import ScientificReadError, read_evaluation_record
@@ -55,19 +55,6 @@ def test_read_evaluation_record_rehydrates_the_original_binding(runtime):
     assert bound["question_hash"] == wide_question_set_hash()
     assert bound["projection_hash"] == projection_hash(build_projection(record))
     assert bound["applicability"] == applicability_map(build_projection(record))
-
-
-def test_evaluation_record_boundary_is_typed_and_immutable(runtime):
-    _, evaluation = _wide_evaluation(runtime)
-    assert isinstance(evaluation, EvaluationRecord)
-    assert isinstance(evaluation.answers, ValidatedAnswers)
-    assert evaluation.is_applicable("warrants_deeper_investigation") is True
-    boundary = evaluation.boundary_representation()
-    assert boundary["artifact_id"] == evaluation.artifact_id
-    boundary["answers"].clear()
-    fresh = evaluation.boundary_representation()
-    assert fresh["answers"], "the boundary must be decoded fresh, not cached"
-    assert evaluation.answers.answers
 
 
 @pytest.mark.parametrize(("field", "value"), [

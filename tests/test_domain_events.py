@@ -9,12 +9,9 @@ from cancerjev.domain.events import REGISTERED_EVENT_TYPES, RunEvent
 from cancerjev.domain.runs import validate_run_transition
 
 
-def test_legal_run_transitions():
+def test_run_transition_rules():
     validate_run_transition("PENDING", "RUNNING")
     validate_run_transition("RUNNING", "COMPLETED")
-
-
-def test_terminal_transition_is_rejected():
     with pytest.raises(ValueError, match="illegal"):
         validate_run_transition("COMPLETED", "RUNNING")
 

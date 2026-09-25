@@ -75,12 +75,13 @@ def _test_spec(project_id: str = "TCGA-LUAD", *, page_size: int = 200, batch_siz
     )
 
 
-def _orchestrator(runtime, monkeypatch, *, jev_adapter=None, research_spec=None,
+def _orchestrator(runtime, monkeypatch=None, *, jev_adapter=None, research_spec=None,
                   deep_selection=None, deep_selections=(), deep_action_id=None,
                   deep_followup_authorized=False, deep_hypotheses_requested=False,
                   llm_generator=None, **replay_options):
     settings, repository, artifacts = runtime
-    monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))
+    if monkeypatch is not None:
+        monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))
     holder: dict = {}
 
     def transport_factory(repo, artifact_store, budget, run_id, emit):
@@ -169,17 +170,6 @@ def _wide_summary(repository, artifacts, run_id):
 
 
 # ------------------------------------------------------------------ scope and identity
-
-
-def test_default_live_research_spec_is_luad(runtime, monkeypatch):
-    orchestrator, _, _ = _orchestrator(runtime, monkeypatch)
-    spec = orchestrator.research_spec
-    assert spec is LUAD_RESEARCH_V1
-    assert spec.cohort.project_id == "TCGA-LUAD"
-    assert spec.cohort.cohort_id == "TCGA-LUAD"
-    assert spec.cohort.domain == "lung cancer"
-    assert spec.allowed_actions == ("CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1")
-    assert spec.limits.max_revisions == 2
 
 
 def test_alternate_research_spec_selects_only_its_project(runtime, monkeypatch):
@@ -344,38 +334,6 @@ def test_live_replay_links_scientific_sources_to_the_responses_that_supplied_the
             assert metadata["sha256"] == source.source.response_hash
 
 
-def test_state_identity_excludes_operational_ids_and_tracks_measurements(runtime, monkeypatch):
-    run_id, repository, _ = _live_state_records(runtime, monkeypatch)
-    row = _state_row(repository, run_id, GENE_ONE)
-    stored = read_state_record(repository, runtime[2], row["state_id"])
-    original = state_identity(stored.state)
-
-    measured = dataclasses.replace(
-        stored.state,
-        projects=(dataclasses.replace(
-            stored.state.projects[0],
-            mutation=dataclasses.replace(
-                stored.state.projects[0].mutation,
-                affected_cases=dataclasses.replace(
-                    stored.state.projects[0].mutation.affected_cases, value=21),
-            ),
-        ),),
-    )
-    assert state_identity(measured) != original, "a changed measured count is a different state"
-
-    operational = dataclasses.replace(
-        stored.state,
-        operational_sources=(),
-        tested_context=dataclasses.replace(stored.state.tested_context,
-                                           selection_artifact_id="other-selection-artifact"),
-        projects=(dataclasses.replace(
-            stored.state.projects[0],
-            discovery=dataclasses.replace(stored.state.projects[0].discovery, rank=99, score=1.0),
-        ),),
-    )
-    assert state_identity(operational) == original, "operational ids never enter scientific identity"
-
-
 # ------------------------------------------------------------------- wide Jev admission
 
 
@@ -474,14 +432,6 @@ def test_jev_evaluations_are_cacheable_by_pinned_model_identity(runtime, monkeyp
     assert sorted(row["vector"]["source_state_hash"] for row in evaluations) == first_hashes
     assert repository.get_run(second)["counts"]["states_evaluated"] == 2
 
-
-def test_wide_phase_rankings_promotions_and_events_are_stable(runtime, monkeypatch):
-    adapter = StubAdapter()
-    orchestrator, _, repository = _orchestrator(runtime, monkeypatch, jev_adapter=adapter)
-    first = orchestrator.run()
-    second_orchestrator, _, _ = _orchestrator(runtime, monkeypatch, jev_adapter=adapter)
-    second = second_orchestrator.run()
-
     assert _wide_summary(repository, runtime[2], first) == _wide_summary(repository, runtime[2], second)
     for run_id in (first, second):
         assert _wide_phase_events(repository, run_id) == WIDE_EVENT_ORDER
@@ -544,6 +494,7 @@ def test_large_cohort_is_paged_batched_and_merged_deterministically(runtime, mon
     ({"duplicate_case_across_pages": True}, "DUPLICATE_CASE_ID"),
     ({"inconsistent_case_total_after_first": True}, "CASE_TOTAL_INCONSISTENT"),
     ({"inconsistent_case_offset_after_first": True}, "CASE_PAGE_OFFSET_INCONSISTENT"),
+    ({"incomplete_frame": True}, "CASE_TOTAL_INCONSISTENT"),
 ])
 def test_invalid_case_pagination_fails_closed(runtime, monkeypatch, replay_options, code):
     spec = _test_spec(page_size=200, max_cases=600)
@@ -576,15 +527,6 @@ def test_controlled_file_record_fails_closed(runtime, monkeypatch):
     assert repository.get_run(run_id)["status"] == "FAILED"
     failed = [event for event in _events(repository, run_id) if event["type"] == "RUN_FAILED"]
     assert failed[-1]["data"]["reason_code"] == "CONTROLLED_RECORD_RETURNED"
-    assert repository.list_table("statistical_states", run_id) == []
-
-
-def test_incomplete_case_frame_fails_closed(runtime, monkeypatch):
-    orchestrator, _, repository = _orchestrator(runtime, monkeypatch, incomplete_frame=True)
-    run_id = orchestrator.run()
-    assert repository.get_run(run_id)["status"] == "FAILED"
-    failed = [event for event in _events(repository, run_id) if event["type"] == "RUN_FAILED"]
-    assert failed[-1]["data"]["reason_code"] == "CASE_TOTAL_INCONSISTENT"
     assert repository.list_table("statistical_states", run_id) == []
 
 

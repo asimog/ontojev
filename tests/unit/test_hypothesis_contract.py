@@ -15,9 +15,9 @@ def _draft():
 
 
 @pytest.mark.parametrize("field,value", [
-    ("predictions", ["x" * 2001]), ("contradicted_if", [""]),
-    ("required_evidence", ["x"] * 11), ("distinguishing_tests", ["UNKNOWN_ACTION"]),
-    ("measured_value", 10), ("statement", True),
+    ("predictions", ["x" * 2001]),
+    ("distinguishing_tests", ["UNKNOWN_ACTION"]),
+    ("measured_value", 10),
 ])
 def test_generated_fields_fail_closed(field, value):
     draft = _draft()

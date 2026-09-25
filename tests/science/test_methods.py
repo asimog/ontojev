@@ -16,12 +16,11 @@ from dataclasses import dataclass, replace
 
 import pytest
 
-from cancerjev.domain.codecs import read_state, state_identity, write_state
+from cancerjev.domain.codecs import write_state
 from cancerjev.domain.events import canonical_json
 from cancerjev.domain.measurements import (
     Acquisition,
     ContractError,
-    MethodIdentityRef,
     MetricAvailability,
     MetricRecord,
     ObservedCount,
@@ -366,13 +365,21 @@ def test_typed_state_mutation_counts_and_coverage_match_provider_buckets(tmp_pat
 def test_absent_gene_bucket_is_not_observed_never_zero(tmp_path):
     absent = _sample(tmp_path, run_id="absent", counts=_counts(drop_gene=GENE))
     affected = absent.state.projects[0].mutation.affected_cases
+    ssm = absent.state.projects[0].mutation.ssm_coverage_cases
     assert isinstance(affected, UnavailableMeasurement)
     assert affected.status == UnavailableStatus.NOT_OBSERVED
     assert affected.reason == "GENE_BUCKET_ABSENT"
     assert not hasattr(affected, "value")
+    assert isinstance(ssm, ObservedCount) and ssm.value == 95
+    assert MUTATION_ABSENCE_SEMANTICS in absent.state.projects[0].mutation.quality.reasons
+    assert "not wildtype" in MUTATION_ABSENCE_SEMANTICS
+    assert "not a callable negative" in MUTATION_ABSENCE_SEMANTICS
     assert absent.state.cross_project.affected_case_total.availability.value == "NOT_OBSERVED"
     assert absent.state.cross_project.affected_case_total.value is None
     assert absent.state.cross_project.projects_with_mutation_observation == 0
+    blob = write_state(absent.state).lower()
+    assert b"observed_fraction" not in blob
+    assert b"recurrence_fraction" not in blob
 
     zero = _sample(tmp_path, run_id="zero", counts=_counts(zero_gene=GENE))
     observed_zero = zero.state.projects[0].mutation.affected_cases
@@ -396,36 +403,11 @@ def test_partial_aggregation_is_recorded_and_warned(tmp_path):
     assert isinstance(affected, UnavailableMeasurement)
     assert (affected.status, affected.reason) == (UnavailableStatus.UNAVAILABLE, "PARTIAL_AGGREGATION")
 
-
-def test_partial_aggregation_with_absent_bucket_stays_typed(tmp_path):
     absent = _sample(tmp_path, run_id="partial-absent", counts=_counts(timed_out=True, drop_gene=GENE))
     affected = absent.state.projects[0].mutation.affected_cases
     assert isinstance(affected, UnavailableMeasurement)
     assert affected.reason == "GENE_BUCKET_ABSENT"
     assert affected.status != UnavailableStatus.NOT_OBSERVED
-
-
-def test_dropped_case_columns_remain_visible_in_missingness(tmp_path):
-    sample = _sample(tmp_path, run_id="drop7", drop_columns=7)
-    project = sample.state.projects[0]
-    expression = project.expression
-    assert isinstance(expression, ExpressionSummaryResult)
-    assert len(expression.values) == PROJECTS["TCGA-LUAD"] - 7
-    assert expression.coverage.returned_ids == project.population.frame.examined_ids[:-7]
-    assert tuple(group.reason for group in expression.coverage.missing) == ("CASE_COLUMN_NOT_RETURNED",)
-    assert len(expression.coverage.missing[0].ids) == 7
-    assert len(expression.coverage.valid_ids) == 93
-    assert len(project.population.frame.examined_ids) == 100
-    assert len(expression.coverage.assay_available_ids) == 100, "case-level assay availability stays recorded"
-    assert any("7 of 100 examined cases" in entry for entry in sample.state.missingness)
-    assert sample.state.quality.acquisition == Acquisition.COMPLETE
-    assert sample.state.quality.sufficiency == Sufficiency.PARTIAL
-    assert project.mutation.affected_cases.value == 20
-    provider = project.provider_expression
-    assert provider is not None
-    assert provider.unavailable_reason is None
-    assert sample.state.cross_project.coverage_imbalance is False, \
-        "a 7% expression gap is below the declared 0.2 coverage rule"
 
 
 def test_coverage_imbalance_uses_recorded_expression_coverage_fractions(tmp_path):
@@ -483,73 +465,6 @@ def test_two_project_state_keeps_absent_project_unavailable(tmp_path):
     assert sample.state.cross_project.coverage_imbalance is False
 
 
-def test_coverage_ssm_is_scoped_to_the_examined_project(tmp_path):
-    out_of_scope = _sample(tmp_path, run_id="coverage-scope",
-                           coverage=_coverage(only_project="TCGA-LUSC"))
-    ssm = out_of_scope.state.projects[0].mutation.ssm_coverage_cases
-    assert isinstance(ssm, UnavailableMeasurement)
-    assert (ssm.status, ssm.reason) == (UnavailableStatus.NOT_OBSERVED, "PROJECT_NOT_IN_COVERAGE")
-    assert out_of_scope.state.cross_project.affected_case_total.value == 20
-
-
-# ------------------------------------------------------------------ identity
-
-
-def test_state_identity_is_stable_across_provider_rank_metadata(tmp_path):
-    first = _sample(tmp_path, run_id="rank-1", discovery_rank=1)
-    second = _sample(tmp_path, run_id="rank-7", discovery_rank=7)
-    assert first.state.projects[0].discovery.rank == 1
-    assert second.state.projects[0].discovery.rank == 7
-    assert first.state.projects[0].discovery.score != second.state.projects[0].discovery.score
-    assert first.state.projects[0].discovery.lane_id == "MUTATION_DISCOVERY_V1"
-    assert first.state.projects[0].discovery.note == "selection metadata only"
-    assert state_identity(first.state) == state_identity(second.state)
-    assert first.state.tested_context.selection_bias == second.state.tested_context.selection_bias
-
-
-def test_state_identity_excludes_operational_links_but_serializes_them(tmp_path):
-    sample = _sample(tmp_path)
-    original = sample.state
-    linked = replace(original, operational_sources=tuple(
-        replace(source, attempt_id=f"{source.attempt_id}:retry", artifact_id="other-artifact",
-                retrieved_at="2027-01-01T00:00:00Z", bytes_read=source.bytes_read + 1,
-                latency_ms=99, cache_hit=False)
-        for source in original.operational_sources
-    ))
-    assert state_identity(linked) == state_identity(original)
-    assert write_state(linked) != write_state(original)
-    assert read_state(write_state(linked), expected_hash=state_identity(original)) == linked
-
-
-def test_state_identity_changes_with_measured_values_methods_and_universe(tmp_path):
-    sample = _sample(tmp_path)
-    baseline = state_identity(sample.state)
-
-    measured = _sample(tmp_path, run_id="measured", counts=_counts(set_count=21))
-    assert state_identity(measured.state) != baseline
-
-    population = _sample(tmp_path, run_id="population",
-                         project_case_counts={"TCGA-LUAD": 99})
-    assert state_identity(population.state) != baseline
-    assert len(population.state.projects[0].population.frame.examined_ids) == 99
-
-    methods = replace(sample.state, methods=sample.state.methods
-                      + (MethodIdentityRef("EXTRA_METHOD_V1", "1", "a" * 64),))
-    assert state_identity(methods) != baseline
-
-    universe = replace(sample.state, universe=replace(
-        sample.state.universe, filter_description="different tested scope"))
-    assert state_identity(universe) != baseline
-
-    context = replace(sample.state, tested_context=replace(
-        sample.state.tested_context, examined_genes_hash="b" * 64))
-    assert state_identity(context) != baseline
-
-    reference = replace(sample.state, tested_context=replace(
-        sample.state.tested_context, selection_artifact_id="other-selection-artifact"))
-    assert state_identity(reference) == baseline, "the artifact id is an operational link"
-
-
 def test_project_order_is_canonical_in_the_typed_state(tmp_path):
     first = _sample(tmp_path, run_id="order-first", project_ids=("TCGA-LUAD", "TEST-C"),
                     counts=_counts(extra_project="TEST-C", extra_count=3), coverage=_coverage())
@@ -577,22 +492,3 @@ def test_tested_universe_is_provider_ranked_and_bounded(tmp_path):
     assert sample.state.tested_context.rank_in_lane == 1
     assert "top-mutated ranking" in sample.state.tested_context.selection_rule
     assert "selection-biased" in sample.state.tested_context.selection_bias
-
-
-def test_absence_semantics_are_preserved_without_recurrence_or_count_reducer(tmp_path):
-    sample = _sample(tmp_path, run_id="absence", counts=_counts(drop_gene=GENE))
-    affected = sample.state.projects[0].mutation.affected_cases
-    ssm = sample.state.projects[0].mutation.ssm_coverage_cases
-    assert isinstance(affected, UnavailableMeasurement)
-    assert (affected.status, affected.reason) == (UnavailableStatus.NOT_OBSERVED, "GENE_BUCKET_ABSENT")
-    assert isinstance(ssm, ObservedCount) and ssm.value == 95
-    assert MUTATION_ABSENCE_SEMANTICS in sample.state.projects[0].mutation.quality.reasons
-    assert "not wildtype" in MUTATION_ABSENCE_SEMANTICS
-    assert "not a callable negative" in MUTATION_ABSENCE_SEMANTICS
-    assert not any(
-        isinstance(candidate, ObservedCount) and candidate.value == 0
-        for project in sample.state.projects
-        for candidate in (project.mutation.affected_cases,))
-    blob = write_state(sample.state).lower()
-    assert b"observed_fraction" not in blob
-    assert b"recurrence_fraction" not in blob

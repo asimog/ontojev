@@ -34,7 +34,6 @@ from cancerjev.domain.measurements import (
     Sufficiency,
 )
 from cancerjev.jev.projection import (
-    EVIDENCE_INCLUDED_FIELDS,
     EVIDENCE_PROJECTION_VERSION,
     HYPOTHESIS_PROJECTION_VERSION,
     ProjectionError,
@@ -42,7 +41,7 @@ from cancerjev.jev.projection import (
     build_hypothesis_projection,
     projection_hash,
 )
-from cancerjev.jev.questions import DEEP_QUESTIONS, applicability_map, validate_definitions
+from cancerjev.jev.questions import DEEP_QUESTIONS, applicability_map
 from cancerjev.science.actions import ACTION_REGISTRY
 
 RELEASE = "Data Release 46.0"
@@ -234,21 +233,6 @@ def test_projection_byte_cap_fails_closed(monkeypatch):
     with pytest.raises(ProjectionError) as exc:
         build_evidence_projection(_revision(), ACTION_PAYLOAD)
     assert exc.value.code == "PROJECTION_TOO_LARGE"
-
-
-def test_included_fields_declare_the_deep_contract():
-    assert "revision.evidence_present" in EVIDENCE_INCLUDED_FIELDS
-    assert "observations[].outcome" in EVIDENCE_INCLUDED_FIELDS
-    assert "eligible_actions[]" in EVIDENCE_INCLUDED_FIELDS
-
-
-def test_deep_question_set_is_valid_and_carries_full_semantics():
-    validate_definitions(DEEP_QUESTIONS)
-    assert len(DEEP_QUESTIONS) == 5
-    for definition in DEEP_QUESTIONS:
-        assert len(definition.instructions) > 80
-        assert definition.criteria
-        assert definition.applicability_rule in {"revision_evidence_present", "integrity_observed"}
 
 
 def test_hypothesis_projection_carries_text_verbatim_and_excludes_run_ids():

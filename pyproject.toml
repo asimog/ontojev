@@ -49,6 +49,7 @@ packages = ["cancerjev", "apps"]
 testpaths = ["tests"]
 addopts = '-q -m "not live and not live_gdc and not live_jev and not live_llm and not live_acceptance"'
 markers = [
+  "fast: everyday gate of focused contract/invariant tests plus one core offline replay",
   "live: opt-in live provider tests (disabled by default)",
   "live_gdc: opt-in bounded live GDC contract probe",
   "live_jev: opt-in live TypeSafe/Jev evaluation",

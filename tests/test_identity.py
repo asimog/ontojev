@@ -194,10 +194,6 @@ def action_revision(base, state, outcome=CheckOutcome.VERIFIED):
 # ------------------------------------------------------------ state identity
 
 
-def test_state_identity_is_stable_across_equivalent_reconstruction():
-    assert state_identity(build_state()) == state_identity(build_state())
-
-
 def test_state_identity_excludes_operational_links_ranking_and_selection_binding():
     base = build_state()
     replayed = build_state(sources=(
@@ -250,11 +246,6 @@ def test_state_identity_tracks_measured_content_and_scope():
 
 
 # --------------------------------------------------------- evidence identity
-
-
-def test_evidence_identity_is_stable_across_equivalent_reconstruction():
-    state = build_state()
-    assert evidence_identity(baseline_evidence(state)) == evidence_identity(baseline_evidence(state))
 
 
 def test_evidence_identity_excludes_only_the_source_artifact_binding():

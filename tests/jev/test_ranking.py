@@ -227,17 +227,15 @@ def test_jev_promotion_limit_is_a_cap_and_failed_states_remain_auditable():
         "a failed judgment carries no fabricated dimensions"
 
 
-def test_above_admission_confound_threshold_is_named():
-    state = _record("state-confound", 40)
-    ranking = jev_ranking([state], [_evaluation(state, confound=ADMISSION_MAX_CONFOUND + 0.01)])
+def test_admission_exclusion_reasons_are_named():
+    confounded = _record("state-confound", 40)
+    ranking = jev_ranking([confounded], [_evaluation(confounded, confound=ADMISSION_MAX_CONFOUND + 0.01)])
     assert ranking["admission"]["decision"] == "ABSTAIN"
     assert "ABOVE_ADMISSION_THRESHOLD:signal_explained_by_coverage" in \
         ranking["entries"][0]["excluded_reason"]
 
-
-def test_no_qualifiers_produce_explicit_abstention():
-    state = _record("state-low", 10)
-    ranking = jev_ranking([state], [_evaluation(state, warrants=0.59)])
+    low = _record("state-low", 10)
+    ranking = jev_ranking([low], [_evaluation(low, warrants=0.59)])
     assert ranking["admission"]["decision"] == "ABSTAIN"
     assert ranking["admitted_state_ids"] == []
     assert "BELOW_ADMISSION_THRESHOLD:warrants_deeper_investigation" in \

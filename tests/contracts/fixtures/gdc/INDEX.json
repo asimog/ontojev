@@ -17,19 +17,6 @@
       "url": "https://api.gdc.cancer.gov/cases?size=250&sort=case_id&filters=%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22project.project_id%22%2C+%22value%22%3A+%5B%22TCGA-CHOL%22%5D%7D%7D&fields=case_id%2Csubmitter_id%2Cproject.project_id%2Csamples.sample_type"
     },
     {
-      "body_bytes_read": 3087,
-      "body_sha256": "9e755e10b66606df0539f11ea73b6c1cf7624dbc0e9a42bdc4e0f3da9c889616",
-      "completeness": "COMPLETE",
-      "endpoint": "/cases",
-      "error": null,
-      "http_status": 200,
-      "method": "GET",
-      "probe_name": "cases_expand",
-      "response_truncated_by_probe_cap": false,
-      "retrieved_at": "2026-09-22T08:29:09.691565Z",
-      "url": "https://api.gdc.cancer.gov/cases?size=1&expand=diagnoses%2Cdemographic&fields=case_id%2Csubmitter_id%2Cdiagnoses.age_at_diagnosis%2Cdiagnoses.vital_status%2Cdemographic.gender"
-    },
-    {
       "body_bytes_read": 1121,
       "body_sha256": "333010022769e42f0f166d511a567f20f28d7ae53844594969ea7ad66800b5c9",
       "completeness": "COMPLETE",
@@ -41,32 +28,6 @@
       "response_truncated_by_probe_cap": false,
       "retrieved_at": "2026-09-22T08:26:07.935391Z",
       "url": "https://api.gdc.cancer.gov/cases?size=2&filters=%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22project.project_id%22%2C+%22value%22%3A+%5B%22TCGA-BRCA%22%5D%7D%7D&fields=case_id%2Csubmitter_id%2Cproject.project_id%2Cdisease_type%2Cprimary_site%2Cdemographic.gender%2Cdemographic.race%2Cdiagnoses.age_at_diagnosis%2Cdiagnoses.primary_diagnosis%2Cdiagnoses.tumor_stage%2Csamples.sample_type"
-    },
-    {
-      "body_bytes_read": 497,
-      "body_sha256": "bbb0fe6d1b9722df8a58cdf67ffbcc73643e649912d3d092562167a4a6e75ca5",
-      "completeness": "COMPLETE",
-      "endpoint": "/cnv_occurrences",
-      "error": null,
-      "http_status": 200,
-      "method": "GET",
-      "probe_name": "cnv_occurrences_small",
-      "response_truncated_by_probe_cap": false,
-      "retrieved_at": "2026-09-22T08:29:10.907886Z",
-      "url": "https://api.gdc.cancer.gov/cnv_occurrences?size=1&fields=occurrence_id%2Ccase.case_id%2Ccase.submitter_id%2Ccnv.cnv_id%2Ccnv.cnv_change%2Ccnv.cnv_change_5_category%2Ccnv.consequence.gene.symbol"
-    },
-    {
-      "body_bytes_read": 373,
-      "body_sha256": "1d8dfefb879ed688575bc7f83d81e1dc86bdfe95d79ed19ec1e7a8317b0e7f7f",
-      "completeness": "COMPLETE",
-      "endpoint": "/cnvs",
-      "error": null,
-      "http_status": 200,
-      "method": "GET",
-      "probe_name": "cnvs_small",
-      "response_truncated_by_probe_cap": false,
-      "retrieved_at": "2026-09-22T08:26:14.975560Z",
-      "url": "https://api.gdc.cancer.gov/cnvs?size=1&fields=cnv_id%2Ccnv_change%2Ccnv_change_5_category%2Cgene_level_cn%2Cconsequence.gene.symbol"
     },
     {
       "body_bytes_read": 410,
@@ -121,19 +82,6 @@
       "url": "https://api.gdc.cancer.gov/gene_expression/values"
     },
     {
-      "body_bytes_read": 300,
-      "body_sha256": "113dc2741d0b2634b979cea339d246427a6785ebf8a00e5ef6bc4ce449fa3ac6",
-      "completeness": "COMPLETE",
-      "endpoint": "/files",
-      "error": null,
-      "http_status": 200,
-      "method": "GET",
-      "probe_name": "files_expression_chol",
-      "response_truncated_by_probe_cap": false,
-      "retrieved_at": "2026-09-22T08:34:22.541498Z",
-      "url": "https://api.gdc.cancer.gov/files?size=1&filters=%7B%22op%22%3A+%22and%22%2C+%22content%22%3A+%5B%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22access%22%2C+%22value%22%3A+%5B%22open%22%5D%7D%7D%2C+%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22data_type%22%2C+%22value%22%3A+%5B%22Gene+Expression+Quantification%22%5D%7D%7D%2C+%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22cases.project.project_id%22%2C+%22value%22%3A+%5B%22TCGA-CHOL%22%5D%7D%7D%5D%7D&fields=file_id%2Caccess%2Canalysis.workflow_type"
-    },
-    {
       "body_bytes_read": 741,
       "body_sha256": "92ab935f92ce704798904d504793a515e380b272ced3f6d88f27fb81789127f9",
       "completeness": "COMPLETE",
@@ -145,19 +93,6 @@
       "response_truncated_by_probe_cap": false,
       "retrieved_at": "2026-09-22T08:29:13.464930Z",
       "url": "https://api.gdc.cancer.gov/files?size=3&filters=%7B%22op%22%3A+%22and%22%2C+%22content%22%3A+%5B%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22access%22%2C+%22value%22%3A+%5B%22open%22%5D%7D%7D%2C+%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22data_type%22%2C+%22value%22%3A+%5B%22Gene+Expression+Quantification%22%5D%7D%7D%2C+%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22cases.project.project_id%22%2C+%22value%22%3A+%5B%22TCGA-BRCA%22%5D%7D%7D%5D%7D&fields=file_id%2Caccess%2Canalysis.workflow_type%2Cexperimental_strategy"
-    },
-    {
-      "body_bytes_read": 962,
-      "body_sha256": "9910768c1ae124bf388310b5067535d27e869c6f690d967bcd6d7cc9db7f221d",
-      "completeness": "COMPLETE",
-      "endpoint": "/files",
-      "error": null,
-      "http_status": 200,
-      "method": "GET",
-      "probe_name": "files_open_small",
-      "response_truncated_by_probe_cap": false,
-      "retrieved_at": "2026-09-22T08:26:09.042897Z",
-      "url": "https://api.gdc.cancer.gov/files?size=2&filters=%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22access%22%2C+%22value%22%3A+%5B%22open%22%5D%7D%7D&fields=file_id%2Cfile_name%2Caccess%2Cdata_category%2Cdata_type%2Cexperimental_strategy%2Canalysis.workflow_type%2Cplatform"
     },
     {
       "body_bytes_read": 355,
@@ -173,19 +108,6 @@
       "url": "https://api.gdc.cancer.gov/genes?filters=%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22symbol%22%2C+%22value%22%3A+%5B%22TP53%22%5D%7D%7D&fields=gene_id%2Csymbol%2Cname%2Cbiotype%2Cchromosome%2Cstart%2Cend%2Cis_cancer_gene_census"
     },
     {
-      "body_bytes_read": 135,
-      "body_sha256": "dc21dd0c10ad60ae236590a4f9b35bc61b4dd15268ba91c9b05fddeed6d19fee",
-      "completeness": "FAILED",
-      "endpoint": "/_mapping",
-      "error": "HTTPError 404",
-      "http_status": 404,
-      "method": "GET",
-      "probe_name": "mapping_head",
-      "response_truncated_by_probe_cap": false,
-      "retrieved_at": "2026-09-22T08:26:20.808677Z",
-      "url": "https://api.gdc.cancer.gov/_mapping"
-    },
-    {
       "body_bytes_read": 10825,
       "body_sha256": "40cafb547b465525432fb8fe2b3d1ac77225a692f42336be865984ea08f47e98",
       "completeness": "COMPLETE",
@@ -197,32 +119,6 @@
       "response_truncated_by_probe_cap": false,
       "retrieved_at": "2026-09-22T08:29:08.649632Z",
       "url": "https://api.gdc.cancer.gov/analysis/mutated_cases_count_by_project?size=0"
-    },
-    {
-      "body_bytes_read": 291,
-      "body_sha256": "3374ad24b99ce5a819b3508ebf65b5fc8d34d18d3dd59e239d0a5b00eb4f4cef",
-      "completeness": "COMPLETE",
-      "endpoint": "/analysis/mutated_cases_count_by_project",
-      "error": null,
-      "http_status": 200,
-      "method": "GET",
-      "probe_name": "mutated_cases_count_brca",
-      "response_truncated_by_probe_cap": false,
-      "retrieved_at": "2026-09-22T08:26:12.642331Z",
-      "url": "https://api.gdc.cancer.gov/analysis/mutated_cases_count_by_project?size=0&filters=%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22case.project.project_id%22%2C+%22value%22%3A+%5B%22TCGA-BRCA%22%5D%7D%7D"
-    },
-    {
-      "body_bytes_read": 914,
-      "body_sha256": "e1867e5ce4357ec120b126f3b178248c90fbdb7948b75d7d57dc2265d2318ee5",
-      "completeness": "COMPLETE",
-      "endpoint": "/projects/TCGA-BRCA",
-      "error": null,
-      "http_status": 200,
-      "method": "GET",
-      "probe_name": "project_brca_detail",
-      "response_truncated_by_probe_cap": false,
-      "retrieved_at": "2026-09-22T08:29:14.594987Z",
-      "url": "https://api.gdc.cancer.gov/projects/TCGA-BRCA?fields=project_id%2Cname%2Cprimary_site%2Cdisease_type%2Csummary.case_count%2Csummary.file_count%2Csummary.data_categories.data_category"
     },
     {
       "body_bytes_read": 5036,
@@ -251,19 +147,6 @@
       "url": "https://api.gdc.cancer.gov/projects?size=3&fields=project_id%2Cname%2Cprogram.name%2Cprimary_site%2Cdisease_type%2Csummary.case_count%2Csummary.file_count%2Csummary.data_categories.data_category"
     },
     {
-      "body_bytes_read": 1431,
-      "body_sha256": "dc43f26a448eb74eea046eb48757e8a28d87021b29c6b4be4829b77d8a7ceb74",
-      "completeness": "COMPLETE",
-      "endpoint": "/ssm_occurrences",
-      "error": null,
-      "http_status": 200,
-      "method": "GET",
-      "probe_name": "ssm_occurrences_small",
-      "response_truncated_by_probe_cap": false,
-      "retrieved_at": "2026-09-22T08:26:13.847492Z",
-      "url": "https://api.gdc.cancer.gov/ssm_occurrences?size=1&fields=occurrence_id%2Ccase.case_id%2Ccase.submitter_id%2Cssm.ssm_id%2Cssm.genomic_dna_change%2Cssm.mutation_type%2Cssm.consequence.transcript.consequence_type%2Cssm.consequence.transcript.impact"
-    },
-    {
       "body_bytes_read": 221,
       "body_sha256": "a8b1c69f9cfc678486e1c897aee6d878f47fab9cb4c60eb6818598bbe30a7139",
       "completeness": "COMPLETE",
@@ -275,71 +158,6 @@
       "response_truncated_by_probe_cap": false,
       "retrieved_at": "2026-09-22T08:26:05.411514Z",
       "url": "https://api.gdc.cancer.gov/status"
-    },
-    {
-      "body_bytes_read": 82,
-      "body_sha256": "963b978c664f02f5bf0965263a649ecbda9079a705fb5020bd368e85769624f0",
-      "completeness": "COMPLETE",
-      "endpoint": "/analysis/survival",
-      "error": null,
-      "http_status": 200,
-      "method": "POST",
-      "probe_name": "survival_brca",
-      "response_truncated_by_probe_cap": false,
-      "retrieved_at": "2026-09-22T08:26:19.689842Z",
-      "url": "https://api.gdc.cancer.gov/analysis/survival"
-    },
-    {
-      "body_bytes_read": 82,
-      "body_sha256": "c4d58416578b0c0666d753ea525047fe579b566a8943dbc29a8d5c8a13ae8624",
-      "completeness": "COMPLETE",
-      "endpoint": "/analysis/survival",
-      "error": null,
-      "http_status": 200,
-      "method": "GET",
-      "probe_name": "survival_get_project",
-      "response_truncated_by_probe_cap": false,
-      "retrieved_at": "2026-09-22T08:46:01.783412Z",
-      "url": "https://api.gdc.cancer.gov/analysis/survival?filters=%5B%7B%22op%22%3A+%22and%22%2C+%22content%22%3A+%5B%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22case.project.project_id%22%2C+%22value%22%3A+%5B%22TCGA-BRCA%22%5D%7D%7D%5D%7D%5D"
-    },
-    {
-      "body_bytes_read": 82,
-      "body_sha256": "001b6a60fb00930b9f5cacf02ec61dc192b3ba43773fd19c57a2ac0ca49c0c70",
-      "completeness": "COMPLETE",
-      "endpoint": "/analysis/survival",
-      "error": null,
-      "http_status": 200,
-      "method": "POST",
-      "probe_name": "survival_project_only",
-      "response_truncated_by_probe_cap": false,
-      "retrieved_at": "2026-09-22T08:30:49.100672Z",
-      "url": "https://api.gdc.cancer.gov/analysis/survival"
-    },
-    {
-      "body_bytes_read": 82,
-      "body_sha256": "274272f448392d8dbe270c6487a831f06381a7eca9d9f257d2f88893f6b90533",
-      "completeness": "COMPLETE",
-      "endpoint": "/analysis/survival",
-      "error": null,
-      "http_status": 200,
-      "method": "POST",
-      "probe_name": "survival_ssm_gene_path",
-      "response_truncated_by_probe_cap": false,
-      "retrieved_at": "2026-09-22T08:30:50.229366Z",
-      "url": "https://api.gdc.cancer.gov/analysis/survival"
-    },
-    {
-      "body_bytes_read": 131,
-      "body_sha256": "90fea5e2e92721d716a3074ee7cba4530cdf68dca423512ef00940f810c70b1e",
-      "completeness": "COMPLETE",
-      "endpoint": "/analysis/survival",
-      "error": null,
-      "http_status": 200,
-      "method": "POST",
-      "probe_name": "survival_two_groups",
-      "response_truncated_by_probe_cap": false,
-      "retrieved_at": "2026-09-22T08:30:51.355088Z",
-      "url": "https://api.gdc.cancer.gov/analysis/survival"
     },
     {
       "body_bytes_read": 14364,
@@ -368,19 +186,6 @@
       "url": "https://api.gdc.cancer.gov/analysis/top_cases_counts_by_genes?gene_ids=ENSG00000141510%2CENSG00000121879%2CENSG00000154358"
     },
     {
-      "body_bytes_read": 453,
-      "body_sha256": "cce04dc92261744a4c0a8be3e15077c6b0e1b325e3ae3ae96dfdfadd39d0011f",
-      "completeness": "COMPLETE",
-      "endpoint": "/analysis/top_mutated_cases_by_gene",
-      "error": null,
-      "http_status": 200,
-      "method": "GET",
-      "probe_name": "top_mutated_cases_by_gene_tp53",
-      "response_truncated_by_probe_cap": false,
-      "retrieved_at": "2026-09-22T08:29:07.218020Z",
-      "url": "https://api.gdc.cancer.gov/analysis/top_mutated_cases_by_gene?gene_ids=ENSG00000141510&size=3&fields=case_id%2Csubmitter_id"
-    },
-    {
       "body_bytes_read": 485,
       "body_sha256": "b564c6c0f5869185fdd30d6f22b6b8625d45eeca1fd80c060284d2a35c516545",
       "completeness": "COMPLETE",
@@ -395,8 +200,8 @@
     }
   ],
   "fixture_kind": "REAL PUBLIC GDC CAPTURES (open access, anonymous)",
-  "note": "Bodies are exact provider bytes. Meta files record request/response provenance and SHA-256. Do not edit bodies; refresh by rerunning the probe command.",
-  "probe_count": 30,
+  "note": "Bodies are exact provider bytes. Meta files record request/response provenance and SHA-256. Do not edit bodies; refresh by rerunning the probe command. Obsolete captures for endpoints outside the current allowlist were pruned.",
+  "probe_count": 15,
   "source_directory": "data/gdc-contract-captures-2026-09-22",
-  "total_body_bytes": 80653
+  "total_body_bytes": 71751
 }

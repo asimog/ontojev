@@ -204,6 +204,7 @@ def test_luad_run_is_driven_by_the_luad_spec(runtime):
     assert recorded_spec == LUAD_RESEARCH_V1
 
     assert states, "the LUAD run must produce at least one typed state"
+    spec = LUAD_RESEARCH_V1.acquisition
     for row, state in states:
         assert row["disposition"] == "GENERATED"
         assert state.research.spec_id == LUAD_RESEARCH_V1.spec_id
@@ -215,6 +216,30 @@ def test_luad_run_is_driven_by_the_luad_spec(runtime):
         assert state.entity.gene_id in GENES
         assert state_identity(state) == row["state_hash"]
         assert read_state(write_state(state), expected_hash=row["state_hash"]) == state
+
+        acquisition = state.research.acquisition
+        assert (acquisition.case_page_size, acquisition.case_batch_size,
+                acquisition.max_cohort_cases) == (spec.case_page_size, spec.case_batch_size,
+                                                  spec.max_cohort_cases)
+        assert (acquisition.discovery_gene_limit, acquisition.count_gene_limit,
+                acquisition.candidate_gene_limit) == (spec.discovery_gene_limit,
+                                                       spec.count_gene_limit,
+                                                       spec.candidate_gene_limit)
+        assert acquisition.expression_file_sample_size == spec.expression_file_sample_size
+        assert state.research.examined_case_frame == "ALL_CASES_PAGINATED"
+        assert state.research.modalities == ("mutation_counts", "expression_summary")
+        assert state.research.workflows == ("STAR - Counts",)
+        assert state.research.sample_types == ("Primary Tumor",)
+        assert state.quality.compatibility == Compatibility.UNVERIFIED
+        assert state.quality.acquisition == Acquisition.COMPLETE
+        assert state.quality.sufficiency == Sufficiency.SUFFICIENT
+        project = state.projects[0]
+        assert isinstance(project.mutation.affected_cases, ObservedCount)
+        assert project.mutation.affected_cases.value <= PROJECTS["TCGA-LUAD"]
+        assert isinstance(project.mutation.ssm_coverage_cases, ObservedCount)
+        assert project.mutation.ssm_coverage_cases.value == 95
+        assert isinstance(project.expression, ExpressionSummaryResult)
+        assert project.provider_expression is not None
 
 
 def test_luad_run_never_pools_another_cohort(runtime):
@@ -275,36 +300,6 @@ def test_luad_run_respects_selection_and_acquisition_limits(runtime):
         assert len(state.projects[0].population.frame.examined_ids) <= spec.max_cohort_cases
 
 
-def test_typed_state_reflects_the_spec(runtime):
-    _, _, _, _, states = _run_luad(runtime)
-    assert len(states) == len(GENES)
-    for _, state in states:
-        acquisition = state.research.acquisition
-        spec = LUAD_RESEARCH_V1.acquisition
-        assert (acquisition.case_page_size, acquisition.case_batch_size,
-                acquisition.max_cohort_cases) == (spec.case_page_size, spec.case_batch_size,
-                                                  spec.max_cohort_cases)
-        assert (acquisition.discovery_gene_limit, acquisition.count_gene_limit,
-                acquisition.candidate_gene_limit) == (spec.discovery_gene_limit,
-                                                       spec.count_gene_limit,
-                                                       spec.candidate_gene_limit)
-        assert acquisition.expression_file_sample_size == spec.expression_file_sample_size
-        assert state.research.examined_case_frame == "ALL_CASES_PAGINATED"
-        assert state.research.modalities == ("mutation_counts", "expression_summary")
-        assert state.research.workflows == ("STAR - Counts",)
-        assert state.research.sample_types == ("Primary Tumor",)
-        assert state.quality.compatibility == Compatibility.UNVERIFIED
-        assert state.quality.acquisition == Acquisition.COMPLETE
-        assert state.quality.sufficiency == Sufficiency.SUFFICIENT
-        project = state.projects[0]
-        assert isinstance(project.mutation.affected_cases, ObservedCount)
-        assert project.mutation.affected_cases.value <= PROJECTS["TCGA-LUAD"]
-        assert isinstance(project.mutation.ssm_coverage_cases, ObservedCount)
-        assert project.mutation.ssm_coverage_cases.value == 95
-        assert isinstance(project.expression, ExpressionSummaryResult)
-        assert project.provider_expression is not None
-
-
 def test_missing_expression_columns_are_visible_and_not_zero(runtime):
     _, _, _, _, states = _run_luad(runtime, drop_value_columns=2)
     assert states
@@ -352,6 +347,22 @@ def test_wide_run_without_jev_promotes_nothing_and_dispatches_nothing(runtime):
     assert repository.list_table("hypotheses", run_id) == []
 
 
+def test_coverage_ssm_total_is_scoped_and_absence_is_not_zero(runtime):
+    scoped = _direct_luad_state(runtime, coverage=ProjectCoverage(
+        case_with_ssm={"TCGA-LUAD": 7, "TCGA-LUSC": 9, "TCGA-BRCA": 20},
+        complete=True, partial_reasons=[], warnings=[]))
+    ssm = scoped.projects[0].mutation.ssm_coverage_cases
+    assert isinstance(ssm, ObservedCount) and ssm.value == 7
+    serialized = write_state(scoped).decode()
+    assert '"TCGA-LUSC"' not in serialized and '"TCGA-BRCA"' not in serialized
+
+    absent = _direct_luad_state(runtime, coverage=ProjectCoverage(
+        case_with_ssm={"TCGA-LUSC": 9}, complete=True, partial_reasons=[], warnings=[]))
+    ssm = absent.projects[0].mutation.ssm_coverage_cases
+    assert isinstance(ssm, UnavailableMeasurement)
+    assert ssm.status.value == "NOT_OBSERVED" and ssm.reason == "PROJECT_NOT_IN_COVERAGE"
+
+
 def test_absent_mutation_bucket_is_not_wildtype_or_zero(runtime):
     state = _direct_luad_state(runtime, counts=_counts(drop_gene=GENE))
     result = state.projects[0].mutation
@@ -367,26 +378,6 @@ def test_absent_mutation_bucket_is_not_wildtype_or_zero(runtime):
     assert not any(isinstance(value, ObservedCount) and value.value == 0
                    for value in (result.affected_cases,))
 
-
-def test_coverage_ssm_total_is_scoped_to_examined_projects(runtime):
-    state = _direct_luad_state(runtime, coverage=ProjectCoverage(
-        case_with_ssm={"TCGA-LUAD": 7, "TCGA-LUSC": 9, "TCGA-BRCA": 20},
-        complete=True, partial_reasons=[], warnings=[]))
-    ssm = state.projects[0].mutation.ssm_coverage_cases
-    assert isinstance(ssm, ObservedCount) and ssm.value == 7
-    serialized = write_state(state).decode()
-    assert '"TCGA-LUSC"' not in serialized and '"TCGA-BRCA"' not in serialized
-
-
-def test_coverage_ssm_total_is_not_observed_when_no_in_scope_bucket(runtime):
-    state = _direct_luad_state(runtime, coverage=ProjectCoverage(
-        case_with_ssm={"TCGA-LUSC": 9}, complete=True, partial_reasons=[], warnings=[]))
-    ssm = state.projects[0].mutation.ssm_coverage_cases
-    assert isinstance(ssm, UnavailableMeasurement)
-    assert ssm.status.value == "NOT_OBSERVED" and ssm.reason == "PROJECT_NOT_IN_COVERAGE"
-
-
-def test_selection_totals_preserve_absence_instead_of_zero():
     assert _sum_if_complete([3, 4]) == 7
     assert _sum_if_complete([3, 0]) == 3, "an observed zero bucket is a real value"
     assert _sum_if_complete([3, None]) is None, "a missing bucket is never substituted with zero"

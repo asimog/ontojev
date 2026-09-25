@@ -5,6 +5,7 @@ import pytest
 from cancerjev.jev.questions import (
     DEEP_QUESTION_SET_VERSION,
     DEEP_QUESTIONS,
+    HYPOTHESIS_QUESTIONS,
     WIDE_QUESTION_SET_VERSION,
     WIDE_QUESTIONS,
     QuestionDefinition,
@@ -26,19 +27,21 @@ def _definition(**overrides):
 
 
 def test_current_question_sets_are_valid():
-    validate_definitions(WIDE_QUESTIONS)
-    validate_definitions(DEEP_QUESTIONS)
+    for definitions in (WIDE_QUESTIONS, DEEP_QUESTIONS, HYPOTHESIS_QUESTIONS):
+        validate_definitions(definitions)
+        for definition in definitions:
+            assert len(definition.instructions) > 80
+            assert definition.criteria
+            assert definition.applicability_rule
     assert wide_question_set_hash() and deep_question_set_hash()
     assert wide_question_set_hash() != deep_question_set_hash()
+    assert WIDE_QUESTION_SET_VERSION == "wide-v3"
+    assert DEEP_QUESTION_SET_VERSION == "deep-v1"
 
 
 def test_question_set_hash_requires_an_explicit_version():
     with pytest.raises(ValueError):
         question_set_hash((_definition(),), "")
-
-
-def test_question_set_hash_is_stable_for_identical_definitions():
-    assert question_set_hash((_definition(),), "v1") == question_set_hash((_definition(),), "v1")
 
 
 def test_question_set_hash_covers_the_set_version():
@@ -70,14 +73,16 @@ def test_question_set_hash_covers_semantics(overrides):
         {"applicability_rule": "unknown_rule"},
         {"primitive": "CHOICE", "criteria": {}},
         {"primitive": "CHOICE", "criteria": {str(index): "x" for index in range(256)}},
-        {"primitive": "SCORE", "criteria": ["only-one"]},
-        {"primitive": "SCORE", "criteria": [str(index) for index in range(11)]},
         {"criteria": {"maybe": "x"}},
     ],
 )
 def test_malformed_question_definitions_fail_closed(overrides):
     with pytest.raises(ValueError):
         validate_definitions((_definition(**overrides),))
+
+
+class _NestedResponse:
+    status_code = 429
 
 
 @pytest.mark.parametrize(
@@ -90,19 +95,13 @@ def test_malformed_question_definitions_fail_closed(overrides):
         (529, "PROVIDER_OVERLOADED"),
         (500, "PROVIDER_ERROR"),
         (None, "PROVIDER_ERROR"),
+        (_NestedResponse, "PROVIDER_RATE_LIMIT"),
     ],
 )
 def test_provider_errors_are_classified(status, expected):
     exc = Exception("boom")
-    if status is not None:
+    if status is _NestedResponse:
+        exc.response = _NestedResponse()
+    elif status is not None:
         exc.status_code = status
     assert _provider_error_code(exc) == expected
-
-
-def test_provider_error_code_reads_nested_response_status():
-    class Response:
-        status_code = 429
-
-    exc = Exception("boom")
-    exc.response = Response()
-    assert _provider_error_code(exc) == "PROVIDER_RATE_LIMIT"

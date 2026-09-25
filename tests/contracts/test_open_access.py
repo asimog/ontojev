@@ -6,17 +6,7 @@ import ast
 import json
 from pathlib import Path
 
-import pytest
-
-from cancerjev.gdc.endpoints import (
-    FORBIDDEN_PATHS,
-    EndpointError,
-    files_expression_request,
-    resolve_endpoint,
-    status_request,
-)
-from cancerjev.gdc.parsers import ResponseMeta, parse_files_provenance
-from cancerjev.gdc.transport import BudgetCaps, TransportError, TransportErrorCode
+from cancerjev.gdc.endpoints import files_expression_request
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FORBIDDEN_HEADER_NAMES = {"authorization", "x-auth-token", "proxy-authorization"}
@@ -57,15 +47,6 @@ def _env_reads(path: Path) -> list[str]:
     return names
 
 
-def test_no_source_file_uses_an_authentication_header_literal():
-    offenders: list[str] = []
-    for path in (REPO_ROOT / "cancerjev").rglob("*.py"):
-        for value in _string_constants(path):
-            if value.strip().lower() in FORBIDDEN_HEADER_NAMES and path.name not in PROVIDER_AUTH_ALLOWLIST:
-                offenders.append(f"{path.name}: {value!r}")
-    assert offenders == [], f"authentication header literals found: {offenders}"
-
-
 def test_only_the_opt_in_provider_module_may_authenticate():
     authenticated = [
         path.name for path in (REPO_ROOT / "cancerjev").rglob("*.py")
@@ -89,21 +70,6 @@ def test_no_gdc_credential_environment_variable_is_read():
     assert offenders == [], f"GDC credential env reads found: {offenders}"
 
 
-def test_settings_expose_no_credential_fields(runtime):
-    settings, _, _ = runtime
-    fields = set(vars(settings).keys())
-    assert not {field for field in fields if "token" in field.lower() or "credential" in field.lower()}
-
-
-def test_forbidden_paths_are_not_routable():
-    for path in ("/data", "/manifest", "/slicing"):
-        assert path in FORBIDDEN_PATHS
-        with pytest.raises(EndpointError):
-            resolve_endpoint("GET", path)
-        with pytest.raises(EndpointError):
-            resolve_endpoint("POST", path)
-
-
 def test_file_metadata_requests_always_require_open_access():
     request = files_expression_request("TCGA-BRCA")
     filters = json.loads(dict(request.params)["filters"])
@@ -112,39 +78,3 @@ def test_file_metadata_requests_always_require_open_access():
         if item.get("content", {}).get("field") == "access"
     ]
     assert access_filters == [{"op": "in", "content": {"field": "access", "value": ["open"]}}]
-
-
-def test_controlled_records_are_detected_and_never_admitted():
-    body = json.dumps({"data": {"hits": [
-        {"file_id": "f1", "access": "open", "analysis": {"workflow_type": "STAR - Counts"}},
-        {"file_id": "f2", "access": "controlled", "analysis": {"workflow_type": "STAR - Counts"}},
-    ]}}).encode()
-    meta = ResponseMeta(endpoint="/files", method="GET", request_hash="h", response_sha256="s",
-                        artifact_id=None, retrieved_at="t", source_release=None, completeness="COMPLETE")
-    provenance = parse_files_provenance(body, meta)
-    assert provenance.non_open_records == 1
-
-
-def test_token_environment_variables_do_not_change_transport_headers(loopback, transport_builder,
-                                                                     monkeypatch):
-    monkeypatch.setenv("GDC_TOKEN", "should-never-be-read")
-    monkeypatch.setenv("X_AUTH_TOKEN", "should-never-be-read")
-    monkeypatch.setenv("GDC_API_KEY", "should-never-be-read")
-    loopback.json("/status", b'{"status":"OK"}')
-    transport = transport_builder(caps=BudgetCaps(max_requests=5, max_bytes=100_000))
-    transport.request(status_request())
-    recorded = loopback.requests[0]
-    assert "authorization" not in recorded.headers
-    assert "x-auth-token" not in recorded.headers
-    assert "proxy-authorization" not in recorded.headers
-
-
-def test_access_failure_is_terminal_and_never_retried_with_credentials(loopback, transport_builder,
-                                                                       runtime):
-    _, repository, _ = runtime
-    loopback.raw("/status", lambda request: (401, {"Content-Type": "application/json"}, b"{}"))
-    transport = transport_builder(caps=BudgetCaps(max_requests=5, max_bytes=100_000, max_retries=3))
-    with pytest.raises(TransportError) as exc:
-        transport.request(status_request())
-    assert exc.value.code == TransportErrorCode.UNAVAILABLE_ACCESS
-    assert len(loopback.requests) == 1

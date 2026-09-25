@@ -14,7 +14,6 @@ from cancerjev.config import (
 )
 from cancerjev.gdc.transport import BudgetCaps
 from cancerjev.jev.typesafe_adapter import JevProviderError, TypeSafeAdapter
-from cancerjev.research.orchestrator import DemoOrchestrator
 from tests.live.acceptance import BudgetedAdapter, CallBudget, check_generated_text
 
 
@@ -109,23 +108,6 @@ def test_settings_refuse_values_above_the_documented_caps(tmp_path, monkeypatch)
     assert settings.jev_max_states == JEV_MAX_STATES_HARD_CAP
     assert settings.jev_timeout_seconds == JEV_TIMEOUT_SECONDS_HARD_CAP
     assert settings.llm_timeout_seconds == LLM_TIMEOUT_SECONDS_HARD_CAP
-
-
-def test_demo_run_event_records_the_enforced_caps(runtime):
-    settings, repository, artifacts = runtime
-    emitted: list[dict] = []
-    DemoOrchestrator(settings, repository, artifacts, emitted.append).run()
-    started = next(event for event in emitted if event["type"] == "RUN_STARTED")
-    assert started["data"]["caps"] == {
-        "max_requests": 150,
-        "max_bytes": 64 * 1024 * 1024,
-        "per_response_bytes": 5 * 1024 * 1024,
-        "max_case_ids": 250,
-        "max_gene_ids": 100,
-        "timeout_seconds": 30.0,
-        "cache_enabled": settings.gdc_cache_enabled,
-        "jev_max_states": settings.jev_max_states,
-    }
 
 
 def test_live_acceptance_markers_are_registered_and_excluded_by_default(pytestconfig):

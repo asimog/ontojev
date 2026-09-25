@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import pytest
 
-from cancerjev.domain.codecs import read_evidence
 from cancerjev.domain.evidence import EvidenceState
 from cancerjev.jev.contracts import JevContractError
 from cancerjev.jev.typesafe_adapter import JevProviderError
@@ -22,15 +21,12 @@ from cancerjev.research.deep import (
 from cancerjev.research.live import LiveOrchestrator
 from cancerjev.science.actions import ActionError
 from cancerjev.storage.readers import (
-    ScientificReadError,
-    read_candidate_state,
     read_evidence_record,
     read_revision_chain,
 )
 from tests.integration.replay import GENES
 from tests.integration.test_live_replay import (
     LUAD_RESEARCH_V1,
-    _api_client,
     _events,
     _orchestrator,
 )
@@ -220,23 +216,23 @@ def test_live_deep_slice_creates_e0_and_e1_from_one_explicit_action(runtime, mon
     assert types.index("ELIGIBLE_ACTIONS_COMPUTED") < types.index("FOLLOWUP_STARTED") \
         < types.index("JEV_DEEP_EVIDENCE_JUDGED") < types.index("DOSSIER_CREATED")
 
-
-def test_typed_readers_expose_the_deep_slice_records(runtime, monkeypatch):
-    run_id, summary, repository = _completed_slice(runtime, monkeypatch)
-    candidate = repository.get_candidate(summary["candidate_id"])
-    stored_state = read_candidate_state(repository, runtime[2], candidate["candidate_id"])
-    assert stored_state.state_hash == repository.get_state(candidate["source_state_id"])["state_hash"]
-
-    chain = read_revision_chain(repository, runtime[2], candidate["candidate_id"])
-    assert len(chain) == 2
-    assert chain[0].parent_id is None
-    assert chain[1].parent_id == chain[0].evidence_state_id
-    assert read_evidence(chain[1].artifact.content,
-                         expected_hash=chain[1].record.evidence_hash) == chain[1].evidence
-    assert chain[1].evidence.summary.total == 5
-    assert candidate["latest_evidence_state_id"] == chain[-1].evidence_state_id
-    with pytest.raises(ScientificReadError):
-        read_evidence_record(repository, runtime[2], "not-a-real-evidence-id")
+    decisions = [event for event in _events(repository, run_id)
+                 if event["type"] == "NEXT_MOVE_SELECTED"]
+    assert len(decisions) == 1
+    decision = decisions[0]["data"]
+    assert decision["executed"] is False, "Jev never selects or executes the recorded move"
+    assert decision["policy_version"] == "deep-policy-v2"
+    assert decision["evaluation_id"] == summary["first_step"]["deep_evaluation_id"]
+    assert set(decision["dimensions"]) == {
+        "revision_reliable", "evidence_sufficient_for_next_step", "next_step_warranted",
+        "stopping_more_honest", "dominant_limitation", "checks_contradicted",
+        "eligible_action_ids", "distinct_eligible_action_ids",
+    }
+    assert decision["dimensions"]["eligible_action_ids"] == ["CHECK_REVISION_FAITHFULNESS_V1"]
+    dispatch_event = next(event for event in _events(repository, run_id)
+                          if event["type"] == "NEXT_MOVE_DISPATCHED")
+    assert dispatch_event["data"]["authorized"] is False
+    assert dispatch_event["data"]["dispatched"] is False
 
 
 # ------------------------------------------------------- recorded FOLLOW_UP dispatch
@@ -320,16 +316,6 @@ def test_recorded_follow_up_is_dispatched_once_when_authorized(runtime, monkeypa
     judgements = [event for event in _events(repository, run_id)
                   if event["type"] == "JEV_DEEP_EVIDENCE_JUDGED"]
     assert len(judgements) == 2, "each revision is judged exactly once"
-
-
-def test_revision_faithfulness_can_verify_matching_restated_metrics(runtime, monkeypatch):
-    _, summary, repository = _completed_slice(
-        runtime, monkeypatch, jev_adapter=_followup_adapter(), deep_followup_authorized=True)
-    candidate = repository.get_candidate(summary["candidate_id"])
-    revision = _candidate_chain(runtime, repository, candidate)[2].evidence
-    restated = next(check for check in revision.checks
-                    if check.check_id == "SOURCE_EVIDENCE_RESTATED")
-    assert restated.outcome.value == "VERIFIED"
 
 
 def test_dispatch_respects_the_caps(runtime, monkeypatch):
@@ -561,71 +547,3 @@ def test_deep_judgment_failure_is_contained_and_typed(runtime, monkeypatch):
     assert failed and failed[-1]["data"]["error_code"] == "INVALID_DISTRIBUTION"
     assert failed[-1]["data"]["evidence_state_id"] == summary["first_step"]["evidence_state_id"]
     assert len(repository.list_table("dossiers", run_id)) == 1, "an available revision still produces a dossier"
-
-
-def test_jev_never_selects_or_executes_a_recorded_move(runtime, monkeypatch):
-    run_id, summary, repository = _completed_slice(runtime, monkeypatch)
-    decisions = [event for event in _events(repository, run_id)
-                 if event["type"] == "NEXT_MOVE_SELECTED"]
-    assert len(decisions) == 1
-    decision = decisions[0]["data"]
-    assert decision["executed"] is False
-    assert decision["policy_version"] == "deep-policy-v2"
-    assert decision["evaluation_id"] == summary["first_step"]["deep_evaluation_id"]
-    assert set(decision["dimensions"]) == {
-        "revision_reliable", "evidence_sufficient_for_next_step", "next_step_warranted",
-        "stopping_more_honest", "dominant_limitation", "checks_contradicted",
-        "eligible_action_ids", "distinct_eligible_action_ids",
-    }
-    dispatch = next(event for event in _events(repository, run_id)
-                    if event["type"] == "NEXT_MOVE_DISPATCHED")
-    assert dispatch["data"]["dispatched"] is False
-    assert dispatch["data"]["authorized"] is False
-    assert decision["dimensions"]["eligible_action_ids"] == ["CHECK_REVISION_FAITHFULNESS_V1"]
-
-
-# ---------------------------------------------------------------------------- API
-
-
-def test_deep_slice_is_visible_through_the_api(runtime, monkeypatch):
-    run_id, summary, repository = _completed_slice(runtime, monkeypatch)
-    candidate = repository.get_candidate(summary["candidate_id"])
-    client = _api_client(runtime, monkeypatch)
-
-    evidence = client.get(f"/api/runs/{run_id}/evidence").json()["items"]
-    assert [row["iteration"] for row in evidence] == [0, 1]
-    chain = _candidate_chain(runtime, repository, candidate)
-    detail = client.get(f"/api/evidence/{chain[1].evidence_state_id}")
-    assert detail.status_code == 200
-    payload = detail.json()
-    assert payload["schema_version"] == 4
-    assert payload["kind"] == "EVIDENCE_STATE_PRESENTATION"
-    assert payload["iteration_number"] == 1
-    assert payload["parent_evidence_hash"] == chain[0].record.evidence_hash
-    assert payload["action"]["action_id"] == "CHECK_EVIDENCE_INTEGRITY_V1"
-    assert payload["research_puzzle"]["origin"] == "DETERMINISTIC_ACTION_REGISTRY"
-    assert len(payload["deterministic_observations"]) == 5, "the five integrity checks of E1"
-    assert {item["check_id"] for item in payload["deterministic_observations"]} == INTEGRITY_CHECKS
-    assert payload["quality_and_fragility"]["checks_verified"] == 5
-    assert payload["quality_and_fragility"]["checks_contradicted"] == 0
-    assert payload["provenance"]["response_source_count"] > 0
-    assert detail.headers["x-artifact-sha256"] == chain[1].artifact.sha256
-
-    executions = client.get(f"/api/runs/{run_id}/followups",
-                            params={"candidate_id": candidate["candidate_id"]}).json()["items"]
-    assert [(row["action_id"], row["status"]) for row in executions] == [
-        ("CHECK_EVIDENCE_INTEGRITY_V1", "COMPLETED")]
-    evaluations = client.get(f"/api/runs/{run_id}/evaluations",
-                             params={"purpose": "DEEP"}).json()["items"]
-    assert len(evaluations) == 1
-    assert evaluations[0]["vector"]["input_ref_kind"] == "EVIDENCE_STATE"
-    assert evaluations[0]["vector"]["question_set_version"] == "deep-v1"
-    dossier = repository.list_table("dossiers", run_id)[0]
-    dossier_payload = client.get(f"/api/dossiers/{dossier['dossier_id']}").json()
-    assert dossier_payload["candidate_id"] == candidate["candidate_id"]
-    assert dossier_payload["evidence_state_ids"] == [stored.evidence_state_id for stored in chain]
-    assert dossier_payload["warning"]
-    assert dossier_payload["mode"] == "LIVE"
-    assert dossier_payload["next_moves"] == [
-        {"move": "COMPLETE", "reason_code": "INVESTIGATION_COMPLETE"}]
-    assert dossier_payload["sections"]["deterministic_deep_evidence"]["availability"] == "OBSERVED"

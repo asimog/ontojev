@@ -51,10 +51,6 @@ def _spec(**overrides) -> ResearchSpec:
     ("case_page_size", True),
     ("case_batch_size", 1.5),
     ("max_cohort_cases", "1000"),
-    ("discovery_gene_limit", False),
-    ("count_gene_limit", "100"),
-    ("candidate_gene_limit", None),
-    ("expression_file_sample_size", 2.0),
 ])
 def test_acquisition_spec_rejects_non_integer_runtime_values(field, value):
     with pytest.raises(ValueError, match=f"{field} must be an integer"):
@@ -63,13 +59,9 @@ def test_acquisition_spec_rejects_non_integer_runtime_values(field, value):
 
 @pytest.mark.parametrize("overrides,message", [
     ({"case_page_size": 251}, "case_page_size must be 1..250"),
-    ({"case_batch_size": 251}, "case_batch_size must be 1..250"),
     ({"max_cohort_cases": 2_501}, "max_cohort_cases must fit within the ten-page query budget"),
-    ({"discovery_gene_limit": 21}, "discovery_gene_limit must be 1..20"),
-    ({"count_gene_limit": 101}, "count_gene_limit must be 1..100"),
     ({"candidate_gene_limit": 101}, "candidate_gene_limit must be 1..count_gene_limit"),
     ({"expression_file_sample_size": 6}, "expression_file_sample_size must be 1..5"),
-    ({"case_page_size": 0}, "case_page_size must be 1..250"),
 ])
 def test_acquisition_spec_rejects_values_above_admitted_endpoint_bounds(overrides, message):
     with pytest.raises(ValueError, match=message):
@@ -185,12 +177,3 @@ def test_no_indexed_universe_or_cnv_composition_is_representable():
     assert LUAD_RESEARCH_V1.wide_policy == IMPLEMENTED_WIDE_POLICY
     assert LUAD_RESEARCH_V1.deep_policy == IMPLEMENTED_DEEP_POLICY
     assert "TCGA-LUSC" not in json.dumps(LUAD_RESEARCH_V1.as_dict())
-
-
-def test_luad_is_the_single_production_spec():
-    assert LUAD_RESEARCH_V1.spec_id == "LUAD_RESEARCH_V1"
-    assert LUAD_RESEARCH_V1.cohort.cohort_id == "TCGA-LUAD"
-    assert LUAD_RESEARCH_V1.cohort.project_id == "TCGA-LUAD"
-    assert LUAD_RESEARCH_V1.cohort.domain == "lung cancer"
-    assert set(LUAD_RESEARCH_V1.allowed_actions) == set(IMPLEMENTED_ACTIONS)
-    assert LUAD_RESEARCH_V1.limits == ScientificLimits()

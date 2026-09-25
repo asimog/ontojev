@@ -7,7 +7,8 @@ const API_BASE = process.env.NEXT_PUBLIC_CANCERJEV_API_URL ?? "http://127.0.0.1:
 const REPOSITORY_ROOT = path.resolve(process.cwd(), "..", "..");
 
 function runDemo() {
-  return spawn("python", ["-m", "cancerjev", "run", "--fixture", "demo"], REPOSITORY_ROOT, {
+  return spawn("python", ["-m", "cancerjev", "run", "--fixture", "demo"], {
+    cwd: REPOSITORY_ROOT,
     env: { ...process.env, CANCERJEV_FIXTURE_STAGE_DELAY_MS: "0" },
     stdio: "pipe",
   });
@@ -50,9 +51,18 @@ async function assertDurableCurrentStory(page: Page, request: APIRequestContext,
   await expect(page.getByText("COMPLETED", { exact: true }).first()).toBeVisible({
     timeout: 120_000,
   });
+  // RunDetail reads child records once at mount; reload so the committed story (states,
+  // evidence, dossier) is rebuilt from the completed run rather than the in-flight one.
+  await page.reload();
+  await expect(page.getByText("COMPLETED", { exact: true }).first()).toBeVisible({
+    timeout: 120_000,
+  });
   await expect(page.locator('[data-testid="event-feed"] details').first()).toBeVisible();
-  await expect(page.getByTestId("deterministic-states")).toBeVisible();
-  await expect(page.getByTestId("deterministic-states")).toContainText("GENEONE");
+  // Fixture mode renders the synthetic deterministic-evidence section (the LIVE-only
+  // DeterministicStatePanel is not part of this workflow).
+  await expect(page.getByText("DETERMINISTIC / FIXTURE EVIDENCE")).toBeVisible();
+  await expect(page.getByText(/synthetic statistical states/)).toBeVisible();
+  await expect(page.getByText("GENEONE").first()).toBeVisible();
 
   const states = (await request
     .get(`${API_BASE}/api/runs/${runId}/states`)
@@ -93,10 +103,8 @@ test("shared typed demo run is observed end to end in the browser", async ({ pag
     await page.goto(`/runs/${runId}`);
     await assertDurableCurrentStory(page, request, runId);
 
-    // Durable restart: reopening the run rebuilds the same committed story.
+    // Durable restart: reloading the dossier rebuilds the same committed story.
     await page.reload();
-    await expect(page.getByText("COMPLETED", { exact: true }).first()).toBeVisible();
-    await page.getByRole("link", { name: "Open dossier" }).click();
     await expect(page.getByRole("heading", { name: "SYNTHETIC DEMONSTRATION" })).toBeVisible();
 
     const served = (await request

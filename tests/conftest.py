@@ -34,3 +34,22 @@ def runtime(tmp_path):
     database.bootstrap()
     return settings, Repository(database), ArtifactStore(tmp_path)
 
+
+# The everyday gate: focused contract/invariant tests plus one core offline replay.
+# Run with ``python -m pytest -m fast``. Everything else (heavy multi-run integration,
+# browser acceptance and live providers) stays available through the full/offline commands.
+_FAST_PREFIXES = ("tests/contracts/", "tests/science/", "tests/jev/", "tests/unit/")
+_FAST_FILES = {
+    "tests/test_identity.py",
+    "tests/test_fixtures.py",
+    "tests/test_domain_events.py",
+    "tests/test_persistence_guards.py",
+}
+
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        node_id = item.nodeid.replace("\\", "/")
+        if node_id.startswith(_FAST_PREFIXES) or node_id.split("::", 1)[0] in _FAST_FILES:
+            item.add_marker(pytest.mark.fast)
+

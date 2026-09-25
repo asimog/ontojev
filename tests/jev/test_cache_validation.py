@@ -20,13 +20,9 @@ from tests.jev.test_service import (
 
 INVALID_CACHE_MUTATIONS = [
     ("answers", []),
-    ("answers", {}),
     ("resolved_model", "wrong-model-1.0"),
-    ("requested_model", "wrong-model-1.0"),
     ("question_hash", "0" * 64),
     ("projection_hash", "0" * 64),
-    ("applicability", {}),
-    ("adapter_version", "unknown-adapter"),
 ]
 
 

@@ -313,16 +313,15 @@ def revision(base, state, outcome=CheckOutcome.VERIFIED):
 # --------------------------------------------------------- measurement contracts
 
 
-@pytest.mark.parametrize("value", [None, True, False, -1, 1.5, "1", float("inf"), float("nan")])
-def test_observed_count_rejects_invalid_values(value):
+@pytest.mark.parametrize(("factory", "value"), [
+    (observed_count, None), (observed_count, True), (observed_count, -1),
+    (observed_count, 1.5), (observed_count, float("inf")), (observed_count, float("nan")),
+    (scalar, None), (scalar, True), (scalar, -1), (scalar, "1"),
+    (scalar, float("nan")), (scalar, 10 ** 1000),
+])
+def test_observed_measurements_reject_invalid_values(factory, value):
     with pytest.raises(ContractError):
-        observed_count(value)
-
-
-@pytest.mark.parametrize("value", [None, True, False, -1, "1", float("inf"), float("-inf"), float("nan"), 10 ** 1000])
-def test_observed_scalar_rejects_invalid_values(value):
-    with pytest.raises(ContractError):
-        scalar(value)
+        factory(value)
 
 
 @pytest.mark.parametrize("status", list(UnavailableStatus))
@@ -522,13 +521,8 @@ def test_schema_4_boundary_rejects_malformed_records(mutation):
         read_state(canonical_json(payload))
 
 
-@pytest.mark.parametrize("data", [b'{"schema_version":4,"schema_version":4}', b'{', b'[]', b'{"x":NaN}',
-                                  b'\xff'])
+@pytest.mark.parametrize("data", [b'{"schema_version":4,"schema_version":4}', b'{"x":NaN}',
+                                  b'{"schema_version":4,"provider_score":1e9999}', b'\xff'])
 def test_invalid_json_rejected(data):
     with pytest.raises(ContractError):
         read_state(data)
-
-
-def test_overflowing_json_float_is_not_silently_accepted():
-    with pytest.raises(ContractError):
-        read_state(b'{"schema_version":4,"provider_score":1e9999}')

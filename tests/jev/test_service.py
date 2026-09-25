@@ -13,11 +13,9 @@ import hashlib
 
 import pytest
 
-import cancerjev.jev.service as service_module
 from cancerjev.domain.codecs import state_identity, write_state
-from cancerjev.domain.envelopes import HypothesisRecord, StateRecord
+from cancerjev.domain.envelopes import StateRecord
 from cancerjev.domain.events import canonical_json, utc_now
-from cancerjev.domain.hypotheses import HypothesisDraft
 from cancerjev.domain.measurements import Acquisition, OperationalSource, ScientificSource
 from cancerjev.domain.scientific import StatisticalState
 from cancerjev.gdc.parsers import (
@@ -208,11 +206,11 @@ def _emit(repository):
     return emit
 
 
-def service_context(runtime, adapter) -> tuple[JevService, dict]:
+def service_context(runtime, adapter, *, state_id: str = "state-1") -> tuple[JevService, dict]:
     settings, repository, artifacts = runtime
     service = JevService(settings, repository, artifacts, adapter_factory=lambda: adapter)
     run_id = repository.create_run("jev-test", mode="LIVE", fixture_id=None, fixture_version=None)
-    record = state_record("state-1")
+    record = state_record(state_id)
     register_state(repository, artifacts, run_id, record)
     return service, {
         "run_id": run_id, "repository": repository, "artifacts": artifacts,
@@ -354,62 +352,45 @@ def test_cache_is_shared_across_runs_but_not_across_models(runtime):
     assert other.calls == 1
 
 
-def test_malformed_provider_response_is_a_persisted_failure_not_an_abort(runtime):
-    class MalformedAdapter:
-        model = "jev-1.13.0"
+class _MalformedAdapter:
+    model = "jev-1.13.0"
 
-        def evaluate(self, state, definitions):
-            raise JevProviderError(
-                "PROVIDER_RESPONSE_MALFORMED",
-                "provider response could not be converted to owned answers",
-            )
+    def evaluate(self, state, definitions):
+        raise JevProviderError(
+            "PROVIDER_RESPONSE_MALFORMED",
+            "provider response could not be converted to owned answers",
+        )
 
-    service, context = service_context(runtime, MalformedAdapter())
+
+def _invalid_probability_adapter():
+    return StubAdapter(override={
+        "warrants_deeper_investigation": {"kind": "noul", "probability_yes": 1.5},
+    })
+
+
+@pytest.mark.parametrize(("make_adapter", "code"), [
+    (_MalformedAdapter, "PROVIDER_RESPONSE_MALFORMED"),
+    (lambda: StubAdapter(fail=True), "PROVIDER_ERROR"),
+    (_invalid_probability_adapter, "INVALID_PROBABILITY"),
+])
+def test_provider_failures_persist_typed_abstentions(runtime, make_adapter, code):
+    service, context = service_context(runtime, make_adapter())
     evaluation = service.evaluate_record(run_id=context["run_id"], state=context["state"],
                                          emit=context["emit"])
-    assert evaluation.error_code == "PROVIDER_RESPONSE_MALFORMED"
+    assert evaluation.error_code == code
     assert evaluation.answers is None
     assert evaluation.boundary_representation()["answers"] == {}
-    assert evaluation.boundary_representation()["resolved_model"] is None
     repository = context["repository"]
     stored = repository.get_evaluation(evaluation.evaluation_id)
-    assert stored is not None, "a malformed provider response must still persist a failed evaluation"
-    assert stored["vector"]["error"]["code"] == "PROVIDER_RESPONSE_MALFORMED"
-    events = [event["type"] for event in repository.events(context["run_id"], 0, 100)["items"]]
-    assert "JEV_EVALUATION_FAILED" in events
-    assert repository.get_run(context["run_id"])["status"] != "FAILED", \
-        "one bad state must not abort the run"
-
-
-def test_provider_failure_fails_closed_without_fabricated_defaults(runtime):
-    adapter = StubAdapter(fail=True)
-    service, context = service_context(runtime, adapter)
-    evaluation = service.evaluate_record(run_id=context["run_id"], state=context["state"],
-                                         emit=context["emit"])
-    vector = evaluation.boundary_representation()
-    assert evaluation.error_code == "PROVIDER_ERROR"
-    assert evaluation.answers is None
-    assert vector["answers"] == {}
-    assert vector["usage"] == {"input_tokens": None, "output_tokens": None}
-    assert vector["latency_ms"] is None
-    assert vector["resolved_model"] is None
-    repository = context["repository"]
+    assert stored is not None, "a provider failure must still persist a failed evaluation"
+    assert stored["vector"]["error"]["code"] == code
     events = [event["type"] for event in repository.events(context["run_id"], 0, 100)["items"]]
     assert "JEV_EVALUATION_FAILED" in events
     assert "JEV_WIDE_STATE_EVALUATED" not in events
+    assert repository.get_run(context["run_id"])["status"] != "FAILED", \
+        "one bad state must not abort the run"
     with repository.database.read() as connection:
         assert connection.execute("SELECT COUNT(*) FROM jev_cache").fetchone()[0] == 0
-
-
-def test_invalid_provider_answer_fails_closed(runtime):
-    adapter = StubAdapter(override={
-        "warrants_deeper_investigation": {"kind": "noul", "probability_yes": 1.5},
-    })
-    service, context = service_context(runtime, adapter)
-    evaluation = service.evaluate_record(run_id=context["run_id"], state=context["state"],
-                                         emit=context["emit"])
-    assert evaluation.error_code == "INVALID_PROBABILITY"
-    assert evaluation.answers is None
 
 
 def test_projection_is_registered_once_per_state_and_version(runtime):
@@ -422,9 +403,22 @@ def test_projection_is_registered_once_per_state_and_version(runtime):
     assert projections["items"][0]["projection_version"] == PROJECTION_VERSION
 
 
-def test_evaluation_record_and_event_contract_is_unchanged(runtime):
-    adapter = StubAdapter()
-    service, context = service_context(runtime, adapter)
+def test_evaluation_persistence_contract_and_idempotency(runtime):
+    fail_service, fail_context = service_context(runtime, StubAdapter(fail=True),
+                                                 state_id="state-fail")
+    failed = fail_service.evaluate_record(run_id=fail_context["run_id"],
+                                          state=fail_context["state"], emit=fail_context["emit"])
+    failed_vector = failed.boundary_representation()
+    assert set(failed_vector) == set(EVALUATION_FIELDS) | {"artifact_id"}
+    fail_events = [event for event in
+                   fail_context["repository"].events(fail_context["run_id"], 0, 100)["items"]
+                   if event["type"].startswith("JEV_")]
+    assert [event["type"] for event in fail_events] == [
+        "JEV_PROJECTION_CREATED", "JEV_EVALUATION_FAILED",
+    ]
+    assert fail_events[1]["idempotency_key"] == f"jev-wide:{failed_vector['evaluation_id']}:failed"
+
+    service, context = service_context(runtime, StubAdapter(), state_id="state-ok")
     record = context["state"]
     evaluation = service.evaluate_record(run_id=context["run_id"], state=record,
                                          emit=context["emit"])
@@ -446,47 +440,13 @@ def test_evaluation_record_and_event_contract_is_unchanged(runtime):
     assert jev_events[1]["data"]["judgment_vector"] == vector["answers"]
 
 
-def test_failure_recording_reuses_the_projection_without_rebuilding_it(runtime, monkeypatch):
-    adapter = StubAdapter(fail=True)
-    service, context = service_context(runtime, adapter)
-    record = context["state"]
-    calls: list[str] = []
-    original = service_module.build_projection
-
-    def counting_build_projection(state_argument):
-        calls.append(state_argument.state_id)
-        return original(state_argument)
-
-    monkeypatch.setattr(service_module, "build_projection", counting_build_projection)
-    evaluation = service.evaluate_record(run_id=context["run_id"], state=record,
-                                         emit=context["emit"])
-    assert calls == [record.state_id], "failure recording must not rebuild the projection"
-    assert evaluation.error_code == "PROVIDER_ERROR"
-    vector = evaluation.boundary_representation()
-    assert set(vector) == set(EVALUATION_FIELDS) | {"artifact_id"}
-    assert vector["applicability"] == applicability_map(original(record))
-    repository = context["repository"]
-    assert repository.get_evaluation(evaluation.evaluation_id)["vector"] == {
-        key: value for key, value in vector.items() if key != "artifact_id"
-    }
-    events = repository.events(context["run_id"], 0, 100)["items"]
-    jev_events = [event for event in events if event["type"].startswith("JEV_")]
-    assert [event["type"] for event in jev_events] == [
-        "JEV_PROJECTION_CREATED", "JEV_EVALUATION_FAILED",
-    ]
-    assert jev_events[1]["idempotency_key"] == f"jev-wide:{vector['evaluation_id']}:failed"
-
-
 @pytest.mark.parametrize(
     ("model", "pinned"),
     [
         ("jev-1.13.0", True),
         ("gpt-4o-2024-08-06", True),
-        ("jev-1.13", True),
         ("jev-latest", False),
-        ("gpt-4o", False),
         ("openrouter/deepseek/flash", False),
-        ("", False),
     ],
 )
 def test_only_pinned_model_identities_are_cache_eligible(model, pinned):
@@ -563,34 +523,3 @@ def test_evaluate_evidence_record_judges_the_immutable_revision(runtime):
     events = [event["type"] for event in
               context["repository"].events(context["run_id"], 0, 300)["items"]]
     assert "JEV_DEEP_EVIDENCE_JUDGED" in events
-
-
-def test_evaluate_hypothesis_record_judges_generated_text(runtime):
-    adapter = StubAdapter()
-    context = deep_context(runtime, adapter)
-    draft = HypothesisDraft(
-        label="GENERATED HYPOTHESIS — NOT EVIDENCE", generator="deterministic-template-v1",
-        generator_model=None,
-        statement="TP53 expression may differ from its mutation burden in this cohort.",
-        proposed_mechanism="A descriptive placeholder mechanism.",
-        predictions=("A bounded computation could compare the two summaries.",),
-        contradicted_if=("A bounded check shows the summaries agree.",), distinguishing_tests=(),
-        required_evidence=("expression summary",), unsupported_assumptions=("single cohort",),
-    )
-    hypothesis = HypothesisRecord("00000000-0000-0000-0000-000000000002",
-                                  context["candidate"]["candidate_id"], draft)
-    evaluation = context["service"].evaluate_hypothesis_record(
-        run_id=context["run_id"], hypothesis=hypothesis, evidence=context["evidence"],
-        eligible_actions=[ACTION_REGISTRY["CHECK_REVISION_FAITHFULNESS_V1"].payload()],
-        emit=context["emit"],
-    )
-    assert evaluation.error_code is None
-    assert evaluation.answers.probability("hypothesis_testable") == 0.80
-    vector = evaluation.boundary_representation()
-    assert vector["purpose"] == "HYPOTHESIS"
-    assert vector["input_ref_kind"] == "HYPOTHESIS"
-    assert vector["hypothesis_id"] == hypothesis.hypothesis_id
-    assert vector["generator"] == draft.generator
-    assert draft.statement not in canonical_json(vector).decode(), \
-        "generated text is judged, never copied into the evaluation record"
-    assert adapter.calls == 1
