@@ -10,6 +10,7 @@ from pathlib import Path
 from cancerjev.cli.console import render_event, render_json_event
 from cancerjev.config import Settings, load_local_env
 from cancerjev.domain.discovery import (
+    CNV_CASE_SHARD_SIZE,
     DISCOVERY_RUN_MAX_PAGES_PER_QUERY,
     DISCOVERY_RUN_MAX_REQUESTS,
     EXPRESSION_RUN_MAX_BYTES,
@@ -84,14 +85,22 @@ def parser() -> argparse.ArgumentParser:
     )
     discover_cnv = commands.add_parser(
         "discover-cnv",
-        help="bounded Stage 6 CNV occurrence discovery for one Stage 4 survivor result",
+        help="bounded independent CNV case-shard scan of the project occurrence index",
     )
     discover_cnv.add_argument("--live", action="store_true",
                               help="real bounded open-access GDC CNV discovery")
-    discover_cnv.add_argument(
-        "--stage4-run", required=True,
-        help="completed Stage 4 run whose immutable survivor result is the only CNV gene input",
+    discover_cnv.add_argument("--case-shard", type=int, required=True,
+                              help="zero-based case shard index of the declared cohort frame")
+    discover_cnv.add_argument("--case-shard-size", type=int, default=CNV_CASE_SHARD_SIZE,
+                              help="declared operational case-shard size (default 25)")
+    cnv_merge = commands.add_parser(
+        "cnv-merge",
+        help="merge every required CNV shard evidence artifact into one project call set",
     )
+    cnv_merge.add_argument("--shards", type=int, required=True,
+                           help="number of case shards that must all exist before merging")
+    cnv_merge.add_argument("--case-shard-size", type=int, default=CNV_CASE_SHARD_SIZE,
+                           help="declared operational case-shard size (default 25)")
     show = commands.add_parser("show")
     show.add_argument("run_id")
     show.add_argument("--events", action="store_true")
@@ -289,40 +298,24 @@ def _discover_expression(
 
 
 def _discover_cnv(
-    settings: Settings, repository: Repository, artifacts: ArtifactStore, stage4_run_id: str,
+    settings: Settings, repository: Repository, artifacts: ArtifactStore, case_shard: int,
+    case_shard_size: int,
 ) -> None:
-    from cancerjev.domain.codecs import discovery_identity, read_discovery
-    from cancerjev.research.cnv_discovery import run_cnv_discovery
+    from cancerjev.research.cnv_discovery import run_cnv_shard_scan
     from cancerjev.research.specs import LUAD_RESEARCH_V1
 
-    source_run = repository.get_run(stage4_run_id)
-    if source_run is None or source_run["status"] != "COMPLETED":
-        raise SystemExit("--stage4-run must identify a completed Stage 4 run")
-    events = repository.events(stage4_run_id, 0, 500)["items"]
-    completed = [event for event in events if event["type"] == "DISCOVERY_COMPLETED"]
-    if len(completed) != 1:
-        raise SystemExit("--stage4-run must contain exactly one DISCOVERY_COMPLETED event")
-    artifact_id = completed[0]["data"].get("artifact_id")
-    if not isinstance(artifact_id, str):
-        raise SystemExit("Stage 4 completion event has no result artifact")
-    metadata = repository.artifact(artifact_id)
-    if metadata is None:
-        raise SystemExit("Stage 4 result artifact registration is missing")
-    raw = artifacts.read(metadata["relative_path"], metadata["sha256"])
-    mutation_result = read_discovery(raw)
-    mutation_hash = discovery_identity(mutation_result)
     spec = LUAD_RESEARCH_V1
     caps = BudgetCaps(
-        max_requests=settings.gdc_max_requests, max_bytes=settings.gdc_max_bytes,
+        max_requests=DISCOVERY_RUN_MAX_REQUESTS, max_bytes=OCCURRENCE_SCAN_MAX_BYTES,
         per_response_bytes=settings.gdc_per_response_bytes,
+        max_pages_per_query=DISCOVERY_RUN_MAX_PAGES_PER_QUERY,
         timeout_seconds=settings.gdc_timeout_seconds,
     )
     run_id = repository.create_run(
-        "cnv-discovery-worker", mode="LIVE", fixture_id=None, fixture_version=None,
-        scope={"purpose": "CNV_DISCOVERY", "spec_id": spec.spec_id,
+        "cnv-shard-scan-worker", mode="LIVE", fixture_id=None, fixture_version=None,
+        scope={"purpose": "CNV_SHARD_SCAN", "spec_id": spec.spec_id,
                "cohort": spec.cohort.cohort_id, "project_id": spec.cohort.project_id,
-               "stage4_run_id": stage4_run_id, "mutation_discovery_hash": mutation_hash,
-               "cnv_discovery": asdict(spec.cnv_discovery)},
+               "case_shard": case_shard, "case_shard_size": case_shard_size},
     )
 
     def emit(event_type: str, key: str, message: str, **kwargs) -> None:
@@ -330,27 +323,68 @@ def _discover_cnv(
                                         message=message, **kwargs)
         render_event(event)
 
-    emit("RUN_STARTED", "run:started", "Bounded CNV discovery run started.",
-         data={"mode": "LIVE", "purpose": "CNV_DISCOVERY",
-               "stage4_run_id": stage4_run_id, "mutation_discovery_hash": mutation_hash,
-               "research_spec": spec.as_dict()})
+    emit("RUN_STARTED", "run:started", f"CNV case shard {case_shard} scan started.",
+         data={"mode": "LIVE", "purpose": "CNV_SHARD_SCAN", "case_shard": case_shard,
+               "case_shard_size": case_shard_size, "research_spec": spec.as_dict()})
     transport = GDCTransport(repository, artifacts, RunBudget(caps=caps), run_id, emit,
                              cache_enabled=settings.gdc_cache_enabled)
     try:
-        result = run_cnv_discovery(
-            run_id, transport, repository, artifacts, emit, spec, mutation_result)
+        evidence = run_cnv_shard_scan(
+            run_id, transport, repository, artifacts, emit, spec, shard_index=case_shard,
+            case_shard_size=case_shard_size)
     except (TransportError, ParserError, LiveRunError, ContractError) as exc:
         code = getattr(exc, "code", type(exc).__name__)
-        emit("RUN_FAILED", "run:failed", f"CNV discovery failed: {code}.", level="error",
+        emit("RUN_FAILED", "run:failed", f"CNV shard scan failed: {code}.", level="error",
              data={"status": "FAILED", "reason_code": str(code), "detail": str(exc)})
         return
     totals = repository.gdc_run_totals(run_id)
     emit("RUN_COMPLETED", "run:completed",
-         f"CNV discovery completed for {len(result.entries)} survivor(s).",
-         data={"status": "COMPLETED", "reason_code": "CNV_DISCOVERY_COMPLETE",
-               "coverage": "COMPLETE_OR_EXPLICITLY_UNAVAILABLE_PER_SURVIVOR",
-               "genes": len(result.entries), "gdc_attempts": totals["attempts"],
+         f"CNV case shard {case_shard} completed over {len(evidence.case_ids)} case(s).",
+         data={"status": "COMPLETED", "reason_code": "CNV_SHARD_SCAN_COMPLETE",
+               "coverage": "COMPLETE_SHARD", "shard_index": case_shard,
+               "cases": len(evidence.case_ids), "genes": len(evidence.genes),
+               "records": evidence.records, "gdc_attempts": totals["attempts"],
                "gdc_bytes": totals["bytes"], "gdc_cache_hits": totals["cache_hits"]})
+
+
+def _cnv_merge(
+    settings: Settings, repository: Repository, artifacts: ArtifactStore, shards: int,
+    case_shard_size: int,
+) -> None:
+    from cancerjev.research.cnv_discovery import run_cnv_shard_merge
+    from cancerjev.research.specs import LUAD_RESEARCH_V1
+
+    spec = LUAD_RESEARCH_V1
+    run_id = repository.create_run(
+        "cnv-merge-worker", mode="LIVE", fixture_id=None, fixture_version=None,
+        scope={"purpose": "CNV_PROJECT_SCAN", "spec_id": spec.spec_id,
+               "cohort": spec.cohort.cohort_id, "project_id": spec.cohort.project_id,
+               "shards": shards, "case_shard_size": case_shard_size},
+    )
+
+    def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+        event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
+                                        message=message, **kwargs)
+        render_event(event)
+
+    emit("RUN_STARTED", "run:started",
+         f"Merged CNV project scan started over {shards} shard(s).",
+         data={"mode": "LIVE", "purpose": "CNV_PROJECT_SCAN", "shards": shards})
+    try:
+        result = run_cnv_shard_merge(
+            run_id, repository, artifacts, emit, spec, expected_shards=shards,
+            case_shard_size=case_shard_size)
+    except (LiveRunError, ContractError) as exc:
+        code = getattr(exc, "code", type(exc).__name__)
+        emit("RUN_FAILED", "run:failed", f"CNV project merge failed: {code}.", level="error",
+             data={"status": "FAILED", "reason_code": str(code), "detail": str(exc)})
+        return
+    emit("RUN_COMPLETED", "run:completed",
+         f"Merged CNV project scan completed for {len(result.calls)} observed gene(s).",
+         data={"status": "COMPLETED", "reason_code": "CNV_PROJECT_SCAN_COMPLETE",
+               "coverage": "COMPLETE_PROJECT", "genes": len(result.calls),
+               "retained": len(result.retained_ids),
+               "jev_review": len(result.jev_review_ids), "shards": shards})
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -453,7 +487,16 @@ def main(argv: list[str] | None = None) -> None:
         try:
             with ResearchOwnership(settings.lock_path):
                 repository.recover_interrupted()
-                _discover_cnv(settings, repository, artifacts, args.stage4_run)
+                _discover_cnv(settings, repository, artifacts, args.case_shard,
+                              args.case_shard_size)
+        except OwnershipError as exc:
+            raise SystemExit(str(exc)) from exc
+        return
+    if args.command == "cnv-merge":
+        try:
+            with ResearchOwnership(settings.lock_path):
+                repository.recover_interrupted()
+                _cnv_merge(settings, repository, artifacts, args.shards, args.case_shard_size)
         except OwnershipError as exc:
             raise SystemExit(str(exc)) from exc
         return
