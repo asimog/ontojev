@@ -113,7 +113,7 @@ are explicit gates/deferred work, not fields filled by assumed biology.
 
 LATER: strict cursor scalar/size validation; operational clock injection only if needed;
 backup/retention; OpenRouter resolved immutable model identity; whole-request GDC deadlines;
-remove the unused `EvaluationContext` seam when touched; per-event payload shape validation.
+per-event payload shape validation.
 Do not build repository hierarchies, universal lane registries, DI frameworks, workflow/agent
 engines, microservices, broad data mirrors or arbitrary provider-query tools. Ignore stylistic
 dictionary counts, dynamic ID maps, boundary JSON, readable helpers, operational UUIDs and the

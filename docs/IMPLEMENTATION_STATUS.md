@@ -72,7 +72,9 @@ GDC open-access API -> strict parsers -> typed acquisition/lane records
 `legacy_codecs.py`; dictionary scientific identity payloads; `state_summary.py` /
 `ComputedStatisticalState` / `StateSummary`; `LegacyArtifact` / `LegacyMetric` /
 `LegacyPopulation`; `build_statistical_state`; schema-1/2/3 readers; the `DemoOrchestrator`
-independent Phase-1 engine and fake actions (`DROP_INFLUENTIAL_FIXTURE_POINTS_V1`);
+independent Phase-1 engine (the surviving name is only a 63-line fixture-mode wrapper that
+constructs `LiveOrchestrator` with `FixtureTransport` + `FixtureJevAdapter`; there is no
+second execution engine) and fake actions (`DROP_INFLUENTIAL_FIXTURE_POINTS_V1`);
 `ResearchSpecV2` and lane/universe composition contracts; the retired handoff/plan/audit
 documents (`STAGE_01_HANDOFF`, `STAGE_02_HANDOFF`, `STAGE_03_HANDOFF`, `PHASE_3_PLAN`,
 `PHASE_4_READINESS_PLAN`, `PYTHON_CORE_REVIEW`, `CODEBASE_AUDIT_2026-09-23`,

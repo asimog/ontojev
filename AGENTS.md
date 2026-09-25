@@ -41,7 +41,9 @@ instructions override implementation steps embedded in reference documents.
 - Deleted architecture (git history is the archive): `legacy_codecs.py`, dictionary scientific
   identity payloads, `state_summary.py` / `ComputedStatisticalState` / `StateSummary`,
   `LegacyArtifact` / `LegacyMetric` / `LegacyPopulation`, `build_statistical_state`,
-  schema-1/2/3 readers, the `DemoOrchestrator` independent engine and fake actions
+  schema-1/2/3 readers, the `DemoOrchestrator` independent engine (the surviving name is only
+  a fixture-mode wrapper that constructs `LiveOrchestrator` with `FixtureTransport` +
+  `FixtureJevAdapter`) and fake actions
   (`DROP_INFLUENTIAL_FIXTURE_POINTS_V1`), `ResearchSpecV2`/lane/universe composition contracts,
   and the retired handoff/plan/audit documents. Do not reintroduce them.
 - Still absent: offline autoresearch (needs a labelled historical corpus and human review), a

@@ -74,8 +74,8 @@ substitute for the Python offline suite and vice versa.
   malformed schemas/values/populations, corruption refusal and offline E0/E1/E2 replay with
   explicit event ordering.
 - Lane composition and typed flow: independent lane availability, explicit zero versus absent
-  bucket, row/batch permutation invariance, provider-summary separation, typed/legacy projection
-  equality, typed cache reuse, revision binding and check-summary consistency.
+   bucket, row/batch permutation invariance, provider-summary separation, typed projection
+   and admission, typed cache reuse, revision binding and check-summary consistency.
 - Storage/cache/dossier hardening: corrupted bytes/metadata/bindings, unknown schemas,
   authoritative-latest refusal (no earlier-revision fallback), unusable cache without provider
   fallback, and strict generated-text bounds (unknown fields and unknown action IDs rejected).
