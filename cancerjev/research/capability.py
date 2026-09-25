@@ -213,6 +213,7 @@ def build_cohort_capability(
         required_present = (required_types is None
                             or bool(required_types & set(facets.facet("data_type"))))
         method = MODALITY_METHODS.get(modality)
+        mechanism: str | None
         if source_present and required_present and method is not None:
             availability = CapabilityAvailability.AVAILABLE
             mechanism, extra_limitations = method
@@ -262,8 +263,9 @@ def discover_cohort_capability(
     """Three bounded open-access requests: status, one project, one file-facet aggregate."""
     status_response = transport.request(status_request())
     status = parse_status(status_response.body, response_meta(status_response, None))
+    release = status.data_release or "UNVERIFIED_RELEASE"
     project_response = transport.request(cohort_project_request(project_id))
-    project_meta = response_meta(project_response, status.data_release)
+    project_meta = response_meta(project_response, release)
     projects = parse_projects(project_response.body, project_meta)
     if len(projects) != 1 or projects[0].project_id != project_id:
         raise CapabilityError(
@@ -271,11 +273,11 @@ def discover_cohort_capability(
             f"project {project_id} did not resolve to exactly one open record",
         )
     facets_response = transport.request(files_capability_request(project_id))
-    facets_meta = response_meta(facets_response, status.data_release)
+    facets_meta = response_meta(facets_response, release)
     facets = parse_file_facets(facets_response.body, facets_meta)
     project = projects[0]
     sources = tuple(
-        response_operational_source(response, release=status.data_release).source
+        response_operational_source(response, release=release).source
         for response in (status_response, project_response, facets_response)
     )
     warnings = tuple(
@@ -290,7 +292,7 @@ def discover_cohort_capability(
     return build_cohort_capability(
         cohort_id=cohort_id or project_id,
         project_id=project_id,
-        release=status.data_release,
+        release=release,
         release_commit=status.commit,
         data_categories=tuple(project.data_categories),
         facets=facets,

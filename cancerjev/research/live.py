@@ -278,11 +278,12 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
             if any(state.state.quality.acquisition is not Acquisition.COMPLETE for state in states):
                 coverage = "PARTIAL"
             if self.jev_service is not None:
+                jev_service = self.jev_service
                 wide_result = self._stage(
                     run_id, "JEV_WIDE",
                     lambda: run_wide_evaluation(
                         run_id=run_id, states=states, coverage=coverage,
-                        repository=self.repository, jev_service=self.jev_service,
+                        repository=self.repository, jev_service=jev_service,
                         emit=self._event, publish_json=self._publish_json,
                         max_states=self.settings.jev_max_states,
                     ),
