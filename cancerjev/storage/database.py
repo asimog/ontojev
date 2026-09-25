@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 IMMUTABLE_TABLES = (
     "run_events", "artifacts", "statistical_states", "evidence_states",
@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS research_runs(
  created_at TEXT NOT NULL, started_at TEXT, ended_at TEXT, worker_id TEXT NOT NULL,
  outcome_reason TEXT, coverage TEXT NOT NULL DEFAULT 'PARTIAL',
  counters_json TEXT NOT NULL, usage_json TEXT NOT NULL, scope_json TEXT NOT NULL,
- stages_json TEXT NOT NULL DEFAULT '[]'
+ stages_json TEXT NOT NULL DEFAULT '[]',
+ execution_ownership TEXT NOT NULL DEFAULT 'SYSTEM_AUTONOMOUS'
 );
 CREATE INDEX IF NOT EXISTS idx_runs_created ON research_runs(created_at DESC, run_id DESC);
 CREATE TABLE IF NOT EXISTS run_events(

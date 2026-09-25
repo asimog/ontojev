@@ -18,6 +18,7 @@ from cancerjev.domain.discovery import (
     OCCURRENCE_SCAN_MAX_BYTES,
 )
 from cancerjev.domain.measurements import ContractError
+from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.gdc.capture import CaptureSink, run_contract_probe
 from cancerjev.gdc.parsers import ParserError
 from cancerjev.gdc.transport import BudgetCaps, GDCTransport, RunBudget, TransportError
@@ -38,6 +39,8 @@ def parser() -> argparse.ArgumentParser:
         mode = command.add_mutually_exclusive_group()
         mode.add_argument("--fixture", choices=["demo"])
         mode.add_argument("--live", action="store_true", help="real bounded open-access GDC sweep")
+        command.add_argument("--researcher", action="store_true",
+                             help="mark the run as RESEARCHER_RUN (required for operator deep flags)")
         command.add_argument("--jev", action="store_true",
                              help="wide Jev evaluation over real states (requires TYPESAFE_API_KEY)")
         command.add_argument("--deep-candidate", action="append", default=None,
@@ -413,6 +416,9 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit("--deep-action requires --deep-candidate (an action is selected for one candidate).")
         if deep_action not in ACTION_REGISTRY:
             raise SystemExit(f"Unknown action id: {deep_action}. Registered: {', '.join(sorted(ACTION_REGISTRY))}")
+    if (deep_candidate or deep_action or deep_followup or deep_hypotheses) \
+            and not getattr(args, "researcher", False):
+        raise SystemExit("operator deep flags require --researcher (autonomous runs reject operator overrides).")
     if args.command in {"run", "worker"} and not live and getattr(args, "fixture", None) != "demo":
         raise SystemExit("Choose --fixture demo for the offline demonstration or --live for a real open-access GDC sweep.")
     if args.command in {"discover", "discover-expression", "discover-cnv"} and not live:
@@ -528,6 +534,10 @@ def main(argv: list[str] | None = None) -> None:
                                                 deep_action_id=deep_action,
                                                 deep_followup_authorized=deep_followup,
                                                 deep_hypotheses_requested=deep_hypotheses,
+                                                execution_ownership=(
+                                                    ExecutionOwnership.RESEARCHER_RUN
+                                                    if args.researcher else
+                                                    ExecutionOwnership.SYSTEM_AUTONOMOUS),
                                                 llm_generator=llm_generator)
             else:
                 orchestrator = DemoOrchestrator(settings, repository, artifacts, render_event)

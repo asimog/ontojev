@@ -7,9 +7,11 @@ from typing import Any
 from uuid import uuid4
 
 from cancerjev.domain.events import RunEvent, utc_now
-from cancerjev.domain.runs import validate_run_transition
+from cancerjev.domain.measurements import require
+from cancerjev.domain.runs import ExecutionOwnership, validate_run_transition
 from cancerjev.storage.artifacts import PublishedArtifact
 from cancerjev.storage.database import Database
+from cancerjev.storage.ownership import OwnershipError
 
 EMPTY_COUNTERS = {
     "projects_attempted": 0, "projects_completed": 0, "states_generated": 0,
@@ -52,7 +54,8 @@ class Repository:
         self.database = database
 
     def create_run(self, worker_id: str, *, mode: str = "FAKE", fixture_id: str | None = "demo",
-                   fixture_version: str | None = "1", scope: dict[str, Any] | None = None) -> str:
+                   fixture_version: str | None = "1", scope: dict[str, Any] | None = None,
+                   ownership: ExecutionOwnership = ExecutionOwnership.SYSTEM_AUTONOMOUS) -> str:
         run_id = str(uuid4())
         default_scope = (
             {"selected_project_ids": ["SYNTHETIC-DEMO-A", "SYNTHETIC-DEMO-B"]}
@@ -60,13 +63,29 @@ class Repository:
         )
         effective_scope = dict(scope) if scope is not None else default_scope
         effective_scope.setdefault("selected_project_ids", [])
+        require(isinstance(ownership, ExecutionOwnership), "invalid execution ownership")
         with self.database.connect(write=True) as connection:
             connection.execute(
-                "INSERT INTO research_runs(run_id,mode,fixture_id,fixture_version,status,created_at,worker_id,counters_json,usage_json,scope_json) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO research_runs(run_id,mode,fixture_id,fixture_version,status,created_at,worker_id,counters_json,usage_json,scope_json,execution_ownership) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (run_id, mode, fixture_id, fixture_version, "PENDING", utc_now(), worker_id,
-                 _json(EMPTY_COUNTERS), _json(ZERO_USAGE), _json(effective_scope)),
+                 _json(EMPTY_COUNTERS), _json(ZERO_USAGE), _json(effective_scope),
+                 ownership.value),
             )
         return run_id
+
+    def run_ownership(self, run_id: str) -> ExecutionOwnership:
+        run = self.get_run(run_id)
+        if run is None:
+            raise KeyError(run_id)
+        return ExecutionOwnership(run["execution_ownership"])
+
+    def require_run_ownership(self, run_id: str, expected: ExecutionOwnership) -> None:
+        """Fail closed when a run is not owned by the caller's context."""
+        actual = self.run_ownership(run_id)
+        if actual is not expected:
+            raise OwnershipError(
+                f"RUN_OWNERSHIP_MISMATCH: run {run_id} is {actual.value}, "
+                f"expected {expected.value}")
 
     def append_event(
         self, run_id: str, *, event_type: str, idempotency_key: str, message: str,
@@ -499,9 +518,19 @@ class Repository:
             row = connection.execute("SELECT * FROM research_runs WHERE run_id=?", (run_id,)).fetchone()
             return _run(row) if row else None
 
-    def list_runs(self, limit: int = 20) -> list[dict[str, Any]]:
+    def list_runs(self, limit: int = 20, *,
+                  ownership: ExecutionOwnership | None = None) -> list[dict[str, Any]]:
         with self.database.read() as connection:
-            return [_run(row) for row in connection.execute("SELECT * FROM research_runs ORDER BY created_at DESC,run_id DESC LIMIT ?", (limit,))]
+            if ownership is None:
+                rows = connection.execute(
+                    "SELECT * FROM research_runs ORDER BY created_at DESC,run_id DESC LIMIT ?",
+                    (limit,))
+            else:
+                rows = connection.execute(
+                    "SELECT * FROM research_runs WHERE execution_ownership=? "
+                    "ORDER BY created_at DESC,run_id DESC LIMIT ?",
+                    (ownership.value, limit))
+            return [_run(row) for row in rows]
 
     def page_runs(self, limit: int, cursor: str | None, status: str | None) -> dict[str, Any]:
         values: list[Any] = []

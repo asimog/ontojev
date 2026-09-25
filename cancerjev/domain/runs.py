@@ -1,4 +1,13 @@
+from enum import StrEnum
+
 from cancerjev.domain.states import RunStatus
+
+
+class ExecutionOwnership(StrEnum):
+    """Who owns the run's writable scientific scope."""
+
+    SYSTEM_AUTONOMOUS = "SYSTEM_AUTONOMOUS"
+    RESEARCHER_RUN = "RESEARCHER_RUN"
 
 RUN_TRANSITIONS = {
     RunStatus.PENDING: {RunStatus.RUNNING, RunStatus.STOPPED, RunStatus.FAILED},

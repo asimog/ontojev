@@ -44,6 +44,7 @@ from cancerjev.domain.pathway import (
     REACTOME_MEMBERSHIP_METHOD_ID,
     REACTOME_MEMBERSHIP_VERSION,
 )
+from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.gdc.endpoints import GDC_DATA_MODEL_REFERENCE
 from cancerjev.jev.posture import ARM_JEV_DECISION, TYPESAFE_DECISION_RECORD_VERSION
 from cancerjev.jev.projection import (
@@ -102,6 +103,8 @@ def collect_facts() -> dict[str, object]:
             f"{REACTOME_MEMBERSHIP_METHOD_ID} v{REACTOME_MEMBERSHIP_VERSION}"),
         "arm_jev_decision": ARM_JEV_DECISION.value,
         "typesafe_decision_record": TYPESAFE_DECISION_RECORD_VERSION,
+        "execution_ownership_values": ",".join(
+            ownership.value for ownership in ExecutionOwnership),
         "hypothesis_projection_version": HYPOTHESIS_PROJECTION_VERSION,
         "hypothesis_question_set": HYPOTHESIS_QUESTION_SET_VERSION,
         "mutation_discovery_result_schema_version": DISCOVERY_SCHEMA_VERSION,

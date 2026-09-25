@@ -13,6 +13,7 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from cancerjev.config import Settings
+from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.jev.service import JevService
 from cancerjev.jev.typesafe_adapter import TypeSafeAdapter
 from cancerjev.research.fixtures import (
@@ -60,5 +61,6 @@ class DemoOrchestrator:
             run_mode="FIXTURE",
             fixture_id=FIXTURE_ID,
             fixture_version=FIXTURE_VERSION,
+            execution_ownership=ExecutionOwnership.RESEARCHER_RUN,
         )
         return orchestrator.run()

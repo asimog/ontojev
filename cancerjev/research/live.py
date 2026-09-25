@@ -27,6 +27,7 @@ from cancerjev.domain.measurements import (
     OperationalSource,
     digest,
 )
+from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.domain.scientific import StatisticalState
 from cancerjev.gdc.endpoints import (
     cohort_project_request,
@@ -158,6 +159,7 @@ class LiveOrchestrator:
     run_mode: str = "LIVE"
     fixture_id: str | None = None
     fixture_version: str | None = None
+    execution_ownership: ExecutionOwnership = ExecutionOwnership.SYSTEM_AUTONOMOUS
 
     # ------------------------------------------------------------- event helpers
 
@@ -205,6 +207,15 @@ class LiveOrchestrator:
     # --------------------------------------------------------------------- run
 
     def run(self) -> str:
+        operator_flags = any((
+            self.deep_selection, self.deep_selections, self.deep_action_id,
+            self.deep_followup_authorized, self.deep_hypotheses_requested,
+        ))
+        if operator_flags and self.execution_ownership is not ExecutionOwnership.RESEARCHER_RUN:
+            raise LiveRunError(
+                "OPERATOR_FLAGS_REQUIRE_RESEARCHER_RUN",
+                "operator deep flags are only valid for an explicit researcher run",
+            )
         spec_payload = self.research_spec.as_dict()
         cohort = self.research_spec.cohort
         caps = BudgetCaps(
@@ -216,7 +227,7 @@ class LiveOrchestrator:
         budget = RunBudget(caps=caps)
         run_id = self.repository.create_run(
             self.worker_id, mode=self.run_mode, fixture_id=self.fixture_id,
-            fixture_version=self.fixture_version,
+            fixture_version=self.fixture_version, ownership=self.execution_ownership,
             scope={
                 "purpose": "LIVE_SWEEP", "spec_id": self.research_spec.spec_id,
                 "domain": cohort.domain, "cohort": cohort.cohort_id,

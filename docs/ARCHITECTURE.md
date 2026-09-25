@@ -28,6 +28,8 @@ Pathway membership is adopted from Reactome top-level pathways (`REACTOME_TOP_LE
 
 The TypeSafe/Jev capability posture is committed in [TYPESAFE_DECISIONS.md](TYPESAFE_DECISIONS.md) (`typesafe-decisions-v1`, machine-checked): current Wide/Deep/hypothesis questions are kept and were re-validated live against the pinned model on 2026-09-25; **Arm Jev is DEFERRED** because deterministic dispositions plus typed pending-semantic-review carrying already cover admission, so `JEV_REVIEW` entries are never admitted and never silently dropped.
 
+Every run records its execution ownership (`SYSTEM_AUTONOMOUS` or `RESEARCHER_RUN`, SQLite schema 6): operator deep flags are rejected before any work on autonomous runs, cross-owner guards fail closed in both directions, and researcher runs keep their own typed scope while sharing only provenance-exact immutable caches.
+
 ### Measurement reconciliation retained from the previous architecture document
 
 The frozen `tests/reconciliation/fixtures/reconciliation_dr46` corpus independently compares analysis buckets with released `/ssm_occurrences`. For its TP53/TCGA-LUAD capture, the analysis bucket is 393, released occurrences are 299 and distinct cases are 281. These are fixture-specific observations, not current live counts. A gene with no released occurrences can still have a nonzero analysis bucket. The bucket must therefore not be presented as a distinct released-case measurement.

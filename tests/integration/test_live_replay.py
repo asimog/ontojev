@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from apps.api.main import create_app
 from cancerjev.domain.codecs import read_state, state_identity
 from cancerjev.domain.measurements import OperationalSource, ScientificSource
+from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.gdc.endpoints import SSM_OCCURRENCE_FIELDS
 from cancerjev.gdc.parsers import ResponseMeta, parse_expression_availability
 from cancerjev.jev.service import JevService
@@ -98,12 +99,16 @@ def _orchestrator(runtime, monkeypatch=None, *, jev_adapter=None, research_spec=
     if jev_adapter is not None:
         jev_service = JevService(settings, repository, artifacts,
                                  adapter_factory=lambda: jev_adapter)
+    operator_flags = any((deep_selection, deep_selections, deep_action_id,
+                          deep_followup_authorized, deep_hypotheses_requested))
     orchestrator = LiveOrchestrator(
         settings, repository, artifacts, lambda event: None, jev_service=jev_service,
         transport_factory=transport_factory, research_spec=research_spec or LUAD_RESEARCH_V1,
         deep_selection=deep_selection, deep_selections=tuple(deep_selections),
         deep_action_id=deep_action_id, deep_followup_authorized=deep_followup_authorized,
         deep_hypotheses_requested=deep_hypotheses_requested, llm_generator=llm_generator,
+        execution_ownership=(ExecutionOwnership.RESEARCHER_RUN if operator_flags
+                             else ExecutionOwnership.SYSTEM_AUTONOMOUS),
     )
     return orchestrator, holder, repository
 
