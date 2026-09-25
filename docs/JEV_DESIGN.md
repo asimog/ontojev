@@ -4,9 +4,9 @@
 
 ## 1. Purpose
 
-Current code implements Wide, Deep and hypothesis judgments through `cancerjev/jev/` and Python research policies. Arm Jev is a conditional target capability and is not implemented. Noul/Choice/Score support already exists; proposed batching/routing changes require current provider-contract verification and a complete failure corpus (P11).
+Current code implements Wide, Deep and hypothesis judgments through `cancerjev/jev/` and Python research policies. Arm Jev is a conditional target capability and is not implemented. Noul/Choice/Score support already exists; proposed batching/routing changes require current provider-contract verification and a complete failure corpus (P13).
 
-Wide currently includes cancer-census annotation. If that annotation is used as a validation label, it must be excluded from discovery/admission inputs under the planned information-role contract (P09). Existing semantic output must not be described as independent validation against the same label.
+Wide currently includes cancer-census annotation. If that annotation is used as a validation label, it must be excluded from discovery/admission inputs under the planned information-role contract (P11). Existing semantic output must not be described as independent validation against the same label.
 
 Jev supplies bounded semantic judgment over structured deterministic scientific evidence.
 

@@ -24,6 +24,12 @@ GDC evidence
 - No generic agent framework, DAG engine, microservices or LLM-generated GDC queries.
 - Skip tests unless the user asks for them.
 
+## Operational limits
+
+- GDC file-download limits and API request/byte limits are test controls, not sacred scientific constants. They may be raised or lowered for testing and declared runs through documented constants — never ad hoc, never silently, and never as per-response caps.
+- Adjusting a limit must not change failure semantics: exhausted budgets still report incomplete or unavailable, never a smaller population labelled complete.
+- Only open-access data may ever be used. Never use controlled-access or restricted data, and never add GDC credentials or tokens.
+
 ## Sources
 
 For GDC work, inspect current upstream sources first:
