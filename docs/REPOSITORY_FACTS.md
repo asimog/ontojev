@@ -33,7 +33,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "hypothesis_projection_version": "jev-hypothesis-projection-v2",
   "hypothesis_question_set": "hypothesis-v2",
   "mutation_discovery_result_schema_version": 1,
-  "mutation_reduction_method": "MUTATION_LUAD_AFFECTED_COUNT_DESC_V1 v2",
+  "mutation_reduction_method": "MUTATION_AFFECTED_CASE_COUNT_DESC_V1 v3",
   "no_jev_baseline_version": "no-jev-baseline-v1",
   "presentation_payload_schema_version": 4,
   "registered_action_ids": [

@@ -184,8 +184,12 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: StoredS
         ),
         reason=None if last_evidence is not None else "no project-level evidence was recorded",
     )
+    cohort_label = state.state.research.cohort if state is not None else None
     sections["cross_project_evidence"] = _section(
-        "NOT_ACQUIRED", reason="a single cohort is examined; LUAD is never pooled with another cohort")
+        "NOT_ACQUIRED",
+        reason=(f"a single cohort is examined; {cohort_label} is never pooled with another cohort"
+                if cohort_label else
+                "a single cohort is examined; no cross-cohort pooling is performed"))
     sections["cross_modal_evidence"] = _section(
         "NOT_ACQUIRED", reason="case-to-sample resolution for expression values is UNVERIFIED")
     sections["contradictory_evidence"] = _section(

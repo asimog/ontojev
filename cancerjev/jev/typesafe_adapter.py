@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from cancerjev.jev.questions import QuestionDefinition
+from cancerjev.jev.questions import QuestionDefinition, instruction_text
 
 ADAPTER_VERSION = "typesafe-adapter-v1"
 
@@ -72,19 +72,20 @@ class TypeSafeAdapter:
         questions: dict[str, Any] = {}
         for definition in definitions:
             criteria = definition.criteria
+            instructions = instruction_text(definition, state)
             if definition.primitive == "NOUL":
                 questions[definition.question_id] = Noul(
-                    instructions=definition.instructions,
+                    instructions=instructions,
                     criteria=criteria,
                 )
             elif definition.primitive == "CHOICE":
                 questions[definition.question_id] = Choice(
-                    instructions=definition.instructions,
+                    instructions=instructions,
                     criteria=criteria,
                 )
             elif definition.primitive == "SCORE":
                 questions[definition.question_id] = Score(
-                    instructions=definition.instructions,
+                    instructions=instructions,
                     criteria=list(criteria or []),
                 )
             else:  # pragma: no cover - definitions are validated at import

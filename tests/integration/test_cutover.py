@@ -97,7 +97,7 @@ def test_cutover_composes_one_state_per_survivor_with_bound_lanes(runtime):
         assert state.universe == mutation.universe
         assert state.research.modalities == (
             "mutation_counts", "expression_summary", "cnv_occurrences")
-        assert state.tested_context.selection_rule == "MUTATION_LUAD_AFFECTED_COUNT_DESC_V1"
+        assert state.tested_context.selection_rule == "MUTATION_AFFECTED_CASE_COUNT_DESC_V1"
         assert "mutation-first reduction" in state.tested_context.selection_bias
         assert state.sources
         assert set(project.cnv.sources) <= set(state.sources)

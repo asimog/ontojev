@@ -52,13 +52,25 @@ class QuestionDefinition:
         return spec
 
 
+def instruction_text(definition: QuestionDefinition, projection: dict[str, Any]) -> str:
+    """Resolve projection identity into the versioned instruction template.
+
+    The template stays cohort-agnostic, so the question-set hash never depends on
+    a cancer name; the cohort label is supplied by the typed projection.
+    """
+    scope = projection.get("scope") if isinstance(projection.get("scope"), dict) else {}
+    cohort = projection.get("cohort") if isinstance(projection.get("cohort"), dict) else {}
+    label = str(cohort.get("project_id") or scope.get("cohort") or "the examined cohort")
+    return definition.instructions.format(cohort=label)
+
+
 WIDE_QUESTIONS: tuple[QuestionDefinition, ...] = (
     QuestionDefinition(
         question_id="evidence_quality_adequate",
         primitive="NOUL",
         version=1,
         instructions=(
-            "You are reviewing a compact deterministic profile of one gene in one TCGA-LUAD cohort. It states "
+            "You are reviewing a compact deterministic profile of one gene in one cohort ({cohort}). It states "
             "the examined-case count, the number of cases with a somatic mutation in this gene, the number of "
             "cases with an observed SSM (mutation-data coverage), the number of cases with gene expression "
             "values, and the local log2(UQFPKM+1) expression summary, with missingness and acquisition "
@@ -169,7 +181,7 @@ DEEP_QUESTIONS: tuple[QuestionDefinition, ...] = (
         version=1,
         instructions=(
             "You are reviewing one immutable deterministic evidence revision for a single gene in one "
-            "TCGA-LUAD cohort. The revision states which registered deterministic action produced it, the "
+            "cohort ({cohort}). The revision states which registered deterministic action produced it, the "
             "per-check outcome (VERIFIED, CONTRADICTED or NOT_OBSERVED) of each integrity/reproducibility "
             "check with the numbers it used, the project-level evidence it copied, its missing evidence, and "
             "the response-artifact provenance counts. Decide whether this revision can be relied on as the "
@@ -254,7 +266,7 @@ HYPOTHESIS_QUESTIONS: tuple[QuestionDefinition, ...] = (
         primitive="NOUL",
         version=1,
         instructions=(
-            "You are reviewing one generated hypothesis about a single gene in one TCGA-LUAD cohort. The "
+            "You are reviewing one generated hypothesis about a single gene in one cohort ({cohort}). The "
             "projection states which generator produced the text, the exact statement, its predictions and "
             "falsification criteria, and the recorded evidence revision it was derived from. Generated text is "
             "not evidence, and you must judge only the statement in front of you. Decide whether the statement "

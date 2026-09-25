@@ -108,7 +108,7 @@ def compose_discovery_states(
     sources = _unique_operational(mutation.sources, expression.sources, cnv.sources)
     scientific_sources = tuple(dict.fromkeys(source.source for source in sources))
     population = PopulationRecord(
-        population_id=f"{mutation.cohort_id}:CASES", frame=frame, program="TCGA",
+        population_id=f"{mutation.cohort_id}:CASES", frame=frame, program=None,
         provider_reported_cases=len(frame.examined_ids), frame_hash=frame.membership_hash,
         workflows=expression.workflows, sample_types=(), selection_method=frame.selection_rule,
         selection_version="1", harmonization_context="GDC_RELEASE_BOUND_SINGLE_COHORT",
@@ -116,10 +116,10 @@ def compose_discovery_states(
     research = ResearchState(
         spec_id=spec.spec_id, domain=spec.cohort.domain, cohort=spec.cohort.cohort_id,
         project_id=spec.cohort.project_id, cohort_selection_rule=spec.cohort_selection_rule(),
-        gene_selection_rule="MUTATION_LUAD_AFFECTED_COUNT_DESC_V1",
+        gene_selection_rule=mutation.reducer.method_id,
         examined_case_frame=frame.selection_rule, acquisition=_scope(spec),
         modalities=("mutation_counts", "expression_summary", "cnv_occurrences"),
-        programs=("TCGA",), projects=(spec.cohort.project_id,), workflows=expression.workflows,
+        programs=(), projects=(spec.cohort.project_id,), workflows=expression.workflows,
         sample_types=(), sample_type_counts=(), comparability_statuses=COMPARABILITY_STATUSES,
         within_cohort_status=WITHIN_COHORT_COMPARABILITY["status"],
         within_cohort_reason=WITHIN_COHORT_COMPARABILITY["reason"],
@@ -163,7 +163,7 @@ def compose_discovery_states(
             research=research, universe=mutation.universe,
             tested_context=TestedContext(
                 mutation.universe.membership_hash, len(mutation.universe.ordered_ids), rank,
-                "MUTATION_LUAD_AFFECTED_COUNT_DESC_V1", CUTOVER_SELECTION_BIAS, 1, None,
+                mutation.reducer.method_id, CUTOVER_SELECTION_BIAS, 1, None,
             ),
             projects=(ProjectState(
                 population, mutation_outcome, expression_outcome, None, None, cnv_outcome),),
