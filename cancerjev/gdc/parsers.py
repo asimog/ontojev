@@ -656,6 +656,120 @@ def parse_cnv_occurrences_page(
     )
 
 
+def parse_cnv_occurrence_scan_page(
+    body: bytes,
+    meta: ResponseMeta,
+    *,
+    expected_project: str,
+    expected_cases: set[str],
+    expected_offset: int,
+    expected_size: int,
+) -> CnvOccurrencesPage:
+    """Strict one-shard CNV occurrence page with exact filter membership.
+
+    One provider hit may annotate several genes; each gene becomes one record
+    and a repeated ``(occurrence_id, gene_id)`` pair is an error. Row ids must
+    ascend and never regress; ``count`` is the provider row count, so offset
+    advancement stays row-based.
+    """
+    document = _load_json(body, meta)
+    occurrences: list[CnvOccurrenceRecord] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    previous_row: str | None = None
+    rows = 0
+    for hit in _hits(document, "cnv_occurrences"):
+        occurrence_id = _require(hit, "cnv_occurrence_id", (str,), "cnv_occurrences")
+        if previous_row is not None and occurrence_id < previous_row:
+            raise ParserError(
+                "UNEXPECTED_ORDER",
+                f"cnv_occurrences: {occurrence_id} regresses after {previous_row}",
+            )
+        previous_row = occurrence_id
+        rows += 1
+        project_id = _require(hit, "case.project.project_id", (str,), "cnv_occurrences")
+        case_id = _require(hit, "case.case_id", (str,), "cnv_occurrences")
+        if project_id != expected_project:
+            raise ParserError("UNEXPECTED_IDENTIFIER",
+                              f"cnv_occurrences: unrequested project {project_id}")
+        if case_id not in expected_cases:
+            raise ParserError("UNEXPECTED_IDENTIFIER",
+                              f"cnv_occurrences: case {case_id} outside the declared shard")
+        consequences = _require(hit, "cnv.consequence", (list,), "cnv_occurrences")
+        gene_ids: set[str] = set()
+        for consequence in consequences:
+            if not isinstance(consequence, dict):
+                raise ParserError("MALFORMED_JSON",
+                                  "cnv_occurrences: consequence is not an object")
+            gene_id = _optional(consequence, "gene.gene_id", (str,), "cnv_occurrences")
+            if gene_id is not None:
+                gene_ids.add(gene_id)
+        if not gene_ids:
+            raise ParserError("MALFORMED_JSON",
+                              f"cnv_occurrences: {occurrence_id} annotates no gene")
+        observations = _optional(hit, "case.observation", (list,), "cnv_occurrences") or []
+        if len(observations) > 1:
+            raise ParserError("AMBIGUOUS_OBSERVATION",
+                              f"cnv_occurrences: {occurrence_id} has multiple observations")
+        observation: dict[str, Any]
+        if observations:
+            if not isinstance(observations[0], dict):
+                raise ParserError("MALFORMED_JSON",
+                                  "cnv_occurrences: observation is not an object")
+            observation = observations[0]
+        else:
+            observation = {}
+        raw_change = _require(hit, "cnv.cnv_change", (str,), "cnv_occurrences")
+        raw_category = _require(hit, "cnv.cnv_change_5_category", (str,), "cnv_occurrences")
+        cnv_id = _require(hit, "cnv.cnv_id", (str,), "cnv_occurrences")
+        for gene_id in sorted(gene_ids):
+            if (occurrence_id, gene_id) in seen_pairs:
+                raise ParserError("DUPLICATE_ID",
+                                  f"cnv_occurrences: duplicate {occurrence_id}/{gene_id}")
+            seen_pairs.add((occurrence_id, gene_id))
+            occurrences.append(CnvOccurrenceRecord(
+                occurrence_id=occurrence_id,
+                cnv_id=cnv_id,
+                case_id=case_id,
+                gene_id=gene_id,
+                raw_change=raw_change,
+                raw_category=raw_category,
+                source_file_id=_optional(observation, "src_file_id", (str,), "cnv_occurrences"),
+                caller=_optional(
+                    observation, "variant_calling.variant_caller", (str,), "cnv_occurrences"),
+                sample_id=_optional(
+                    observation, "sample.tumor_sample_uuid", (str,), "cnv_occurrences"),
+                copy_number=_finite(observation.get("copy_number"), "cnv_occurrences copy_number"),
+            ))
+    pagination = _require(document, "data.pagination", (dict,), "cnv_occurrences")
+    values: dict[str, int] = {}
+    for name in ("total", "count", "size", "from", "pages"):
+        value = pagination.get(name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ParserError("INVALID_PAGINATION",
+                              f"cnv_occurrences: pagination {name} must be non-negative integer")
+        values[name] = value
+    if values["size"] < 1:
+        raise ParserError("INVALID_PAGINATION", "cnv_occurrences: size must be positive")
+    if values["count"] != rows:
+        raise ParserError("INVALID_PAGINATION", "cnv_occurrences: count/rows mismatch")
+    if values["from"] != expected_offset:
+        raise ParserError("INVALID_PAGINATION", "cnv_occurrences: offset mismatch")
+    if values["size"] != expected_size:
+        raise ParserError("INVALID_PAGINATION", "cnv_occurrences: size mismatch")
+    expected_pages = math.ceil(values["total"] / expected_size) if values["total"] else 0
+    if values["pages"] != expected_pages:
+        raise ParserError("INVALID_PAGINATION", "cnv_occurrences: pages/total mismatch")
+    if expected_offset + rows > values["total"]:
+        raise ParserError("INVALID_PAGINATION", "cnv_occurrences: page exceeds total")
+    if expected_offset + rows < values["total"] and rows != expected_size:
+        raise ParserError("INVALID_PAGINATION",
+                          "cnv_occurrences: short page before reported total")
+    return CnvOccurrencesPage(
+        tuple(occurrences), values["total"], rows, values["size"],
+        values["from"], values["pages"], _warnings(document),
+    )
+
+
 def parse_ssm_occurrence_page(
     body: bytes,
     meta: ResponseMeta,
