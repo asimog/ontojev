@@ -27,6 +27,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "deep_next_move_policy": "deep-policy-v2",
   "deep_question_set": "deep-v1",
   "dossier_schema_version": 3,
+  "evidence_maturity_policy": "evidence-maturity-v1",
   "evidence_projection_version": "jev-evidence-projection-v2",
   "evidence_state_schema_version": 4,
   "expression_aliquot_identity": "NOT_API_DERIVABLE",

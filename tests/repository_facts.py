@@ -39,6 +39,7 @@ from cancerjev.domain.discovery import (
 )
 from cancerjev.domain.dossier import DOSSIER_SCHEMA_VERSION
 from cancerjev.domain.events import SUPPORTED_SCHEMA_VERSION
+from cancerjev.domain.maturity import EVIDENCE_MATURITY_POLICY_VERSION
 from cancerjev.gdc.endpoints import GDC_DATA_MODEL_REFERENCE
 from cancerjev.jev.projection import (
     EVIDENCE_PROJECTION_VERSION,
@@ -91,6 +92,7 @@ def collect_facts() -> dict[str, object]:
         "expression_disposition_policy": EXPRESSION_DISPOSITION_POLICY_VERSION,
         "expression_aliquot_identity": EXPRESSION_ALIQUOT_IDENTITY_STATUS,
         "cnv_disposition_policy": CNV_DISPOSITION_POLICY_VERSION,
+        "evidence_maturity_policy": EVIDENCE_MATURITY_POLICY_VERSION,
         "hypothesis_projection_version": HYPOTHESIS_PROJECTION_VERSION,
         "hypothesis_question_set": HYPOTHESIS_QUESTION_SET_VERSION,
         "mutation_discovery_result_schema_version": DISCOVERY_SCHEMA_VERSION,

@@ -22,6 +22,8 @@ Paths above are under `cancerjev/`. No parallel state architecture or workflow e
 
 Systematic complete-universe discovery (`GENE_ID_ASC_INDEXED_COMPLETE_V1`) is the canonical path; the older `GDC_FAST_SEARCH` provider-ranked lane is transitional/compatibility behavior retained as a labelled comparator, and live affected-case counts already derive from the complete occurrence scan rather than the invalidated bucket.
 
+Evidence maturity is derived deterministically from persisted typed evidence (`evidence-maturity-v1`: `MEASURED` → `DESCRIPTIVE_CANDIDATE`, with higher levels reported together with their exact missing prerequisite); no Jev judgment or ranking can promote it. Known-cancer context and evaluation labels are machine-checked out of feature construction, disposition triggers and admission (see `tests/leakage/`), and replication holdouts, when declared, are deterministic hash-sorted case partitions with a method-specific rationale.
+
 ### Measurement reconciliation retained from the previous architecture document
 
 The frozen `tests/reconciliation/fixtures/reconciliation_dr46` corpus independently compares analysis buckets with released `/ssm_occurrences`. For its TP53/TCGA-LUAD capture, the analysis bucket is 393, released occurrences are 299 and distinct cases are 281. These are fixture-specific observations, not current live counts. A gene with no released occurrences can still have a nonzero analysis bucket. The bucket must therefore not be presented as a distinct released-case measurement.
