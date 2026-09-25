@@ -93,8 +93,12 @@ def test_incompatible_schema_fails_clearly(tmp_path):
     connection.execute("INSERT INTO schema_info(version) VALUES(1)")
     connection.commit()
     connection.close()
+    before = path.read_bytes()
     with pytest.raises(RuntimeError, match="unsupported database schema 1"):
         Database(path).bootstrap()
+    assert path.read_bytes() == before, "schema rejection must not mutate the obsolete store"
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall() == [("schema_info",)]
 
 
 def test_registered_vocabulary_covers_orchestrator_emissions(runtime):

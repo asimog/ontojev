@@ -60,7 +60,7 @@ class OpenRouterGenerator:
 
     model: str = DEFAULT_MODEL
     timeout: float = 30.0
-    api_key: str | None = None
+    api_key: str | None = field(default=None, repr=False)
     opener: Callable[..., Any] | None = field(default=None, repr=False)
     name: str = GENERATOR_NAME
     reasoning_effort: str | None = DEFAULT_REASONING_EFFORT

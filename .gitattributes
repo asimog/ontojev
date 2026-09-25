@@ -1,0 +1,2 @@
+# Captured provider responses are byte-addressed scientific fixtures.
+tests/contracts/fixtures/gdc/*.body -text

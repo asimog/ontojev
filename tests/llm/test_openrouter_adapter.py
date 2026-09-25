@@ -66,6 +66,10 @@ def test_generator_identity_is_pinned_and_named():
     assert generator.name == GENERATOR_NAME == "openrouter-chat-v1"
 
 
+def test_generator_repr_does_not_expose_injected_credential():
+    assert "test-secret" not in repr(OpenRouterGenerator(api_key="test-secret"))
+
+
 def test_successful_completion_returns_entries_and_usage(monkeypatch):
     captured: dict = {}
 

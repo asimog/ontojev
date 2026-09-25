@@ -1,5 +1,26 @@
 # Implementation status
 
+## Hard-cutover preparation — partial, 2026-09-25
+
+Starting HEAD: `573d44b750e0c6e553cb7aed8f909c0fc380e980`; local safety tag:
+`stage3-pre-hard-cutover-573d44b`.
+
+- IMPLEMENTED: exact provider capture-byte restoration after Windows checkout newline
+  conversion, with a Git attribute preventing future conversion. Recorded hashes and
+  scientific fixtures are not rewritten.
+- IMPLEMENTED: read-only obsolete-database version refusal before schema writes;
+  explicit zero-retry TypeSafe configuration; injected OpenRouter keys excluded from repr.
+- IMPLEMENTED: opt-in `live_acceptance` and `live_llm` tests, bounded to 15 combined Jev
+  attempts and one LLM attempt. Independent generation reports do not modify source-run
+  decisions or pretend that Python policy requested hypotheses. See [testing](TESTING.md).
+- VERIFIED baseline after capture-byte restoration: 547 passed, 2 deselected; Ruff and
+  configured strict mypy on 19 modules pass. New changes have separate focused checks.
+- UNVERIFIED: live provider acceptance; root `.env.local` and provider keys were absent.
+- NOT IMPLEMENTED: the requested single-architecture hard cutover, schema 4 scientific
+  writers/schema 5 SQLite, legacy deletion, shared demo/live execution, new browser
+  acceptance and documentation consolidation. Existing v1/v2 runtime behavior remains;
+  Stage 3 hard-cutover completion must not be inferred from these preparatory changes.
+
 ## Current truth — Stage 3 implementation, 2026-09-25
 
 Stage 0–1 was published as `63d991a6ded2988bc6da0090f80ee69775cf770d`; Stage 2 as

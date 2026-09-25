@@ -40,11 +40,13 @@ packages = ["cancerjev", "apps"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = '-q -m "not live and not live_gdc and not live_jev"'
+addopts = '-q -m "not live and not live_gdc and not live_jev and not live_llm and not live_acceptance"'
 markers = [
   "live: opt-in live provider tests (disabled by default)",
   "live_gdc: opt-in bounded live GDC contract probe",
   "live_jev: opt-in live TypeSafe/Jev evaluation",
+  "live_llm: opt-in single OpenRouter call and bounded Jev critique over retained GDC evidence",
+  "live_acceptance: opt-in bounded GDC/Jev run and separate LLM/Jev integration check",
 ]
 
 [tool.ruff]

@@ -1,5 +1,10 @@
 # Persistence and local runtime
 
+Bootstrap now reads an existing schema version through a read-only connection before
+changing journal mode or creating current tables/triggers. Unsupported versions are
+rejected without changing the database bytes. SQLite remains schema 4 until the typed
+runtime cutover is implemented; no migration or automatic data deletion is introduced.
+
 ## Stage 2 verified reads — IMPLEMENTED (2026-09-25)
 
 `storage/readers.py` validates recorded sizes/hashes, confined paths, scientific schema/identity

@@ -12,7 +12,9 @@ from cancerjev.storage.repositories import Repository
 
 @pytest.fixture(autouse=True)
 def block_network(monkeypatch, request):
-    if any(request.node.get_closest_marker(marker) for marker in ("live", "live_gdc", "live_jev")):
+    if any(request.node.get_closest_marker(marker) for marker in (
+        "live", "live_gdc", "live_jev", "live_llm", "live_acceptance",
+    )):
         return
     real_create_connection = socket.create_connection
 

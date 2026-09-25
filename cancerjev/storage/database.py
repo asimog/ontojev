@@ -159,6 +159,24 @@ class Database:
         return connection
 
     def bootstrap(self) -> None:
+        # Refuse obsolete stores before connect() changes journal mode or SCHEMA
+        # creates tables/triggers. Old development data is never migrated.
+        if self.path.is_file():
+            existing = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)
+            try:
+                has_schema = existing.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_info'"
+                ).fetchone()
+                if has_schema:
+                    versions = existing.execute("SELECT version FROM schema_info").fetchall()
+                    if versions and versions != [(SCHEMA_VERSION,)]:
+                        found = ", ".join(str(row[0]) for row in versions)
+                        raise RuntimeError(
+                            f"unsupported database schema {found}; this build expects schema {SCHEMA_VERSION}. "
+                            "Earlier data is not migrated: use a fresh data directory."
+                        )
+            finally:
+                existing.close()
         connection = self.connect(write=True)
         try:
             connection.executescript(SCHEMA)

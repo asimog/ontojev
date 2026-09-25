@@ -1,5 +1,36 @@
 # Verification and prospective calibration
 
+## Opt-in provider checks — IMPLEMENTED, live results UNVERIFIED
+
+Root `.env.local` is loaded by the existing Settings loader. Process variables take
+precedence. Configure `TYPESAFE_API_KEY`, `OPENROUTER_API_KEY`, a pinned
+`CANCERJEV_JEV_MODEL`, and optionally `CANCERJEV_LLM_MODEL`; never put keys in commands
+or reports. Missing keys skip these tests before any acquisition or provider call.
+
+- `python -m pytest tests/live/test_provider_acceptance.py -m live_acceptance -rs`
+  runs one fresh bounded LUAD investigation, then one separately labelled OpenRouter
+  generation check and up to three Jev hypothesis critiques, then cached replay.
+  The combined check reserves at most 15 Jev attempts and one LLM attempt; existing
+  GDC limits apply. SDK retries are explicitly disabled. A budget refusal or provider
+  failure fails acceptance rather than changing a policy threshold or retrying.
+- `python -m pytest tests/live/test_provider_acceptance.py -m live_llm -rs`
+  performs only the independent generation/critique check against a retained live
+  candidate. Set `CANCERJEV_DATA_DIR` and `CANCERJEV_ACCEPTANCE_CANDIDATE_ID` to that
+  store/candidate. It performs no GDC acquisition and does not alter the source run.
+
+These markers are excluded from ordinary pytest and CI. The full test uses its own
+temporary data directory; pytest properties record that location and the source run.
+Reports live under `acceptance/` in that store and identify themselves as integration
+test results, not production next moves or evidence. They retain exact projections,
+question hashes, usage and resolved Jev identity; provider error bodies are omitted.
+LLM immutable-model resolution remains UNVERIFIED. The harness currently exercises
+the existing v2 runtime; its existence does not establish the Stage 3 hard cutover.
+
+Offline harness tests cover exhausted budgets, failed-call accounting, refusal before
+generation on invalid evidence, unchanged source events/hypotheses and error redaction.
+All retained GDC capture bodies are checked against their recorded byte hashes;
+`.gitattributes` prevents Git newline conversion for these files.
+
 Stage 2 adds `test_scientific_reads.py`, `test_cache_validation.py` and
 `test_hypothesis_contract.py`: corrupted bytes/metadata/bindings, unknown schemas, authoritative
 latest revision refusal, unusable cache without provider fallback, and strict generated-text bounds.

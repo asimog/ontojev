@@ -45,9 +45,9 @@ _STATUS_ERROR_CODES = {
 def _provider_error_code(exc: Exception) -> str:
     """Classify a provider failure without importing provider exception types.
 
-    The SDK retries 429/529 with backoff by default; a terminal failure still
-    needs a stable code so Python policy can defer rather than treat it as a
-    scientific result.
+    SDK retries are disabled so one reserved application call is one attempt.
+    A failure needs a stable code so Python policy can defer rather than treat
+    it as a scientific result.
     """
     status = getattr(exc, "status_code", None)
     if status is None:
@@ -65,7 +65,7 @@ class TypeSafeAdapter:
 
     def evaluate(self, state: dict[str, Any], definitions: tuple[QuestionDefinition, ...]) -> ProviderAnswerSet:
         try:
-            from typesafe_sdk import Choice, Noul, Score, TypeSafeClient
+            from typesafe_sdk import Choice, Noul, RetryPolicy, Score, TypeSafeClient
         except ImportError as exc:  # pragma: no cover - dependency is declared
             raise JevProviderError("ADAPTER_UNAVAILABLE", "typesafe-sdk is not installed") from exc
 
@@ -92,7 +92,8 @@ class TypeSafeAdapter:
 
         started = time.monotonic()
         try:
-            with TypeSafeClient(api_key=self.api_key, timeout=self.timeout, model=self.model) as client:
+            with TypeSafeClient(api_key=self.api_key, timeout=self.timeout, model=self.model,
+                                retry=RetryPolicy(max_retries=0)) as client:
                 response = client.system_one(state=state, questions=questions, model=self.model)
         except Exception as exc:  # noqa: BLE001 - provider failures become typed errors
             raise JevProviderError(_provider_error_code(exc), f"{type(exc).__name__}: {exc}") from exc

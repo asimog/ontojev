@@ -42,7 +42,13 @@ def _install_sdk(monkeypatch, response: Any, recorder: dict[str, Any]) -> None:
     module.Choice = _Question
     module.Noul = _Question
     module.Score = _Question
-    module.TypeSafeClient = lambda **kwargs: _Client(response, recorder)
+    module.RetryPolicy = _Question
+
+    def client(**kwargs):
+        recorder["client_options"] = kwargs
+        return _Client(response, recorder)
+
+    module.TypeSafeClient = client
     monkeypatch.setitem(sys.modules, "typesafe_sdk", module)
 
 
@@ -90,6 +96,7 @@ def test_well_formed_response_converts_to_owned_answers(monkeypatch):
     assert answer_set.request_id == "req-1"
     assert answer_set.usage == {"input_tokens": 10, "output_tokens": 2}
     assert recorder["model"] == "jev-1.13.0"
+    assert recorder["client_options"]["retry"].kwargs == {"max_retries": 0}
 
 
 @pytest.mark.parametrize(
