@@ -4,144 +4,13 @@ OntoJev is an autonomous computational cancer target-discovery system.
 
 It combines harmonized GDC evidence with established NCI/GDAN computational-genomics methods, then uses Jev selectively to identify biologically plausible target candidates whose importance may emerge from non-obvious, discordant, multi-modal, or under-ranked genomic patterns.
 
-```text
-GDC
-→ validated measurements
-→ computational genomics
-→ deterministic/statistical evidence
-→ integrated target state
-→ deterministic baseline
-→ selective Jev
-→ target candidates
-→ autonomous investigation
-→ new deterministic evidence
-→ final target dossier
-```
+## Current implementation
 
-## Scientific model
+At the inspected HEAD, OntoJev has typed GDC acquisition, bounded descriptive discovery, Wide/Deep Jev, Python policies, immutable candidate evidence revisions, hypothesis critique, and Stage 8 dossiers with no-Jev comparisons. Systematic discovery currently covers a declared first 1,000-gene protein-coding prefix. Expression describes that prefix; CNV and integrated states cover mutation survivors only.
 
-OntoJev separates measurement, computation, semantic judgment, and execution.
+Complete-universe discovery, independent modality union, scientific readiness gates, selected-file acquisition and continuous multi-Campaign autonomy are planned. The older provider-ranked live mutation path still needs the measurement correction described in P01. The target flow below must not be read as a list of completed features.
 
-```text
-raw GDC evidence
-→ strict parsing
-→ external reconciliation
-→ validated measurements
-→ computational genomics
-→ typed scientific evidence
-→ Jev
-```
-
-Core rules:
-
-- Raw genomics never goes directly to Jev.
-- Deterministic code owns measurements, statistics, eligibility, and evidence creation.
-- Jev provides semantic judgment over structured evidence.
-- Python owns candidate selection, registered actions, iteration, stopping, and campaign progression.
-- LLM-generated hypotheses are explicitly not evidence.
-- Missing data is not negative evidence.
-- Computational target discovery does not equal experimental or therapeutic validation.
-
-## GDC and GDAN
-
-GDC is OntoJev's primary harmonized cancer-data source.
-
-OntoJev uses:
-
-- GDC analysis and search APIs for indexed evidence;
-- open harmonized GDC files through `gdc-client` where file-level data are scientifically preferable;
-- current GDC workflow and bioinformatics documentation to interpret how measurements were produced.
-
-Primary upstream references:
-
-- https://github.com/NCI-GDC/gdc-docs
-- https://github.com/NCI-GDC/gdcdatamodel2
-- https://github.com/NCI-GDC/gdc-workflow-overview
-- https://github.com/NCI-GDC/gdc-client
-
-Upstream clones are pinned in the untracked `.upstream/` workspace with an exact-SHA inventory and current/historical classification (`.upstream/SOURCES.lock.json`).
-
-`gdcdatamodel2` is the data-model implementation authority.
-
-Established NCI/GDAN/TCGA computational methods are preferred over ad hoc bioinformatics methods:
-
-- https://www.cancer.gov/ccg/research/computational-genomics/genomic-data-analysis-network
-
-Each campaign records the GDC release, data sources, workflow provenance, scientific methods, and code/policy versions it actually used.
-
-## Target-discovery architecture
-
-OntoJev is designed around modular cancer cohorts and scientific capabilities rather than a lung-specific pipeline.
-
-```text
-Cancer cohort
-     ↓
-cohort capability profile
-     ↓
-tested gene universe
-     ↓
-┌────────────┬────────────┬────────────┐
-│ Mutation   │ Expression │ CNV / SV   │
-└────────────┴────────────┴────────────┘
-     ↓
-additional supported modalities
-     ↓
-validated computational-genomics evidence
-     ↓
-pathway / multi-omic integration
-     ↓
-deterministic baseline
-     ↓
-selective Jev review
-     ↓
-candidate targets
-     ↓
-Deep Jev + Python ActionPolicy
-     ↓
-registered deterministic follow-up
-     ↓
-evidence revision
-     ↓
-final target dossier
-```
-
-Mutation, expression, CNV, methylation, miRNA, protein, fusion, structural-variant, and single-cell evidence are enabled only when the selected cohort and validated scientific methods support them.
-
-## Cohorts
-
-The engine is cancer-agnostic.
-
-TCGA-LUAD is the first validated campaign profile, not an architectural restriction.
-
-A campaign binds a cohort to:
-
-- a GDC release;
-- an eligible gene universe;
-- available modalities;
-- validated scientific methods;
-- registered follow-up actions;
-- validation and stopping policies.
-
-Cross-cancer or pooled analysis requires an explicit comparability contract.
-
-## Autonomy
-
-OntoJev's primary mode is a system-owned autonomous research program made of bounded, reproducible campaigns.
-
-```text
-Autonomous Program
-→ Campaign
-→ target discovery
-→ candidate investigation
-→ dossiers
-→ Campaign Complete
-→ versioned CampaignSelectionPolicy
-→ next campaign or idle
-```
-
-Campaign progression is controlled by explicit deterministic Python policy, never by hidden ordering or free-form model choice.
-
-An optional Researcher Lab may run separate researcher-defined investigations using the same scientific engine. Researcher-run state cannot affect the system-owned autonomous program at runtime.
+See the [saved implementation plan](docs/IMPLEMENTATION_PLAN.md) for code evidence, pinned upstream references, execution order and acceptance gates. [Repository facts](docs/REPOSITORY_FACTS.md) owns mutable version/action identities.
 
 ## Research question
 
@@ -151,4 +20,118 @@ An optional Researcher Lab may run separate researcher-defined investigations us
 
 OntoJev discovers and investigates **computational target candidates**.
 
+```text
+computational target candidate
+!= experimentally validated target
+!= therapeutically validated target
+```
+
 Functional, therapeutic, safety, and clinical validation require additional evidence outside the computational discovery result.
+
+## Target architecture
+
+```text
+GDC release/source context
+→ CohortSpec / ResearchSpec / CampaignProfile
+→ cohort capability discovery
+→ complete scientific gene Universe
+→ deterministic computational genomics
+→ deterministic/statistical evidence
+→ optional Arm Jev
+→ deterministic candidate union
+→ StatisticalState
+→ Wide Jev
+→ Python admission
+→ Candidate
+→ EvidenceState
+→ Deep Jev
+→ Python ActionPolicy / next-move policy
+→ deterministic follow-up or bounded hypotheses + Jev critique
+→ evidence revision
+→ Stage 8
+→ FinalCandidateResult
+→ dossier
+→ Jev-vs-no-Jev comparison
+→ candidate complete
+→ campaign complete
+→ CampaignSelectionPolicy
+→ next campaign or idle
+```
+
+The central control rule is:
+
+> **Jev judges. Python decides. Python executes.**
+
+## Target scientific operating model
+
+OntoJev separates six scales:
+
+1. **Program** — the long-running system-owned autonomous research program.
+2. **Campaign** — one coherent cohort + one pinned GDC release/source context + one versioned method profile.
+3. **Universe** — every scientifically eligible gene for the Campaign.
+4. **Shard** — an operational subset used only for bounded acquisition or computation.
+5. **Target state** — one integrated `StatisticalState` evaluated by Wide Jev.
+6. **Investigation** — one admitted Candidate with its own bounded immutable `EvidenceState` chain.
+
+Operational batching must never redefine the scientific population.
+
+## Scientific data model
+
+OntoJev uses:
+
+- typed GDC API/analysis endpoints where they answer the scientific question directly;
+- selected open harmonized GDC files via `gdc-client` where file-level data are preferable;
+- current GDC workflow documentation to interpret how measurements were produced;
+- `gdcdatamodel2` as the code-level GDC data-model authority;
+- established GDAN/TCGA/NCI computational methods before ad hoc alternatives.
+
+Raw BAM/FASTQ/WGS acquisition is not the default. Scientific completeness does not require mirroring GDC locally.
+
+## Jev roles
+
+### Arm Jev
+
+Optional, per modality, and only for `JEV_REVIEW` cases where deterministic/statistical analysis leaves a genuine semantic question.
+
+### Wide Jev
+
+The principal integrated semantic layer over canonical `StatisticalState`.
+
+### Deep Jev
+
+The candidate-investigation semantic layer over immutable `EvidenceState` revisions.
+
+### Hypothesis Jev
+
+Critiques bounded LLM-generated hypotheses. Hypotheses are never evidence.
+
+## Planned evidence levels
+
+```text
+MEASURED
+→ DESCRIPTIVE_CANDIDATE
+→ STATISTICALLY_SUPPORTED
+→ INTERNALLY_REPLICATED
+→ EXTERNALLY_REPLICATED
+→ FUNCTIONALLY_SUPPORTED
+```
+
+Jev may affect prioritization. It may never promote scientific evidence level.
+
+## Campaigns
+
+TCGA-LUAD is the first intended validation profile. The current LUAD ResearchSpec does not establish genome-wide discovery or autonomous scientific readiness.
+
+Core scientific code must remain cancer-agnostic. Cross-cancer pooling requires an explicit comparability contract.
+
+## Documentation
+
+- [`docs/PRODUCT_SCOPE.md`](docs/PRODUCT_SCOPE.md) — product definition, scope and claim boundaries.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — system and scientific architecture.
+- [`docs/SCIENTIFIC_INVARIANTS.md`](docs/SCIENTIFIC_INVARIANTS.md) — hard scientific and control rules.
+- [`docs/DATA_STRATEGY.md`](docs/DATA_STRATEGY.md) — GDC source, sharding, acquisition and provenance rules.
+- [`docs/JEV_DESIGN.md`](docs/JEV_DESIGN.md) — Arm, Wide, Deep and hypothesis Jev responsibilities.
+- [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) — inspected current state and bounded remaining implementation units.
+- [`docs/REPOSITORY_FACTS.md`](docs/REPOSITORY_FACTS.md) — generated schema, policy, projection and action identities.
+
+Keep these documents canonical and compact. Git history is the archive.
