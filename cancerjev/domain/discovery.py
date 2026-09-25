@@ -367,6 +367,8 @@ class ExpressionDiscoveryResult:
     warnings: tuple[str, ...]
     limitations: tuple[str, ...]
     request_plan_max: int
+    workflow_file_counts: tuple[tuple[str, int], ...] = ()
+    workflow_coverage_complete: bool = True
 
     def __post_init__(self) -> None:
         for value in (self.spec_id, self.cohort_id, self.project_id, self.release):
@@ -403,6 +405,20 @@ class ExpressionDiscoveryResult:
                     for entry in self.entries), "tail method identity mismatch")
         count(self.request_plan_max, "request_plan_max")
         require(self.request_plan_max <= 150, "expression request plan exceeds run cap")
+        require(type(self.workflow_file_counts) is tuple
+                and all(isinstance(item, tuple) and len(item) == 2
+                        and isinstance(item[0], str) and bool(item[0])
+                        and isinstance(item[1], int) and not isinstance(item[1], bool)
+                        and item[1] > 0
+                        for item in self.workflow_file_counts),
+                "invalid expression workflow file counts")
+        require(self.workflow_file_counts == tuple(sorted(self.workflow_file_counts)),
+                "expression workflow file counts must be sorted")
+        require(isinstance(self.workflow_coverage_complete, bool),
+                "workflow coverage flag must be a boolean")
+        if self.workflow_coverage_complete:
+            require(bool(self.workflow_file_counts),
+                    "complete workflow coverage requires named workflow counts")
 
 
 @dataclass(frozen=True)

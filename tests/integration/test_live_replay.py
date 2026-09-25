@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from apps.api.main import create_app
 from cancerjev.domain.codecs import read_state, state_identity
 from cancerjev.domain.measurements import OperationalSource, ScientificSource
+from cancerjev.gdc.endpoints import SSM_OCCURRENCE_FIELDS
 from cancerjev.gdc.parsers import ResponseMeta, parse_expression_availability
 from cancerjev.jev.service import JevService
 from cancerjev.jev.typesafe_adapter import JevProviderError
@@ -328,7 +329,8 @@ def test_live_replay_links_scientific_sources_to_the_responses_that_supplied_the
         assert all(isinstance(source, ScientificSource) for source in state.sources)
         assert all(isinstance(source, OperationalSource) for source in state.operational_sources)
         assert {field.name for field in dataclasses.fields(ScientificSource)} == {
-            "endpoint", "request_hash", "response_hash", "parser_version", "release", "acquisition"}
+            "endpoint", "request_hash", "response_hash", "parser_version", "release", "acquisition",
+            "workflow_family", "caller_family", "strategy", "annotation_context"}
         for source in state.sources:
             if source.endpoint == "/ssm_occurrences/scan":
                 assert source.response_hash == scan_artifact["sha256"]
@@ -361,6 +363,12 @@ def test_live_path_derives_affected_cases_from_the_complete_occurrence_scan(runt
     payload = json.loads(runtime[2].read(artifact["relative_path"]))
     assert payload["affected_count_method"] == "MUTATION_AFFECTED_CASE_COUNT_V2"
     assert payload["affected_totals_in_scope"] == LUAD_AFFECTED
+
+    scan_artifact = repository.artifact_at_path(
+        f"runs/{run_id}/selection/occurrence-scan-TCGA-LUAD.json")
+    scan_document = json.loads(runtime[2].read(scan_artifact["relative_path"]))
+    assert scan_document["requested_fields"] == list(SSM_OCCURRENCE_FIELDS)
+    assert scan_document["field_set_hash"]
 
     for gene_id in GENES:
         _, stored = _typed_state(runtime, repository, run_id, gene_id)

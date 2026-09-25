@@ -1,0 +1,22 @@
+{
+  "authentication": "NONE (anonymous)",
+  "base_host": "api.gdc.cancer.gov",
+  "captured_at": "2026-09-25T20:41:10.800611Z",
+  "captures": [
+    {
+      "body_bytes_read": 1240,
+      "body_sha256": "1402d775695fe0916488b686437100289eb3afe7c9525161ef2716e1039a00bb",
+      "completeness": "COMPLETE",
+      "endpoint": "/files",
+      "error": null,
+      "http_status": 200,
+      "method": "GET",
+      "probe_name": "luad_expression_workflow_facets",
+      "response_truncated_by_probe_cap": false,
+      "retrieved_at": "2026-09-25T20:41:10.800611Z",
+      "url": "/files?facets=access%2Cexperimental_strategy%2Canalysis.workflow_type%2Cdata_type&filters=%7B%22content%22%3A%5B%7B%22content%22%3A%7B%22field%22%3A%22access%22%2C%22value%22%3A%5B%22open%22%5D%7D%2C%22op%22%3A%22in%22%7D%2C%7B%22content%22%3A%7B%22field%22%3A%22cases.project.project_id%22%2C%22value%22%3A%5B%22TCGA-LUAD%22%5D%7D%2C%22op%22%3A%22in%22%7D%2C%7B%22content%22%3A%7B%22field%22%3A%22data_type%22%2C%22value%22%3A%5B%22Gene+Expression+Quantification%22%5D%7D%2C%22op%22%3A%22in%22%7D%5D%2C%22op%22%3A%22and%22%7D&size=0"
+    }
+  ],
+  "probe_count": 1,
+  "total_body_bytes": 1240
+}

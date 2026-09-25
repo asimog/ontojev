@@ -29,6 +29,13 @@ GENES_UNIVERSE_SORT = "gene_id:asc"
 
 GENE_CASE_COUNTS_FIELDS_NOTE = "endpoint rejects fields/format parameters"
 
+SSM_OCCURRENCE_FIELDS = (
+    "ssm_occurrence_id",
+    "case.case_id",
+    "case.project.project_id",
+    "ssm.consequence.transcript.gene.gene_id",
+)
+
 
 class EndpointError(Exception):
     """Raised when a request would leave the allowlisted GDC surface."""
@@ -228,24 +235,31 @@ def files_expression_request(project_id: str, size: int = 5) -> GDCRequest:
     )
 
 
-def files_capability_request(project_id: str) -> GDCRequest:
-    """One aggregate open-file facet request: per-strategy/workflow/data-type counts.
+def files_capability_request(project_id: str, *, data_type: str | None = None) -> GDCRequest:
+    """One aggregate open-file facet request: per-access/strategy/workflow/data-type counts.
 
     The request lists no file: it returns provider aggregate counts only, so a
-    cohort capability probe stays near-zero-bytes. Only open-access files are
-    counted; access to controlled data is impossible by construction.
+    cohort capability probe or expression workflow-coverage check stays
+    near-zero-bytes. The access facet is requested in addition to the
+    server-side open filter so a provider returning a controlled bucket fails
+    closed instead of being silently ignored.
     """
     if not isinstance(project_id, str) or not project_id or len(project_id) > 128:
         raise EndpointError("capability project_id is invalid")
+    if data_type is not None and (not isinstance(data_type, str) or not data_type):
+        raise EndpointError("capability data_type is invalid")
+    content: list[dict[str, Any]] = [
+        {"op": "in", "content": {"field": "access", "value": ["open"]}},
+        {"op": "in", "content": {"field": "cases.project.project_id", "value": [project_id]}},
+    ]
+    if data_type is not None:
+        content.append({"op": "in", "content": {"field": "data_type", "value": [data_type]}})
     return _request(
         resolve_endpoint("GET", "/files"),
         {
             "size": 0,
-            "facets": "experimental_strategy,analysis.workflow_type,data_type",
-            "filters": _filter_json({"op": "and", "content": [
-                {"op": "in", "content": {"field": "access", "value": ["open"]}},
-                {"op": "in", "content": {"field": "cases.project.project_id", "value": [project_id]}},
-            ]}),
+            "facets": "access,experimental_strategy,analysis.workflow_type,data_type",
+            "filters": _filter_json({"op": "and", "content": content}),
         },
         logical_query_id=f"files-capability:{project_id}",
     )
@@ -406,12 +420,7 @@ def ssm_occurrence_page_request(project_id: str, *, offset: int = 0,
             "sort": "ssm_occurrence_id:asc",
             "filters": _filter_json({"op": "in", "content": {
                 "field": "case.project.project_id", "value": [project_id]}}),
-            "fields": ",".join((
-                "ssm_occurrence_id",
-                "case.case_id",
-                "case.project.project_id",
-                "ssm.consequence.transcript.gene.gene_id",
-            )),
+            "fields": ",".join(SSM_OCCURRENCE_FIELDS),
         },
         logical_query_id=f"ssm-occurrence-scan:{project_id}",
         page=(offset // size) + 1,

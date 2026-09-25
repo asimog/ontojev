@@ -49,6 +49,7 @@ from cancerjev.domain.measurements import (
 )
 from cancerjev.domain.scientific import MutationCountResult
 from cancerjev.gdc.endpoints import (
+    SSM_OCCURRENCE_FIELDS,
     cohort_project_request,
     genes_universe_request,
     mutated_cases_count_request,
@@ -263,7 +264,12 @@ def _reducer_identity(project_id: str) -> MethodIdentityRef:
 def publish_occurrence_scan(artifacts: ArtifactStore, repository: Repository, run_id: str,
                             scan: MutationOccurrenceScan, *, relative_path: str,
                             ) -> tuple[Any, OperationalSource]:
-    """Persist the immutable scan record bundle and derive its aggregate source."""
+    """Persist the immutable scan record bundle and derive its aggregate source.
+
+    The document pins the exact requested field set, so a later field extension
+    can never be confused with the reconciled V2 scan semantics.
+    """
+    field_set_hash = digest(list(SSM_OCCURRENCE_FIELDS))
     document = {
         "kind": "MUTATION_OCCURRENCE_SCAN",
         "project_id": scan.project_id,
@@ -271,6 +277,8 @@ def publish_occurrence_scan(artifacts: ArtifactStore, repository: Repository, ru
         "page_count": scan.page_count,
         "total_occurrences": scan.total_occurrences,
         "bytes_read": scan.bytes_read,
+        "requested_fields": list(SSM_OCCURRENCE_FIELDS),
+        "field_set_hash": field_set_hash,
         "distinct_cases_per_gene": dict(sorted(scan.distinct_cases_per_gene.items())),
         "occurrence_docs_per_gene": dict(sorted(scan.occurrence_docs_per_gene.items())),
         "page_sources": [asdict(page_source.source) for page_source in scan.sources],
@@ -286,10 +294,13 @@ def publish_occurrence_scan(artifacts: ArtifactStore, repository: Repository, ru
             endpoint=SCAN_ENDPOINT_DESCRIPTOR,
             request_hash=digest({"project_id": scan.project_id, "page_size": scan.page_size,
                                  "page_count": scan.page_count,
-                                 "total_occurrences": scan.total_occurrences}),
+                                 "total_occurrences": scan.total_occurrences,
+                                 "field_set_hash": field_set_hash}),
             response_hash=artifact.sha256, parser_version=PARSER_VERSION,
             release=scan.sources[0].source.release if scan.sources else "UNVERIFIED_RELEASE",
             acquisition=Acquisition.COMPLETE,
+            workflow_family="GDC_OPEN_MAF_AGGREGATION",
+            caller_family="MULTI_CALLER_ENSEMBLE",
         ),
         attempt_id=f"scan:{artifact.artifact_id}", artifact_id=artifact.artifact_id,
         retrieved_at=utc_now(), bytes_read=scan.bytes_read, latency_ms=0, http_status=200,

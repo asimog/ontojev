@@ -132,6 +132,8 @@ def run_expression_discovery(
         universe.universe.release, research_spec.expression_discovery, universe.universe,
         population, entries, acquired.workflows, acquired.strategies, tuple(sources),
         tuple(warnings), EXPRESSION_LIMITATIONS, plan_max,
+        workflow_file_counts=acquired.workflow_file_counts,
+        workflow_coverage_complete=acquired.workflow_coverage_complete,
     )
     artifact = artifacts.publish(
         f"runs/{run_id}/expression-discovery/result.json", write_expression_discovery(result),

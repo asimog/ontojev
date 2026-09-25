@@ -28,9 +28,29 @@ def _json(payload: Any) -> bytes:
 
 
 def _filter_project(request: GDCRequest) -> str:
-    params = dict(request.params)
-    filters = json.loads(params["filters"])
-    return filters["content"]["value"][0] if filters["op"] == "in" else filters["content"][0]["content"]["value"][0]
+    """Project id from a provider filter tree (field-named clause, any nesting)."""
+    filters = json.loads(dict(request.params)["filters"])
+
+    def find(node: object) -> str | None:
+        if isinstance(node, list):
+            for item in node:
+                found = find(item)
+                if found is not None:
+                    return found
+            return None
+        if not isinstance(node, dict):
+            return None
+        content = node.get("content")
+        if node.get("op") == "in" and isinstance(content, dict):
+            value = content.get("value")
+            field = content.get("field", "")
+            if (isinstance(value, list) and value and field in {
+                    "project_id", "project.project_id", "case.project.project_id",
+                    "cases.project.project_id"}):
+                return str(value[0])
+        return find(content)
+
+    return find(filters) or "UNKNOWN"
 
 
 def status_body() -> bytes:
@@ -141,6 +161,25 @@ def cases_body(project_id: str, projects: dict[str, int], *, size: int, offset: 
     return _json({"data": {"hits": hits, "pagination": {"count": len(hits), "total": total,
                                                        "size": size, "from": offset,
                                                        "pages": (total + size - 1) // size}}})
+
+
+def expression_workflow_facets_body(project_id: str, files: int, *,
+                                    controlled: bool = False) -> bytes:
+    """Aggregate open-file facets for the expression workflow-coverage check."""
+    access = {"open": files}
+    if controlled:
+        access["controlled"] = 1
+    return _json({"data": {
+        "hits": [],
+        "pagination": {"total": files, "count": 0, "size": 0, "from": 0, "pages": 0},
+        "aggregations": {
+            "access": {"buckets": [{"key": key, "doc_count": count}
+                                   for key, count in sorted(access.items())]},
+            "experimental_strategy": {"buckets": [{"key": "RNA-Seq", "doc_count": files}]},
+            "analysis.workflow_type": {"buckets": [{"key": "STAR - Counts", "doc_count": files}]},
+            "data_type": {"buckets": [{"key": "Gene Expression Quantification", "doc_count": files}]},
+        },
+    }})
 
 
 def files_body(project_id: str, *, controlled: bool = False) -> bytes:
@@ -275,7 +314,13 @@ class ReplayTransport:
                     document["data"]["pagination"]["from"] -= 1
                 body = _json(document)
         elif name == "files":
-            body = files_body(_filter_project(request), controlled=self.controlled_files)
+            if "facets" in dict(request.params):
+                project_id = _filter_project(request)
+                body = expression_workflow_facets_body(
+                    project_id, self.project_case_counts.get(project_id, 0),
+                    controlled=self.controlled_files)
+            else:
+                body = files_body(_filter_project(request), controlled=self.controlled_files)
         elif name == "gene_expression_availability":
             project = self._project_of(request.body["case_ids"])
             body = availability_body(request.body["case_ids"], request.body["gene_ids"],

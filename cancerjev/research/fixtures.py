@@ -147,6 +147,22 @@ def files_body(project_id: str) -> bytes:
                                                        "size": 5, "from": 0, "pages": 1}}})
 
 
+def expression_workflow_facets_body(project_id: str) -> bytes:
+    """Aggregate open-file facets for the expression workflow-coverage check."""
+    files = PROJECTS.get(project_id, 0)
+    return _json({"data": {
+        "hits": [],
+        "pagination": {"total": files, "count": 0, "size": 0, "from": 0, "pages": 0},
+        "aggregations": {
+            "access": {"buckets": [{"key": "open", "doc_count": files}]},
+            "experimental_strategy": {"buckets": [{"key": "RNA-Seq", "doc_count": files}]},
+            "analysis.workflow_type": {"buckets": [{"key": "STAR - Counts", "doc_count": files}]},
+            "data_type": {"buckets": [{"key": "Gene Expression Quantification",
+                                       "doc_count": files}]},
+        },
+    }})
+
+
 def availability_body(case_ids_requested: list[str], gene_ids: list[str]) -> bytes:
     return _json({
         "cases": {
@@ -221,7 +237,10 @@ class FixtureTransport:
             body = cases_body(_filter_project(request), self.project_case_counts,
                               size=int(params["size"]), offset=int(params["from"]))
         elif name == "files":
-            body = files_body(_filter_project(request))
+            if "facets" in dict(request.params):
+                body = expression_workflow_facets_body(_filter_project(request))
+            else:
+                body = files_body(_filter_project(request))
         elif name == "gene_expression_availability":
             body = availability_body(request_body["case_ids"], request_body["gene_ids"])
         elif name == "gene_expression_gene_selection":

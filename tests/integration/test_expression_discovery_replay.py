@@ -58,6 +58,10 @@ def test_expression_discovery_replay_is_complete_hash_bound_and_model_free(runti
     assert result.universe.ordered_ids == tuple(GENES)
     assert len(result.population.examined_ids) == 25
     assert result.request_plan_max == 9
+    assert result.workflows == ("STAR - Counts",)
+    assert result.workflow_file_counts == (("STAR - Counts", 25),)
+    assert result.workflow_coverage_complete is True
+    assert any(source.source.workflow_family == "STAR_COUNTS" for source in result.sources)
     assert len(result.entries) == 2
     for entry in result.entries:
         assert isinstance(entry.outcome, ExpressionSummaryResult)

@@ -11,7 +11,7 @@ The diagram and numbered design sections below describe the target architecture.
 | Scope | `research/specs.py`: `CohortSpec`, `ResearchSpec`, LUAD profile; `research/capability.py` derives a release-pinned typed capability from status + one project record + one aggregate open-file facet request; `research/campaign.py` gates profiles by readiness | Wider source/capability/readiness bindings and continuous Campaign selection; LUAD scientific validation is not assumed. |
 | Universe | `domain/discovery.py`, `research/discovery.py`: bounded indexed protein-coding prefix | Complete eligible universe with operational shard completion and global reduction. |
 | Mutation | Stage 4 counts distinct cases from complete released-occurrence scans | Correct older `research/live.py` bucket consumer; add only justified scientific methods. |
-| Expression | `research/expression_discovery.py`: case-labelled UQFPKM summaries and descriptive tails | Provenance/QC, defensible inference when eligible, independent nomination. |
+| Expression | `research/expression_discovery.py`: case-labelled UQFPKM summaries and descriptive tails; one aggregate open-file facet request records per-workflow coverage and annotates single-family sources | QC, defensible inference when eligible, independent nomination. |
 | CNV | `research/cnv_discovery.py`: positive indexed categories on mutation survivors | Independent caller-aware nomination; no assumed neutral denominator. |
 | Integration | `research/cutover.py`: states only for mutation survivors | Deterministic modality union into the same `StatisticalState`. |
 | Control | `research/wide.py`, `deep.py`, `nextmove.py`, `investigation.py` | Preserve bounded Python control; extend scientific follow-up and explicit dispatch policy. |

@@ -975,8 +975,9 @@ def parse_file_facets(body: bytes, meta: ResponseMeta) -> FileFacets:
     if not isinstance(aggregations, dict):
         raise ParserError("MISSING_FIELD", "files: aggregations object is missing")
     counts: dict[str, dict[str, int]] = {}
-    for name in FACET_NAMES:
-        facet = aggregations.get(name)
+    for name, facet in aggregations.items():
+        if not isinstance(name, str) or not name:
+            raise ParserError("INVALID_FACET", "files: facet name is invalid")
         if not isinstance(facet, dict) or not isinstance(facet.get("buckets"), list):
             raise ParserError("INVALID_FACET", f"files: facet {name} is missing or malformed")
         buckets: dict[str, int] = {}
@@ -993,6 +994,9 @@ def parse_file_facets(body: bytes, meta: ResponseMeta) -> FileFacets:
                 raise ParserError("DUPLICATE_ID", f"files: facet {name} repeats {key}")
             buckets[key] = count
         counts[name] = buckets
+    for name in FACET_NAMES:
+        if name not in counts:
+            raise ParserError("INVALID_FACET", f"files: facet {name} is missing or malformed")
     pagination = data.get("pagination")
     total = pagination.get("total") if isinstance(pagination, dict) else None
     if total is not None and (not isinstance(total, int) or isinstance(total, bool) or total < 0):

@@ -261,6 +261,8 @@ different methylation platforms/workflows
 
 Do not build a large provenance ontology without a scientific consumer.
 
+Implemented now: `ScientificSource` carries optional `workflow_family`, `caller_family`, `strategy` and `annotation_context` provenance fields; expression workflow coverage is measured with one aggregate open-file facet request per cohort (per-workflow file counts recorded, `_missing` coverage recorded as a limitation and the single-family source annotation withheld, never a silent full-coverage claim); and the mutation occurrence-scan document pins its requested field set and field-set hash. Cross-workflow comparison remains forbidden by default (`Compatibility.UNVERIFIED`).
+
 ## 13. Testing and reconciliation
 
 Selection-critical scientific measurements require independent validation where feasible.

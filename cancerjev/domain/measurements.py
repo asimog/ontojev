@@ -255,6 +255,10 @@ class ScientificSource:
     parser_version: str
     release: str
     acquisition: Acquisition
+    workflow_family: str | None = None
+    caller_family: str | None = None
+    strategy: str | None = None
+    annotation_context: str | None = None
 
     def __post_init__(self) -> None:
         text(self.endpoint, "endpoint")
@@ -264,6 +268,12 @@ class ScientificSource:
         text(self.parser_version, "parser_version")
         text(self.release, "release")
         require(isinstance(self.acquisition, Acquisition), "invalid source acquisition")
+        for value, name in ((self.workflow_family, "workflow_family"),
+                            (self.caller_family, "caller_family"),
+                            (self.strategy, "strategy"),
+                            (self.annotation_context, "annotation_context")):
+            if value is not None:
+                text(value, f"source {name}")
 
 
 @dataclass(frozen=True)

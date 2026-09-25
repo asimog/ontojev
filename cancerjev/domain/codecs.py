@@ -14,6 +14,7 @@ from cancerjev.domain._json import (
     number,
     obj,
     optional_string,
+    require,
     seq,
     string,
     string_tuple,
@@ -155,10 +156,22 @@ def _entry(value: object) -> MutationDiscoveryEntry:
                                   None if d["rank"] is None else integer(d["rank"]))
 
 
+_SOURCE_REQUIRED_FIELDS = ("endpoint", "request_hash", "response_hash", "parser_version", "release",
+                           "acquisition")
+_SOURCE_OPTIONAL_FIELDS = ("workflow_family", "caller_family", "strategy", "annotation_context")
+
+
 def _source(value: object) -> ScientificSource:
-    d = obj(value, "endpoint request_hash response_hash parser_version release acquisition")
-    return ScientificSource(string(d["endpoint"]), string(d["request_hash"]), string(d["response_hash"]),
-                            string(d["parser_version"]), string(d["release"]), Acquisition(string(d["acquisition"])))
+    d = obj(value)
+    allowed = set(_SOURCE_REQUIRED_FIELDS) | set(_SOURCE_OPTIONAL_FIELDS)
+    require(set(d) <= allowed, "source carries unexpected fields")
+    require(set(d) >= set(_SOURCE_REQUIRED_FIELDS), "source is missing required fields")
+    return ScientificSource(
+        string(d["endpoint"]), string(d["request_hash"]), string(d["response_hash"]),
+        string(d["parser_version"]), string(d["release"]), Acquisition(string(d["acquisition"])),
+        optional_string(d.get("workflow_family")), optional_string(d.get("caller_family")),
+        optional_string(d.get("strategy")), optional_string(d.get("annotation_context")),
+    )
 
 
 def _sources(value: object) -> tuple[ScientificSource, ...]:
@@ -504,8 +517,21 @@ def _jsonable(value: object) -> object:
     return value
 
 
+def _strip_unset_source_fields(value: object) -> object:
+    """Drop unset provenance fields so an unannotated source keeps its historical identity."""
+    if isinstance(value, dict):
+        if {"endpoint", "request_hash", "response_hash"} <= set(value):
+            for key in _SOURCE_OPTIONAL_FIELDS:
+                if value.get(key) is None:
+                    value.pop(key, None)
+        return {key: _strip_unset_source_fields(item) for key, item in list(value.items())}
+    if isinstance(value, (list, tuple)):
+        return [_strip_unset_source_fields(item) for item in value]
+    return value
+
+
 def _state_identity_payload(state: StatisticalState) -> dict[str, object]:
-    payload = _jsonable(asdict(state))
+    payload = _strip_unset_source_fields(_jsonable(asdict(state)))
     assert isinstance(payload, dict)
     # Operational attempt/cache/artifact links and provider ranking metadata are
     # not scientific truth and never contribute to identity.
@@ -522,7 +548,7 @@ def _state_identity_payload(state: StatisticalState) -> dict[str, object]:
 
 
 def _evidence_identity_payload(state: EvidenceState) -> dict[str, object]:
-    payload = _jsonable(asdict(state))
+    payload = _strip_unset_source_fields(_jsonable(asdict(state)))
     assert isinstance(payload, dict)
     # The revision's scientific identity is its content: the accepted state's
     # identity hash, parent identity, revision index, checks and copied evidence.
@@ -713,6 +739,10 @@ def expression_discovery_identity(result: ExpressionDiscoveryResult) -> str:
     payload = _jsonable(asdict(result))
     assert isinstance(payload, dict)
     payload.pop("sources")
+    if payload.get("workflow_file_counts") == []:
+        payload.pop("workflow_file_counts", None)
+    if payload.get("workflow_coverage_complete") is True:
+        payload.pop("workflow_coverage_complete", None)
     return digest({"schema_version": EXPRESSION_DISCOVERY_SCHEMA_VERSION,
                    "kind": "EXPRESSION_DISCOVERY_RESULT", **payload})
 
@@ -731,9 +761,13 @@ def read_expression_discovery(
     try:
         d = decode(data)
         _unsupported(d, EXPRESSION_DISCOVERY_SCHEMA_VERSION, "EXPRESSION_DISCOVERY_RESULT")
-        obj(d, "schema_version kind spec_id cohort_id project_id release expression_discovery "
-               "universe population entries workflows strategies sources warnings limitations "
-               "request_plan_max expression_discovery_hash")
+        required = set(
+            "schema_version kind spec_id cohort_id project_id release expression_discovery "
+            "universe population entries workflows strategies sources warnings limitations "
+            "request_plan_max expression_discovery_hash".split())
+        allowed = required | {"workflow_file_counts", "workflow_coverage_complete"}
+        require(set(d) <= allowed, "expression discovery carries unexpected fields")
+        require(set(d) >= required, "expression discovery is missing required fields")
         result = ExpressionDiscoveryResult(
             string(d["spec_id"]), string(d["cohort_id"]), string(d["project_id"]),
             string(d["release"]), _expression_discovery_spec(d["expression_discovery"]),
@@ -743,6 +777,9 @@ def read_expression_discovery(
             tuple(_operational_source(item) for item in seq(d["sources"])),
             string_tuple(d["warnings"]), string_tuple(d["limitations"]),
             integer(d["request_plan_max"]),
+            tuple((string(item[0]), integer(item[1]))
+                  for item in seq(d.get("workflow_file_counts", []))),
+            True if "workflow_coverage_complete" not in d else boolean(d["workflow_coverage_complete"]),
         )
         _binding(expression_discovery_identity(result), d["expression_discovery_hash"], expected_hash)
         return result

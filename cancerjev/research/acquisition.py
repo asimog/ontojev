@@ -13,7 +13,7 @@ from cancerjev.gdc.endpoints import (
     expression_availability_request,
     expression_gene_selection_request,
     expression_values_request,
-    files_expression_request,
+    files_capability_request,
     gene_case_counts_request,
     mutated_cases_count_request,
     ssm_occurrence_page_request,
@@ -24,6 +24,7 @@ from cancerjev.gdc.parsers import (
     DiscoveryHit,
     ExpressionAvailability,
     ExpressionValues,
+    FileFacets,
     GeneCaseCounts,
     ProjectCoverage,
     ProjectRecord,
@@ -32,7 +33,7 @@ from cancerjev.gdc.parsers import (
     parse_cases,
     parse_expression_availability,
     parse_expression_values,
-    parse_files_provenance,
+    parse_file_facets,
     parse_gene_case_counts,
     parse_gene_selection,
     parse_mutated_cases_count,
@@ -69,6 +70,8 @@ class ExpressionAcquisition:
     values: ExpressionValues | None
     workflows: tuple[str, ...]
     strategies: tuple[str, ...]
+    workflow_file_counts: tuple[tuple[str, int], ...]
+    workflow_coverage_complete: bool
     provider_summary_unavailable_reason: str | None
     sources: tuple[OperationalSource, ...]
     warnings: tuple[str, ...]
@@ -123,6 +126,8 @@ class BatchedExpressionAcquisition:
     batches: tuple[ExpressionGeneBatch, ...]
     workflows: tuple[str, ...]
     strategies: tuple[str, ...]
+    workflow_file_counts: tuple[tuple[str, int], ...]
+    workflow_coverage_complete: bool
     sources: tuple[OperationalSource, ...]
     warnings: tuple[str, ...]
 
@@ -145,12 +150,17 @@ def _acquisition_of(response: GDCResponse) -> Acquisition:
         ) from exc
 
 
-def response_operational_source(response: GDCResponse, *, release: str | None) -> OperationalSource:
+def response_operational_source(response: GDCResponse, *, release: str | None,
+                                workflow_family: str | None = None,
+                                caller_family: str | None = None,
+                                strategy: str | None = None,
+                                annotation_context: str | None = None) -> OperationalSource:
     """Typed provenance for one response, linked to its GDC attempt.
 
     The scientific source carries the logical request, response hash, parser
-    version and acquisition state; the operational source carries the attempt,
-    artifact id and timestamps. Operational fields stay out of scientific identity.
+    version, acquisition state and any provider-exposed workflow/caller/strategy
+    annotation; the operational source carries the attempt, artifact id and
+    timestamps. Operational fields stay out of scientific identity.
     """
     return OperationalSource(
         source=ScientificSource(
@@ -160,6 +170,10 @@ def response_operational_source(response: GDCResponse, *, release: str | None) -
             parser_version=PARSER_VERSION,
             release=release or "UNVERIFIED_RELEASE",
             acquisition=_acquisition_of(response),
+            workflow_family=workflow_family,
+            caller_family=caller_family,
+            strategy=strategy,
+            annotation_context=annotation_context,
         ),
         attempt_id=f"{response.request_id or response.artifact.artifact_id}:{response.attempt_no}",
         artifact_id=response.artifact.artifact_id,
@@ -466,21 +480,89 @@ def acquire_cohort(transport: AcquisitionTransport, project: ProjectRecord,
     return CohortAcquisition(tuple(cases), frame_hash, tuple(sources), tuple(warnings))
 
 
+EXPRESSION_WORKFLOW_DATA_TYPE = "Gene Expression Quantification"
+MISSING_FACET_KEY = "_missing"
+
+
+def _expression_workflow_coverage(
+    project_id: str, facets: FileFacets,
+) -> tuple[tuple[str, ...], tuple[tuple[str, int], ...], tuple[str, ...], bool, tuple[str, ...]]:
+    """Provider workflow counts over every open expression file.
+
+    Returns (workflows, workflow_file_counts, strategies, coverage_complete, warnings).
+    Coverage is complete only when every open expression file carries a named
+    provider workflow type; otherwise the lane stays PARTIAL. A provider-reported
+    controlled access bucket fails closed even though the request filters to open
+    files, because a controlled file can then never be silently averaged in.
+    """
+    warnings: list[str] = []
+    controlled = {key: count for key, count in facets.facet("access").items()
+                  if key != "open" and count > 0}
+    if controlled:
+        raise LiveRunError(
+            "CONTROLLED_RECORD_RETURNED",
+            f"{project_id}: provider aggregate reports non-open expression files: {sorted(controlled)}",
+        )
+    workflows_map = facets.facet("analysis.workflow_type")
+    missing_workflow_files = workflows_map.pop(MISSING_FACET_KEY, 0)
+    workflow_counts = tuple(sorted((name, count) for name, count in workflows_map.items()
+                                   if count > 0))
+    strategies_map = facets.facet("experimental_strategy")
+    missing_strategy_files = strategies_map.pop(MISSING_FACET_KEY, 0)
+    strategies = tuple(sorted(name for name, count in strategies_map.items() if count > 0))
+    total = facets.total_open_files
+    named_files = sum(count for _, count in workflow_counts)
+    coverage_complete = bool(workflow_counts) and missing_workflow_files == 0 and (
+        total is None or named_files == total)
+    if not coverage_complete:
+        warnings.append(
+            f"{project_id}: expression workflow coverage is incomplete ({named_files} of "
+            f"{total if total is not None else 'unknown'} open files carry a named workflow type; "
+            f"{missing_workflow_files} carry none)"
+        )
+    if missing_strategy_files:
+        warnings.append(
+            f"{project_id}: {missing_strategy_files} open expression files carry no experimental strategy"
+        )
+    return (tuple(name for name, _ in workflow_counts), workflow_counts, strategies,
+            coverage_complete, tuple(warnings))
+
+
+def _expression_annotation(
+    project_id: str, workflows: tuple[str, ...], strategies: tuple[str, ...], coverage_complete: bool,
+) -> tuple[dict[str, str | None], list[str]]:
+    """Single-family provider annotation for expression sources, or an explicit note."""
+    if not coverage_complete:
+        return {}, [f"{project_id}: expression workflow annotation withheld: coverage is incomplete"]
+    if workflows == ("STAR - Counts",):
+        return {"workflow_family": "STAR_COUNTS",
+                "strategy": strategies[0] if len(strategies) == 1 else None,
+                "annotation_context": "GENCODE_V36"}, []
+    return {}, [f"{project_id}: expression workflow families are mixed; "
+                "no single annotation context is claimed"]
+
+
 def acquire_expression(transport: AcquisitionTransport, project: ProjectRecord,
                        acquisition: AcquisitionSpec, release: str | None,
                        cohort: CohortAcquisition, gene_ids: list[str]) -> ExpressionAcquisition:
     sources: list[OperationalSource] = []
     warnings: list[str] = []
     case_ids = [case.case_id for case in cohort.cases]
-    files_response = transport.request(
-        files_expression_request(project.project_id, acquisition.expression_file_sample_size)
+    facets_response = transport.request(
+        files_capability_request(project.project_id, data_type=EXPRESSION_WORKFLOW_DATA_TYPE)
     )
-    provenance = parse_files_provenance(files_response.body, response_meta(files_response, release))
-    sources.append(response_operational_source(files_response, release=release))
-    warnings += provenance.warnings
-    if provenance.non_open_records:
-        raise LiveRunError("CONTROLLED_RECORD_RETURNED",
-                           f"{project.project_id}: {provenance.non_open_records} non-open file records")
+    facets = parse_file_facets(facets_response.body, response_meta(facets_response, release))
+    workflows, workflow_file_counts, strategies, coverage_complete, coverage_warnings = (
+        _expression_workflow_coverage(project.project_id, facets))
+    annotation, annotation_warnings = _expression_annotation(
+        project.project_id, workflows, strategies, coverage_complete)
+    sources.append(response_operational_source(facets_response, release=release))
+    warnings += list(facets.warnings) + list(coverage_warnings) + annotation_warnings
+    if not coverage_complete:
+        warnings.append(
+            f"{project.project_id}: expression lane stays PARTIAL because workflow coverage is not "
+            "complete over the examined cohort"
+        )
     availability: ExpressionAvailability | None = None
     provider: ProviderSelection | None = None
     values: ExpressionValues | None = None
@@ -499,7 +581,8 @@ def acquire_expression(transport: AcquisitionTransport, project: ProjectRecord,
                 expected_cases=batch_case_ids, expected_genes=gene_ids,
             )
             availability_parts.append((batch_case_ids, batch_availability))
-            sources.append(response_operational_source(availability_response, release=release))
+            sources.append(response_operational_source(
+                availability_response, release=release, **annotation))
             warnings += batch_availability.warnings
             cases_with_values = [
                 case_id for case_id in batch_case_ids
@@ -512,7 +595,8 @@ def acquire_expression(transport: AcquisitionTransport, project: ProjectRecord,
                     expected_cases=batch_case_ids, expected_genes=gene_ids,
                 )
                 value_parts.append((batch_case_ids, batch_values))
-                sources.append(response_operational_source(values_response, release=release))
+                sources.append(response_operational_source(
+                    values_response, release=release, **annotation))
                 warnings += batch_values.warnings
             else:
                 value_parts.append((batch_case_ids, None))
@@ -524,7 +608,8 @@ def acquire_expression(transport: AcquisitionTransport, project: ProjectRecord,
                 selection_response.body, response_meta(selection_response, release),
                 expected_genes=gene_ids,
             )
-            sources.append(response_operational_source(selection_response, release=release))
+            sources.append(response_operational_source(
+                selection_response, release=release, **annotation))
             warnings += provider.warnings
         elif len(batches) > 1:
             provider_summary_unavailable_reason = "BATCHED_PROVIDER_SUMMARY_NOT_COHORT_WIDE"
@@ -538,8 +623,9 @@ def acquire_expression(transport: AcquisitionTransport, project: ProjectRecord,
                 f"{project.project_id}: no examined case has gene expression values; "
                 "provider selection and local values lanes skipped (expression NOT_OBSERVED)"
             )
-    return ExpressionAcquisition(availability, provider, values, tuple(provenance.workflows),
-                                 tuple(provenance.strategies), provider_summary_unavailable_reason,
+    return ExpressionAcquisition(availability, provider, values, workflows, strategies,
+                                 workflow_file_counts, coverage_complete,
+                                 provider_summary_unavailable_reason,
                                  tuple(sources), tuple(warnings))
 
 
@@ -561,16 +647,23 @@ def acquire_batched_expression(
     if not 1 <= gene_batch_size <= 100:
         raise LiveRunError("INVALID_EXPRESSION_GENE_BATCH", "gene batch size must be 1..100")
     case_ids = [case.case_id for case in cohort.cases]
-    files_response = transport.request(
-        files_expression_request(project.project_id, acquisition.expression_file_sample_size)
+    facets_response = transport.request(
+        files_capability_request(project.project_id, data_type=EXPRESSION_WORKFLOW_DATA_TYPE)
     )
-    provenance = parse_files_provenance(files_response.body, response_meta(files_response, release))
-    file_source = response_operational_source(files_response, release=release)
-    if provenance.non_open_records:
-        raise LiveRunError("CONTROLLED_RECORD_RETURNED",
-                           f"{project.project_id}: {provenance.non_open_records} non-open file records")
+    facets = parse_file_facets(facets_response.body, response_meta(facets_response, release))
+    workflows, workflow_file_counts, strategies, coverage_complete, coverage_warnings = (
+        _expression_workflow_coverage(project.project_id, facets))
+    annotation, annotation_warnings = _expression_annotation(
+        project.project_id, workflows, strategies, coverage_complete)
+    file_source = response_operational_source(facets_response, release=release)
     all_sources: list[OperationalSource] = [file_source]
-    all_warnings: list[str] = list(provenance.warnings)
+    all_warnings: list[str] = (list(facets.warnings) + list(coverage_warnings)
+                               + annotation_warnings)
+    if not coverage_complete:
+        all_warnings.append(
+            f"{project.project_id}: expression lane stays PARTIAL because workflow coverage is not "
+            "complete over the examined cohort"
+        )
     result_batches: list[ExpressionGeneBatch] = []
     case_batches = [case_ids[index:index + acquisition.case_batch_size]
                     for index in range(0, len(case_ids), acquisition.case_batch_size)]
@@ -589,7 +682,8 @@ def acquire_batched_expression(
                 expected_cases=batch_case_ids, expected_genes=batch_ids,
             )
             availability_parts.append((batch_case_ids, availability))
-            availability_source = response_operational_source(availability_response, release=release)
+            availability_source = response_operational_source(
+                availability_response, release=release, **annotation)
             batch_sources.append(availability_source)
             batch_warnings.extend(availability.warnings)
             if any(availability.cases.get(case_id) is True for case_id in batch_case_ids):
@@ -601,7 +695,8 @@ def acquire_batched_expression(
                     expected_cases=batch_case_ids, expected_genes=batch_ids,
                 )
                 value_parts.append((batch_case_ids, values))
-                batch_sources.append(response_operational_source(values_response, release=release))
+                batch_sources.append(response_operational_source(
+                    values_response, release=release, **annotation))
                 batch_warnings.extend(values.warnings)
             else:
                 value_parts.append((batch_case_ids, None))
@@ -622,7 +717,7 @@ def acquire_batched_expression(
         all_sources.extend(batch_sources)
         all_warnings.extend(batch_warnings)
     return BatchedExpressionAcquisition(
-        tuple(result_batches), tuple(provenance.workflows), tuple(provenance.strategies),
+        tuple(result_batches), workflows, strategies, workflow_file_counts, coverage_complete,
         tuple(all_sources), tuple(all_warnings),
     )
 
