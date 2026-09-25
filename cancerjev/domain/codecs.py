@@ -171,6 +171,12 @@ def _entry(value: object) -> MutationDiscoveryEntry:
         None if descriptive is None else _descriptive(descriptive))
 
 
+def _string_string_pair(value: object) -> tuple[str, str]:
+    parts = seq(value)
+    require(len(parts) == 2, "expected a two-item pair")
+    return string(parts[0]), string(parts[1])
+
+
 def _string_int_pairs(value: object) -> tuple[tuple[str, int], ...]:
     pairs: list[tuple[str, int]] = []
     for item in seq(value):
@@ -596,6 +602,8 @@ def _state_identity_payload(state: StatisticalState) -> dict[str, object]:
     # Operational attempt/cache/artifact links and provider ranking metadata are
     # not scientific truth and never contribute to identity.
     payload.pop("operational_sources")
+    if payload.get("nominations") == []:
+        payload.pop("nominations", None)
     tested_context = payload["tested_context"]
     if isinstance(tested_context, dict):
         tested_context.pop("selection_artifact_id", None)
@@ -673,9 +681,13 @@ def read_state(data: bytes, *, expected_hash: str | None = None) -> StatisticalS
     try:
         d = decode(data)
         _unsupported(d, STATE_SCHEMA_VERSION, "STATISTICAL_STATE")
-        obj(d, "schema_version kind entity annotation research universe tested_context projects "
-               "cross_project quality warnings missingness methods environment_hash sources "
-               "operational_sources state_hash")
+        required = set(
+            "schema_version kind entity annotation research universe tested_context projects "
+            "cross_project quality warnings missingness methods environment_hash sources "
+            "operational_sources state_hash".split())
+        allowed = required | {"nominations"}
+        require(set(d) <= allowed, "state carries unexpected fields")
+        require(set(d) >= required, "state is missing required fields")
         state = StatisticalState(
             _entity(d["entity"]), _annotation(d["annotation"]), _research_state(d["research"]),
             _universe(d["universe"]), _tested_context(d["tested_context"]),
@@ -684,6 +696,7 @@ def read_state(data: bytes, *, expected_hash: str | None = None) -> StatisticalS
             tuple(_method_identity(item) for item in seq(d["methods"])), string(d["environment_hash"]),
             _sources(d["sources"]),
             tuple(_operational_source(item) for item in seq(d["operational_sources"])),
+            tuple(_string_string_pair(item) for item in seq(d.get("nominations", []))),
         )
         _binding(state_identity(state), d["state_hash"], expected_hash)
         return state

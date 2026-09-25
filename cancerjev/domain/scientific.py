@@ -551,6 +551,7 @@ class StatisticalState:
     environment_hash: str
     sources: tuple[ScientificSource, ...]
     operational_sources: tuple[OperationalSource, ...] = ()
+    nominations: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         require(isinstance(self.entity, EntityRef) and isinstance(self.annotation, GeneAnnotation)
@@ -558,6 +559,15 @@ class StatisticalState:
                 and isinstance(self.tested_context, TestedContext)
                 and isinstance(self.cross_project, CrossProjectSummary) and isinstance(self.quality, Quality),
                 "invalid state context")
+        require(type(self.nominations) is tuple
+                and all(isinstance(item, tuple) and len(item) == 2
+                        and isinstance(item[0], str) and bool(item[0])
+                        and isinstance(item[1], str) and bool(item[1])
+                        for item in self.nominations),
+                "invalid state nominations")
+        require(list(self.nominations) == sorted(self.nominations)
+                and len(set(item[0] for item in self.nominations)) == len(self.nominations),
+                "state nominations must be sorted with one entry per modality")
         require(self.entity.gene_id in self.universe.ordered_ids, "state entity outside universe")
         require(self.entity.release == self.universe.release, "state/universe release mismatch")
         require(type(self.projects) is tuple and bool(self.projects)
