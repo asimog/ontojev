@@ -68,37 +68,59 @@ A green `/health` means the API can read storage. It does not mean an autonomous
 campaign ran or that LUAD is scientifically validated: `LUAD_CAMPAIGN_V1` remains
 `EXPERIMENTAL` until a full live campaign with real Jev completes and is reviewed.
 
-## Managed demo deployment (Railway API + worker, Vercel web)
+## Managed production deployment (Railway API, Vercel web)
 
-A public demonstration runs as: read-only FastAPI on Railway, the canonical
-durable worker alongside it over the same data directory, and the production web
-on Vercel. The same architecture and process set is used; serverless hosting is
-simply not involved.
+Live deployment of record: Railway service `ontojev-api` (project `ontojev-api`)
+with a persistent volume mounted at `/data`, and Vercel project `ontojev-web`
+aliased at `https://ontojev-web.vercel.app`. The same architecture is used as
+locally; only the process set is reduced.
 
 Railway (from the repository root):
 
 - build: `Dockerfile` + `railway.json` (healthcheck `/health`, one replica);
-- variables: `CANCERJEV_DATA_DIR=/data`, `CANCERJEV_SEED_DEMO=1` (one synthetic
-  fixture run on first boot when not already seeded), `CANCERJEV_RUN_WORKER=1`
-  (start the durable worker in the same container), `CANCERJEV_WEB_ORIGIN=<web
-  origin>`, `CANCERJEV_NO_DOTENV=1`; no provider keys;
-- the worker is safe by construction here: `LUAD_CAMPAIGN_V1` is `EXPERIMENTAL`,
-  so every cycle records `PROGRAM_IDLE` (with per-profile decision reasons)
-  after one bounded anonymous release observation. It cannot dispatch a campaign
-  until a profile is deliberately promoted;
-- optional volume mounted at `/data` to keep seeded demo data and program state
-  across restarts; without a volume each boot reseeds once because the marker
-  disappears.
+- **a volume is mandatory**: `/data` is the only durable filesystem. Without it
+  every redeploy loses the database and artifacts (verified the hard way);
+- variables: `CANCERJEV_DATA_DIR=/data`, `CANCERJEV_NO_DOTENV=1`,
+  `CANCERJEV_WEB_ORIGIN=https://ontojev-web.vercel.app`, provider keys
+  (`TYPESAFE_API_KEY`, `OPENROUTER_API_KEY`) as encrypted service variables —
+  never in the image or the repository;
+- `CANCERJEV_RUN_WORKER=0` in the demo posture: with `LUAD_CAMPAIGN_V1` still
+  `EXPERIMENTAL` the worker can only record `PROGRAM_IDLE`, which is noise rather
+  than production. Enable it only after a profile is deliberately promoted;
+- `CANCERJEV_SEED_DEMO=0` once real runs exist; the synthetic seed is only for a
+  first boot with an empty volume.
+
+Operating real bounded work on the deployment (all open-access, anonymous):
+
+```text
+railway ssh -s <service> "python -m cancerjev doctor"
+railway ssh -s <service> "python -m cancerjev capability"
+railway ssh -s <service> "tmux new-session -d -s cnv0 'python -m cancerjev discover-cnv --live --case-shard 0 > /data/cnv-shard0.log 2>&1'"
+railway ssh -s <service> "tmux new-session -d -s jev0 'python -m cancerjev run --live --jev --researcher --deep-candidate TP53 --deep-followup --deep-hypotheses > /data/live-deep.log 2>&1'"
+```
+
+Long runs must be started detached (tmux) with output under `/data`; a bare
+SSH command dies with the client and leaves the run `RUNNING` until crash
+recovery. `tmux` is not baked into the image: `apt-get update` then
+`apt-get install -y tmux` once per container generation.
+
+Observed production costs (Data Release 46.0, 2026-08-10):
+
+| Operation | Requests | Bytes | Jev calls | Notes |
+|---|---|---|---|---|
+| Cohort capability probe | 3 | 3.3 KB | 0 | status + project + one facet aggregate |
+| CNV case shard 0 (25 cases) | 817 | 107 MB | 0 | one shard of the cohort frame; the full cohort needs every shard |
+| Live researcher sweep + Wide/Deep Jev + dossier | 88 | ~7 MB | 13 | 10 states, 1 candidate (TP53), 1 LLM hypothesis call, 1 dossier |
 
 Vercel (from `apps/web`): framework preset Next.js, production environment
 variable `NEXT_PUBLIC_CANCERJEV_API_URL=https://<railway-domain>` (required at
 build time), and nothing else. The browser origin must match the API
 `CANCERJEV_WEB_ORIGIN` exactly.
 
-This posture exposes a read-only API plus an idling worker with **no
-authentication**. That is deliberate for a demonstration only: replace it with an
-authenticated boundary before exposing any real research data or enabling
-provider keys and promoting a campaign profile.
+This posture exposes a read-only API with **no authentication**. That is
+deliberate for a demonstration; replace it with an authenticated boundary before
+exposing real research data, enabling the worker, or promoting a campaign
+profile.
 
 ## Backup and restore
 

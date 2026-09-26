@@ -43,6 +43,7 @@ export type ResearchRun = {
   ended_at: string | null;
   last_sequence: number;
   worker_id: string;
+  execution_ownership: string;
   coverage: string;
   outcome_reason: string | null;
   selected_project_ids: string[];

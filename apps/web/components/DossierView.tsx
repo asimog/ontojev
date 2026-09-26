@@ -9,6 +9,7 @@ type Dossier = {
   dossier_id: string;
   run_id: string;
   candidate_id: string;
+  mode: string;
   warning: string;
   evidence_state_ids: string[];
   hypothesis_ids: string[];
@@ -46,13 +47,18 @@ export function DossierView({ dossierId }: { dossierId: string }) {
 
   if (error) return <div className="api-warning">{error}</div>;
   if (!data) return <div className="panel empty">Loading dossier…</div>;
-  const grouped = new Set(GROUPS.flatMap((group) => group.keys));
+  const live = data.mode === "LIVE";
+  const groups = GROUPS.map((group) =>
+    live && group.title === "GENERATED FIXTURE HYPOTHESES"
+      ? { ...group, title: "GENERATED HYPOTHESES — LLM TEXT, NOT EVIDENCE" }
+      : group);
+  const grouped = new Set(groups.flatMap((group) => group.keys));
   const leftovers = Object.keys(data.sections).filter((key) => !grouped.has(key));
   return (
     <article className="dossier">
-      <header className="warning-panel">
-        <span>RESEARCH ONLY · FAKE</span>
-        <h1>SYNTHETIC DEMONSTRATION</h1>
+      <header className={`warning-panel${live ? " live" : ""}`}>
+        <span>{live ? "RESEARCH ONLY · NOT CLINICAL" : "RESEARCH ONLY · FAKE"}</span>
+        <h1>{live ? "LIVE CANDIDATE DOSSIER" : "SYNTHETIC DEMONSTRATION"}</h1>
         <p>{data.warning}</p>
         <div className="row">
           <a className="button secondary" href={apiUrl(`/api/dossiers/${dossierId}?format=json`)}>Download authoritative JSON</a>
@@ -67,7 +73,7 @@ export function DossierView({ dossierId }: { dossierId: string }) {
         <p className="muted">Evidence states: {data.evidence_state_ids.length ? data.evidence_state_ids.map((id) => id.slice(0, 8)).join(", ") : "none"}</p>
         <p className="muted">Hypotheses: {data.hypothesis_ids.length ? data.hypothesis_ids.map((id) => id.slice(0, 8)).join(", ") : "none"}</p>
       </section>
-      {GROUPS.map((group) => (
+      {groups.map((group) => (
         <section className="dossier-group" key={group.title}>
           <div className="eyebrow">{group.title}</div>
           {group.keys.filter((key) => key in data.sections).map((key) => <SectionPanel key={key} name={key} section={data.sections[key]} />)}

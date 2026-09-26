@@ -377,6 +377,10 @@ pre.artifact { max-height: 460px; overflow: auto; background: #f3f2ec; padding: 
 .dossier .panel h2 { text-transform: capitalize; }
 .sequence { font-family: var(--font-mono); color: var(--coral); }
 .warning-panel { background: linear-gradient(120deg, #7c2f20, #5f2317); color: #fdf3ef; padding: 40px 42px; border-radius: var(--radius-lg); margin-bottom: 18px; }
+.warning-panel.live { background: linear-gradient(120deg, var(--green), #14483a); }
+.warning-panel.live h1 { color: #f4f2ea; }
+.warning-panel.live .button.secondary { color: #f4f2ea; border-color: rgba(244, 242, 234, .7); }
+.warning-panel.live .button.secondary:hover { background: rgba(244, 242, 234, .12); }
 .warning-panel h1 { font-size: clamp(34px, 5vw, 54px); color: #fdf3ef; }
 .warning-panel .button.secondary { color: #fdf3ef; border-color: rgba(253, 243, 239, .7); }
 .warning-panel .button.secondary:hover { background: rgba(253, 243, 239, .12); }

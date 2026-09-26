@@ -132,6 +132,10 @@ export function RunDetail({ runId }: { runId: string }) {
       const geneSymbol = String((state?.entity as Record<string, unknown> | undefined)?.gene_symbol ?? "Unknown gene");
       return [{ vector, stateId, geneSymbol }];
     });
+  const legacySweep = run.stage_occurrences.some((item) => item.stage === "GDC_FAST_SEARCH");
+  const title = run.current_stage ?? (live
+    ? (legacySweep ? "Provider-ranked researcher sweep" : "Systematic open-access campaign")
+    : "Bounded fixture run");
   return (
     <>
       <StatusBanner error={error} updatedAt={updatedAt} />
@@ -139,8 +143,10 @@ export function RunDetail({ runId }: { runId: string }) {
         <div>
           <span className={`badge ${live ? "live" : "fake"}`}>{live ? "LIVE · OPEN GDC" : "FAKE · SYNTHETIC"}</span>
           <span className={`badge status ${run.status.toLowerCase()}`}>{run.status}</span>
+          {run.execution_ownership === "RESEARCHER_RUN" && <span className="badge amber">RESEARCHER-RUN</span>}
+          {legacySweep && <span className="badge violet">COMPARATOR PATH</span>}
         </div>
-        <div className="eyebrow">RESEARCH RUN</div><h1>{run.current_stage ?? (live ? "Systematic open-access campaign" : "Bounded fixture run")}</h1>
+        <div className="eyebrow">RESEARCH RUN</div><h1>{title}</h1>
         <p className="mono muted">{run.run_id}</p>
         <p className="muted mono">
           mode {run.mode}
@@ -159,7 +165,7 @@ export function RunDetail({ runId }: { runId: string }) {
           <Metric label="LLM calls" value={run.provider_usage.llm_calls} />
         </div>
       </header>
-       <section className="panel"><div className="eyebrow">STAGE TIMELINE</div><div className="pipeline">{run.stage_occurrences.filter((item) => item.type === "STAGE_COMPLETED").map((item) => <span key={`${item.stage}-${item.sequence}`}>{item.stage}{item.candidate_id ? ` · c${item.candidate_id.slice(0, 4)}` : ""}{item.iteration ? ` · i${item.iteration}` : ""}</span>)}{run.current_stage && <span className="active">{run.current_stage} · live</span>}</div>{!live && run.stage_occurrences.some((item) => item.stage === "GDC_FAST_SEARCH") && <p className="fine">Fixture demo runs exercise the legacy provider-ranked comparator path end to end; autonomous campaigns run the systematic spine (mutation, expression, CNV shards, union, pre-Wide policy).</p>}<p className="fine">Repeated stages are distinct per-candidate or per-iteration occurrences. Only admitted states become candidates; the persisted pre-Wide selection and the Jev ranking keep every exclusion reason explicit.</p></section>
+       <section className="panel"><div className="eyebrow">STAGE TIMELINE</div><div className="pipeline">{run.stage_occurrences.filter((item) => item.type === "STAGE_COMPLETED").map((item) => <span key={`${item.stage}-${item.sequence}`}>{item.stage}{item.candidate_id ? ` · c${item.candidate_id.slice(0, 4)}` : ""}{item.iteration ? ` · i${item.iteration}` : ""}</span>)}{run.current_stage && <span className="active">{run.current_stage} · live</span>}</div>{legacySweep && <p className="fine">This run used the provider-ranked comparator path (researcher/operator or fixture demo). Autonomous campaigns run the systematic spine: mutation discovery, expression discovery, CNV shards, modality union, pre-Wide policy.</p>}<p className="fine">Repeated stages are distinct per-candidate or per-iteration occurrences. Only admitted states become candidates; the persisted pre-Wide selection and the Jev ranking keep every exclusion reason explicit.</p></section>
       <BudgetSummary run={run} />
       {live ? (
         <>
