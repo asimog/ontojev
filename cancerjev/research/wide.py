@@ -9,6 +9,7 @@ never selects rows, and never creates science facts.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
@@ -18,6 +19,7 @@ from cancerjev.jev.contracts import EvaluationRecord
 from cancerjev.jev.projection import ProjectionError
 from cancerjev.jev.questions import WIDE_QUESTION_SET_VERSION
 from cancerjev.jev.service import JevService
+from cancerjev.research.acquisition import LiveRunError
 from cancerjev.research.ranking import (
     BASELINE_POLICY_VERSION,
     JEV_POLICY_VERSION,
@@ -28,6 +30,51 @@ from cancerjev.research.ranking import (
 from cancerjev.research.seams import PublishJson
 from cancerjev.storage.artifacts import PublishedArtifact
 from cancerjev.storage.repositories import Repository
+
+PRE_WIDE_POLICY_VERSION = "pre-wide-policy-v1"
+
+
+@dataclass(frozen=True)
+class PreWideSelection:
+    """Typed pre-Wide boundary: the selected states plus explicit counts/reasons."""
+
+    policy_version: str
+    states: tuple[StateRecord, ...]
+    considered: int
+    ceiling: int | None
+    excluded: tuple[dict[str, str], ...]
+    reason_code: str
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "policy_version": self.policy_version,
+            "ceiling": self.ceiling,
+            "considered": self.considered,
+            "selected": len(self.states),
+            "excluded": [dict(entry) for entry in self.excluded],
+            "reason_code": self.reason_code,
+        }
+
+
+def select_pre_wide_states(states: list[StateRecord], *,
+                           ceiling: int | None) -> PreWideSelection:
+    """Bound the Wide population without ever cutting the union by list order.
+
+    This is the explicit typed boundary between the complete modality union and
+    Wide evaluation. The complete union is already persisted; the population
+    entering Jev is all of it while it fits the declared ceiling. An oversized
+    population fails closed here until the deterministic pre-Wide policy exists
+    (Prompt 3); it is never prefix-truncated and ``run_wide_evaluation`` is never
+    called with an implicit cut in the canonical path.
+    """
+    if ceiling is None or len(states) <= ceiling:
+        return PreWideSelection(PRE_WIDE_POLICY_VERSION, tuple(states), len(states), ceiling,
+                                (), "WITHIN_CEILING")
+    raise LiveRunError(
+        "PRE_WIDE_SELECTION_UNAVAILABLE",
+        f"{len(states)} union states exceed the configured Jev ceiling {ceiling}; "
+        "the deterministic pre-Wide policy has not been applied",
+    )
 
 
 def run_wide_evaluation(*, run_id: str, states: list[StateRecord], coverage: str,

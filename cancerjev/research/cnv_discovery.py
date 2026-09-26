@@ -326,6 +326,34 @@ def run_cnv_discovery(
     return result
 
 
+def plan_cnv_case_shards(transport: AcquisitionTransport, research_spec: ResearchSpec, *,
+                         case_shard_size: int = CNV_CASE_SHARD_SIZE,
+                         ) -> tuple[tuple[str, ...], ...]:
+    """Partition the declared cohort frame into deterministic sorted-case shards.
+
+    The same partition rule is used by the single-shard scan; this planner exists
+    so one canonical Campaign run can enumerate every required shard before the
+    terminal merge. It acquires only the cohort frame (no occurrence reads).
+    """
+    if type(case_shard_size) is not int or not 1 <= case_shard_size <= MAX_CNV_CASE_SHARD_SIZE:
+        raise LiveRunError("INVALID_CNV_SHARD_SIZE", f"case shard size must be 1..{MAX_CNV_CASE_SHARD_SIZE}")
+    cohort_spec = research_spec.cohort
+    status_response = transport.request(status_request())
+    status = parse_status(status_response.body, response_meta(status_response, None))
+    release = status.data_release or "UNVERIFIED_RELEASE"
+    project_response = transport.request(cohort_project_request(cohort_spec.project_id))
+    projects = parse_projects(project_response.body, response_meta(project_response, release))
+    if len(projects) != 1 or projects[0].project_id != cohort_spec.project_id:
+        raise LiveRunError("CNV_PROJECT_NOT_FOUND",
+                           f"project {cohort_spec.project_id} did not resolve uniquely")
+    cohort = acquire_cohort(transport, projects[0], research_spec.acquisition, release)
+    case_ids = sorted(case.case_id for case in cohort.cases)
+    if not case_ids:
+        raise LiveRunError("CNV_SHARD_NO_CASES", "the declared cohort frame is empty")
+    return tuple(tuple(case_ids[index:index + case_shard_size])
+                 for index in range(0, len(case_ids), case_shard_size))
+
+
 def run_cnv_shard_scan(
     run_id: str,
     transport: AcquisitionTransport,

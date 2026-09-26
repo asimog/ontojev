@@ -9,25 +9,19 @@ deterministic methods; Jev never computes a measurement and never runs an action
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
-from uuid import uuid4
 
 from cancerjev.config import Settings
-from cancerjev.domain.codecs import state_identity, write_state
 from cancerjev.domain.envelopes import StateRecord
 from cancerjev.domain.events import canonical_json, utc_now
 from cancerjev.domain.measurements import (
     Acquisition,
-    MetricRecord,
-    ObservedCount,
     OperationalSource,
     digest,
 )
 from cancerjev.domain.runs import ExecutionOwnership
-from cancerjev.domain.scientific import StatisticalState
 from cancerjev.gdc.budget import policy_payload, production_caps
 from cancerjev.gdc.endpoints import (
     cohort_project_request,
@@ -65,8 +59,9 @@ from cancerjev.research.deep import stable_id
 from cancerjev.research.discovery import publish_occurrence_scan
 from cancerjev.research.investigation import run_candidate_investigation
 from cancerjev.research.ranking import PROMOTION_LIMIT
-from cancerjev.research.seams import HypothesisGenerator
+from cancerjev.research.seams import HypothesisGenerator, run_stage
 from cancerjev.research.specs import LUAD_RESEARCH_V1, ResearchSpec
+from cancerjev.research.state_store import persist_state
 from cancerjev.research.wide import run_wide_evaluation
 from cancerjev.science.methods import (
     ProjectFrame,
@@ -80,38 +75,6 @@ from cancerjev.storage.repositories import Repository
 WIDE_SCAN_RULE = (
     "states_valid = states generated; states_selected = states admitted by the active ranking policy"
 )
-
-
-def _metric_summary(record: MetricRecord) -> dict[str, Any]:
-    """Presentation projection of one typed metric; not a scientific model."""
-    return {"value": record.value, "unit": record.unit,
-            "availability": record.availability.value, "reason_code": record.reason_code}
-
-
-def _state_summary(state: StatisticalState, artifact: PublishedArtifact, mode: str) -> dict[str, Any]:
-    """Operational/presentation summary stored beside a registered state."""
-    projects = len(state.projects)
-    observed_mutation = sum(1 for project in state.projects
-                            if isinstance(project.mutation.affected_cases, ObservedCount))
-    observed_expression = state.cross_project.projects_with_expression_observation
-
-    def availability(count: int) -> str:
-        return "OBSERVED" if count == projects else ("PARTIAL" if count else "INSUFFICIENT")
-
-    return {
-        "entity": {"gene_id": state.entity.gene_id, "gene_symbol": state.entity.symbol},
-        "mode": mode,
-        "mutation_availability": availability(observed_mutation),
-        "expression_availability": availability(observed_expression),
-        "projects_with_mutation_observation": state.cross_project.projects_with_mutation_observation,
-        "projects_with_expression_observation": observed_expression,
-        "affected_case_total": _metric_summary(state.cross_project.affected_case_total),
-        "top_project_share": _metric_summary(state.cross_project.top_project_share),
-        "coverage_imbalance": state.cross_project.coverage_imbalance,
-        "completeness": "COMPLETE" if state.quality.acquisition is Acquisition.COMPLETE else "PARTIAL",
-        "artifact_id": artifact.artifact_id,
-        "artifact_sha256": artifact.sha256,
-    }
 
 
 @dataclass
@@ -177,25 +140,7 @@ class LiveOrchestrator:
         return event
 
     def _stage[T](self, run_id: str, stage: str, function: Callable[[], T]) -> T:
-        started = time.monotonic()
-        self._event(run_id, "STAGE_STARTED", f"stage:{stage}:started:{uuid4()}", f"Stage {stage} started.", stage=stage)
-        try:
-            result = function()
-        except Exception as exc:
-            elapsed = int((time.monotonic() - started) * 1000)
-            self._event(
-                run_id, "STAGE_COMPLETED", f"stage:{stage}:completed:{uuid4()}",
-                f"Stage {stage} ended with error: {type(exc).__name__}.", stage=stage, level="error",
-                data={"outcome": "FAILED", "elapsed_ms": elapsed, "error": str(exc)},
-            )
-            raise
-        elapsed = int((time.monotonic() - started) * 1000)
-        self._event(
-            run_id, "STAGE_COMPLETED", f"stage:{stage}:completed:{uuid4()}",
-            f"Stage {stage} completed.", stage=stage,
-            data={"outcome": "COMPLETED", "elapsed_ms": elapsed},
-        )
-        return result
+        return run_stage(self._event, run_id, stage, function)
 
     def _publish_json(self, run_id: str, relative_path: str, payload: object, purpose: str) -> PublishedArtifact:
         content = canonical_json(payload) if not isinstance(payload, bytes) else payload
@@ -766,7 +711,6 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
         gene_selection_rule = self.research_spec.gene_selection_rule()
         for rank, gene_id in enumerate(selection.selected_gene_ids, start=1):
             gene = selection.genes[gene_id]
-            state_id = str(uuid4())
             discovery_meta = {
                 "method_id": "MUTATION_DISCOVERY_V1",
                 "examined_genes_ref": selection.artifact.artifact_id,
@@ -792,31 +736,10 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
                 },
                 discovery_meta=discovery_meta,
             )
-            state_hash = state_identity(state)
-            artifact = self._publish_json(
-                run_id, f"runs/{run_id}/statistical_states/{state_id}.json", write_state(state),
-                "statistical-state",
-            )
-            summary = _state_summary(state, artifact, self.run_mode)
-            registrations = [
-                self.repository.artifact_registration(artifact, run_id),
-                self.repository.state_registration(
-                    state_id=state_id, run_id=run_id, state_hash=state_hash,
-                    artifact_id=artifact.artifact_id, disposition="GENERATED",
-                    summary_json=canonical_json(summary).decode(), created_at=utc_now(),
-                ),
-            ]
-            self._event(
-                run_id, "STATISTICAL_STATE_CREATED", f"state:{state_id}",
-                (f"Real StatisticalState for {gene.symbol} generated from open GDC evidence."
-                 if self.run_mode == "LIVE"
-                 else f"Synthetic StatisticalState for {gene.symbol} generated from labelled fixtures."),
-                stage="STATE_GENERATION",
-                data={"state_id": state_id, "state_hash": state_hash, "gene_id": gene.gene_id,
-                      "gene_symbol": gene.symbol, "mode": "LIVE"},
-                artifact_refs=[artifact.ref()], registrations=registrations,
-            )
-            states.append(StateRecord(state_id, state_hash, state))
+            states.append(persist_state(
+                run_id=run_id, state=state, repository=self.repository, artifacts=self.artifacts,
+                publish_json=self._publish_json, emit=self._event, run_mode=self.run_mode,
+            ))
         self._event(
             run_id, "WIDE_SCAN_COMPLETED", "wide:completed",
             f"Wide evidence scan completed with {len(states)} states.",

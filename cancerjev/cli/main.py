@@ -15,6 +15,7 @@ from cancerjev.config import Settings, load_local_env
 from cancerjev.domain.discovery import (
     CNV_CASE_SHARD_SIZE,
 )
+from cancerjev.domain.events import canonical_json
 from cancerjev.domain.measurements import ContractError
 from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.gdc.budget import policy_payload, production_caps
@@ -424,20 +425,72 @@ def _cnv_merge(
         raise SystemExit(1) from exc
 
 
-def _run_campaign_sweep(settings: Settings, repository: Repository, artifacts: ArtifactStore,
-                        profile: Any, spec: Any, transport_factory: Any) -> bool:
-    """The existing bounded sweep, dispatched under SYSTEM_AUTONOMOUS ownership only."""
-    orchestrator = LiveOrchestrator(
-        settings, repository, artifacts, render_event, transport_factory=transport_factory,
-        research_spec=spec, worker_id="campaign-worker",
-        execution_ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS)
-    run_id = orchestrator.run()
+def _autonomous_jev_service(settings: Settings, repository: Repository,
+                            artifacts: ArtifactStore) -> Any:
+    """Autonomous science always includes Wide Jev; a missing credential fails closed."""
+    from cancerjev.jev.service import JevService
+
+    if not os.getenv("TYPESAFE_API_KEY"):
+        raise LiveRunError(
+            "JEV_PROVIDER_CREDENTIAL_MISSING",
+            "autonomous campaign execution requires TYPESAFE_API_KEY for wide Jev; "
+            "use `run --live --jev` for an explicit researcher run",
+        )
+    return JevService(settings, repository, artifacts)
+
+
+def _run_campaign_systematic(settings: Settings, repository: Repository, artifacts: ArtifactStore,
+                             profile: Any, spec: Any, capability: Any, *,
+                             transport_factory: Any = None, jev_service: Any = None) -> bool:
+    """Canonical systematic Campaign execution on one SYSTEM_AUTONOMOUS run.
+
+    This is the only autonomous Campaign executor: the transitional provider-ranked
+    sweep remains reachable only through the explicitly labelled researcher/comparator
+    command path and can never produce canonical Campaign results.
+    """
+    from cancerjev.research.systematic import run_systematic_campaign
+
+    service = (jev_service if jev_service is not None
+               else _autonomous_jev_service(settings, repository, artifacts))
+    with _started_run(
+        repository, worker_id="campaign-worker",
+        scope={"budget_policy": policy_payload(), "purpose": "SYSTEMATIC_CAMPAIGN",
+               "profile_id": profile.profile_id, "spec_id": spec.spec_id,
+               "project_id": profile.project_id, "research_spec": spec.as_dict(),
+               "execution": "SYSTEMATIC_MODALITY_UNION",
+               "enabled_modalities": [modality.value for modality in profile.enabled_modalities]},
+        started_message="Canonical systematic campaign run started.",
+        started_data={"profile_id": profile.profile_id, "spec_id": spec.spec_id,
+                      "execution": "SYSTEMATIC_MODALITY_UNION"},
+    ) as run_id:
+
+        def emit(target_run_id: str, event_type: str, key: str, message: str,
+                 **kwargs: Any) -> None:
+            render_event(repository.append_event(target_run_id, event_type=event_type,
+                                                 idempotency_key=key, message=message, **kwargs))
+
+        def publish_json(target_run_id: str, path: str, payload: object, purpose: str) -> Any:
+            content = payload if isinstance(payload, bytes) else canonical_json(payload)
+            return artifacts.publish(path, content, "application/json", purpose)
+
+        result = run_systematic_campaign(
+            run_id=run_id, profile=profile, spec=spec, capability=capability, settings=settings,
+            repository=repository, artifacts=artifacts, emit=emit, publish_json=publish_json,
+            jev_service=service, transport_factory=transport_factory,
+            max_states=settings.jev_max_states)
+        totals = repository.gdc_run_totals(run_id)
+        emit(run_id, "RUN_COMPLETED", "run:completed",
+             f"Systematic campaign completed with {len(result.state_ids)} union state(s).",
+             data={"status": "COMPLETED", "reason_code": "SYSTEMATIC_CAMPAIGN_COMPLETE",
+                   "coverage": result.coverage, **result.summary(),
+                   "gdc_attempts": totals["attempts"], "gdc_bytes": totals["bytes"],
+                   "gdc_cache_hits": totals["cache_hits"]})
     return repository.get_run(run_id)["status"] == "COMPLETED"
 
 
 def _dispatch_campaign(settings: Settings, repository: Repository, artifacts: ArtifactStore,
                        profile: Any, *, capability: Any = None,
-                       transport_factory: Any = None) -> bool:
+                       transport_factory: Any = None, jev_service: Any = None) -> bool:
     """Ownership-gated autonomous dispatch of one validated campaign; no operator flags.
 
     A profile that is not validated for autonomous use, an unknown spec and a missing
@@ -487,8 +540,9 @@ def _dispatch_campaign(settings: Settings, repository: Repository, artifacts: Ar
                                  "bytes": totals["bytes"], "gdc_attempts": totals["attempts"]})
     return dispatch_validated_campaign(
         profile=profile, capability=capability,
-        run_campaign=lambda selected: _run_campaign_sweep(
-            settings, repository, artifacts, selected, spec, transport_factory))
+        run_campaign=lambda selected: _run_campaign_systematic(
+            settings, repository, artifacts, selected, spec, capability,
+            transport_factory=transport_factory, jev_service=jev_service))
 
 
 def _program(settings: Settings, repository: Repository, artifacts: ArtifactStore) -> None:

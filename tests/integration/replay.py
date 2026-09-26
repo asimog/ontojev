@@ -252,6 +252,45 @@ def gene_selection_body(case_ids_requested: list[str], gene_ids: list[str]) -> b
     ]})
 
 
+CNV_AMPLIFICATION_CASES = {GENES[0]: 6, GENES[1]: 3}
+
+
+def cnv_occurrence_shard_body(project_id: str, case_ids_requested: list[str], *,
+                              offset: int, size: int) -> bytes:
+    """Deterministic positive CNV occurrences over the declared case shard.
+
+    GENE_ONE is recurrently amplified (6 distinct cases, above the declared
+    recurrence threshold); GENE_TWO stays below it. Absence is never a call.
+    """
+    all_cases = case_ids(project_id, PROJECTS)
+    requested = set(case_ids_requested)
+
+    def rows() -> list[dict[str, Any]]:
+        collected: list[dict[str, Any]] = []
+        for gene_id, count in sorted(CNV_AMPLIFICATION_CASES.items()):
+            eligible = [case_id for case_id in all_cases[:count] if case_id in requested]
+            for index, case_id in enumerate(eligible):
+                collected.append({
+                    "cnv_occurrence_id": f"{project_id}-cnv-{gene_id[-4:]}-{index:05d}",
+                    "cnv": {"cnv_id": f"cnv-{gene_id[-4:]}-{index:05d}",
+                            "cnv_change": "Amplification",
+                            "cnv_change_5_category": "Amplification",
+                            "consequence": [{"gene": {"gene_id": gene_id}}]},
+                    "case": {"case_id": case_id, "project": {"project_id": project_id},
+                             "observation": [{"copy_number": 3.0,
+                                              "src_file_id": f"file-{index}",
+                                              "sample": {"tumor_sample_uuid": f"sample-{index}"},
+                                              "variant_calling": {"variant_caller": "ASCAT3"}}]},
+                })
+        return sorted(collected, key=lambda row: row["cnv_occurrence_id"])
+
+    collected = rows()
+    page = collected[offset:offset + size]
+    return _json({"data": {"hits": page, "pagination": {
+        "total": len(collected), "count": len(page), "size": size, "from": offset,
+        "pages": (len(collected) + size - 1) // size if collected else 0}}})
+
+
 def values_body(case_ids_requested: list[str], gene_ids: list[str], *, drop_columns: int = 0,
                 constant_value: float | None = None) -> bytes:
     returned = case_ids_requested[: len(case_ids_requested) - drop_columns] if drop_columns else case_ids_requested
@@ -356,6 +395,12 @@ class ReplayTransport:
                     controlled=self.controlled_files)
             else:
                 body = files_body(_filter_project(request), controlled=self.controlled_files)
+        elif name == "cnv_occurrences":
+            params = dict(request.params)
+            case_ids_requested = json.loads(params["filters"])["content"][1]["content"]["value"]
+            body = cnv_occurrence_shard_body(
+                _filter_project(request), [str(case_id) for case_id in case_ids_requested],
+                offset=int(params["from"]), size=int(params["size"]))
         elif name == "gene_expression_availability":
             project = self._project_of(request.body["case_ids"])
             body = availability_body(request.body["case_ids"], request.body["gene_ids"],
