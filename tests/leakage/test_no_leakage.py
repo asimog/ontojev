@@ -45,9 +45,23 @@ def _text(path: Path) -> str:
 
 
 def _imported_modules(path: Path) -> set[str]:
+    """Every imported module name, covering both ``from x import y`` and ``import x``."""
     tree = ast.parse(_text(path))
-    return {node.module for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom) and node.module is not None}
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module is not None:
+            modules.add(node.module)
+        elif isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+    return modules
+
+
+def test_import_detector_covers_the_plain_import_form(tmp_path):
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "import cancerjev.research.evaluation\nfrom cancerjev.jev import service\n",
+        encoding="utf-8")
+    assert _imported_modules(sample) == {"cancerjev.research.evaluation", "cancerjev.jev"}
 
 
 def test_known_cancer_context_is_confined_to_its_declared_role():

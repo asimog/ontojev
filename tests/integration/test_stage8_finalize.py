@@ -19,6 +19,7 @@ from cancerjev.research.finalize import (
     run_stage8_finalize,
 )
 from cancerjev.research.ranking import BASELINE_POLICY_VERSION
+from cancerjev.science.actions import CHECK_CONTRADICTED
 from cancerjev.storage.readers import read_dossier_record
 from tests.integration.test_deep_slice import (
     _candidate_chain,
@@ -116,7 +117,15 @@ def test_comparison_records_actual_and_baseline_decisions_and_is_reproducible(
     assert wide["baseline_admitted"] == (
         payload["candidate"]["source_state_id"]
         in rankings[BASELINE_POLICY_VERSION]["top_state_ids"])
-    assert baseline_next_move(0) == baseline_next_move(0), "the replay is deterministic"
+    # The baseline leg is derived from the final persisted revision, not asserted:
+    # the declared rule replayed over the recorded contradiction count must be the
+    # recorded baseline decision.
+    chain = _candidate_chain(runtime, repository, {"candidate_id": summary["candidate_id"]})
+    contradicted = sum(1 for check in chain[-1].evidence.checks
+                       if check.outcome == CHECK_CONTRADICTED)
+    derived = baseline_next_move(contradicted)
+    assert derived["move"] == comparison["investigation"]["baseline_next_move"]
+    assert derived["reason_code"] == comparison["investigation"]["baseline_reason_code"]
 
 
 def test_multi_candidate_run_finalizes_each_candidate_then_completes_the_run(
