@@ -78,7 +78,7 @@ def system(request: Request) -> dict[str, Any]:
             "max_gene_ids": 100,
             "reason": "Initial request allowance grows under budget_policy; run and shard byte ceilings are fixed.",
         },
-        "cursor": {"present": False, "reason": "Phase 2 bounded sweeps are self-contained and use no cross-run discovery cursor."},
+        "cursor": {"present": False, "reason": "Canonical campaigns and bounded sweeps are self-contained and use no cross-run discovery cursor."},
         "cache": {
             "entries": cache_entries, "bytes": cache_bytes,
             "jev_entries": jev_cache_entries,
