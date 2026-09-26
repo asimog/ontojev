@@ -17,7 +17,6 @@ from uuid import uuid4
 
 from cancerjev.config import Settings
 from cancerjev.domain.codecs import state_identity, write_state
-from cancerjev.domain.discovery import LIVE_RUN_MAX_BYTES, LIVE_RUN_MAX_REQUESTS
 from cancerjev.domain.envelopes import StateRecord
 from cancerjev.domain.events import canonical_json, utc_now
 from cancerjev.domain.measurements import (
@@ -29,6 +28,7 @@ from cancerjev.domain.measurements import (
 )
 from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.domain.scientific import StatisticalState
+from cancerjev.gdc.budget import policy_payload, production_caps
 from cancerjev.gdc.endpoints import (
     cohort_project_request,
     genes_request,
@@ -47,7 +47,7 @@ from cancerjev.gdc.parsers import (
     parse_top_mutated_genes,
     response_warnings,
 )
-from cancerjev.gdc.transport import BudgetCaps, GDCTransport, RunBudget, TransportError
+from cancerjev.gdc.transport import GDCTransport, RunBudget, TransportError
 from cancerjev.jev.service import JevService
 from cancerjev.research.acquisition import (
     AcquisitionTransport,
@@ -218,9 +218,7 @@ class LiveOrchestrator:
             )
         spec_payload = self.research_spec.as_dict()
         cohort = self.research_spec.cohort
-        caps = BudgetCaps(
-            max_requests=LIVE_RUN_MAX_REQUESTS,
-            max_bytes=LIVE_RUN_MAX_BYTES,
+        caps = production_caps(
             per_response_bytes=self.settings.gdc_per_response_bytes,
             timeout_seconds=self.settings.gdc_timeout_seconds,
         )
@@ -229,7 +227,7 @@ class LiveOrchestrator:
             self.worker_id, mode=self.run_mode, fixture_id=self.fixture_id,
             fixture_version=self.fixture_version, ownership=self.execution_ownership,
             scope={
-                "purpose": "LIVE_SWEEP", "spec_id": self.research_spec.spec_id,
+                "budget_policy": policy_payload(), "purpose": "LIVE_SWEEP", "spec_id": self.research_spec.spec_id,
                 "domain": cohort.domain, "cohort": cohort.cohort_id,
                 "project_id": cohort.project_id, "acquisition": spec_payload["acquisition"],
                 "selection_rule": self.research_spec.cohort_selection_rule(),
@@ -314,30 +312,37 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
                                      "coverage": "PARTIAL", "detail": str(exc)},
             )
             raise
-        totals = self.repository.gdc_run_totals(run_id)
-        deep_summary = None
-        if self._deep_selections() and wide_result is not None:
-            deep_summary = self._deep_candidates(run_id, wide_result, transport=transport)
-        completion_data = {
-            "status": "COMPLETED", "reason_code": "BOUNDED_SWEEP_COMPLETE", "coverage": coverage,
-            "states": len(states), "gdc_attempts": totals["attempts"], "gdc_bytes": totals["bytes"],
-            "gdc_cache_hits": totals["cache_hits"],
-            "run_scope": "CANDIDATE_QUEUE_EXHAUSTED",
-        }
-        if deep_summary is not None:
-            completion_data["deep"] = deep_summary
-            completion_data["candidate_queue_exhausted"] = deep_summary["candidate_queue_exhausted"]
-            completion_data["run_scope"] = (
-                "CANDIDATE_QUEUE_EXHAUSTED" if deep_summary["candidate_queue_exhausted"]
-                else "CANDIDATES_INCOMPLETE")
-        self._event(
-            run_id, "RUN_COMPLETED", "run:completed",
-            (f"Live bounded sweep completed with {len(states)} statistical states."
-             if self.run_mode == "LIVE"
-             else f"Synthetic fixture run completed with {len(states)} statistical states."),
-            data=completion_data,
-        )
-        return run_id
+        try:
+            deep_summary = None
+            if self._deep_selections() and wide_result is not None:
+                deep_summary = self._deep_candidates(run_id, wide_result, transport=transport)
+            totals = self.repository.gdc_run_totals(run_id)
+            completion_data = {
+                "status": "COMPLETED", "reason_code": "BOUNDED_SWEEP_COMPLETE", "coverage": coverage,
+                "states": len(states), "gdc_attempts": totals["attempts"], "gdc_bytes": totals["bytes"],
+                "gdc_cache_hits": totals["cache_hits"],
+                "run_scope": "CANDIDATE_QUEUE_EXHAUSTED",
+            }
+            if deep_summary is not None:
+                completion_data["deep"] = deep_summary
+                completion_data["candidate_queue_exhausted"] = deep_summary["candidate_queue_exhausted"]
+                completion_data["run_scope"] = (
+                    "CANDIDATE_QUEUE_EXHAUSTED" if deep_summary["candidate_queue_exhausted"]
+                    else "CANDIDATES_INCOMPLETE")
+            self._event(
+                run_id, "RUN_COMPLETED", "run:completed",
+                (f"Live bounded sweep completed with {len(states)} statistical states."
+                 if self.run_mode == "LIVE"
+                 else f"Synthetic fixture run completed with {len(states)} statistical states."),
+                data=completion_data,
+            )
+            return run_id
+        except Exception as exc:
+            self._event(run_id, "RUN_FAILED", "run:failed",
+                        f"Deep investigation failed: {type(exc).__name__}.", level="error",
+                        data={"status": "FAILED", "reason_code": str(getattr(exc, "code", "UNEXPECTED_ERROR")),
+                              "coverage": "PARTIAL", "detail": str(exc)})
+            raise
 
     # -------------------------------------------------------------- deep slice
 

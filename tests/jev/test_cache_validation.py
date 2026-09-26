@@ -48,7 +48,7 @@ def _replace_vector(context, evaluation, mutate) -> None:
 
 def _cache_key(service, evaluation) -> str:
     vector = evaluation.boundary_representation()
-    return service._cache_key(projection_hash_value=vector["projection_hash"],
+    return service._cache_key(run_id=service.repository.get_evaluation(evaluation.evaluation_id)["run_id"], projection_hash_value=vector["projection_hash"],
                               question_set_hash_value=vector["question_hash"],
                               requested_model=vector["requested_model"])
 

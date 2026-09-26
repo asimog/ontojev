@@ -78,7 +78,7 @@ def test_lowered_caps_and_timeouts_are_accepted_and_effective(monkeypatch):
     monkeypatch.setenv("CANCERJEV_JEV_MAX_STATES", "2")
     settings = Settings.from_env()
     assert settings.jev_timeout_seconds == 12.5
-    assert settings.gdc_max_requests == 10
+    assert not hasattr(settings, "gdc_max_requests"), "obsolete cost knobs cannot reduce scientific scope"
     assert settings.gdc_per_response_bytes == 1024
     assert settings.jev_max_states == 2
 

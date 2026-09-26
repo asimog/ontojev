@@ -12,17 +12,13 @@ from cancerjev.cli.console import render_event, render_json_event
 from cancerjev.config import Settings, load_local_env
 from cancerjev.domain.discovery import (
     CNV_CASE_SHARD_SIZE,
-    DISCOVERY_RUN_MAX_PAGES_PER_QUERY,
-    DISCOVERY_RUN_MAX_REQUESTS,
-    EXPRESSION_RUN_MAX_BYTES,
-    EXPRESSION_RUN_MAX_REQUESTS,
-    OCCURRENCE_SCAN_MAX_BYTES,
 )
 from cancerjev.domain.measurements import ContractError
 from cancerjev.domain.runs import ExecutionOwnership
+from cancerjev.gdc.budget import policy_payload, production_caps
 from cancerjev.gdc.capture import CaptureSink, run_contract_probe
 from cancerjev.gdc.parsers import ParserError
-from cancerjev.gdc.transport import BudgetCaps, GDCTransport, RunBudget, TransportError
+from cancerjev.gdc.transport import GDCTransport, RunBudget, TransportError
 from cancerjev.research.acquisition import LiveRunError
 from cancerjev.research.live import LiveOrchestrator
 from cancerjev.research.orchestrator import DemoOrchestrator
@@ -105,6 +101,8 @@ def parser() -> argparse.ArgumentParser:
         "cnv-merge",
         help="merge every required CNV shard evidence artifact into one project call set",
     )
+    cnv_merge.add_argument("--source-run", action="append", required=True,
+                           help="source run ID: repeat in shard-index order, or name one run holding all shards")
     cnv_merge.add_argument("--shards", type=int, required=True,
                            help="number of case shards that must all exist before merging")
     cnv_merge.add_argument("--case-shard-size", type=int, default=CNV_CASE_SHARD_SIZE,
@@ -131,13 +129,12 @@ def _services(settings: Settings) -> tuple[Repository, ArtifactStore]:
 
 
 def _probe(settings: Settings, repository: Repository, artifacts: ArtifactStore, capture_dir: str | None) -> None:
-    caps = BudgetCaps(
-        max_requests=30, max_bytes=8 * 1024 * 1024,
+    caps = production_caps(
         per_response_bytes=settings.gdc_per_response_bytes,
         timeout_seconds=settings.gdc_timeout_seconds,
     )
     run_id = repository.create_run("probe", mode="LIVE", fixture_id=None, fixture_version=None,
-                                   scope={"purpose": "CONTRACT_PROBE"})
+                                   scope={"budget_policy": policy_payload(), "purpose": "CONTRACT_PROBE"})
 
     def emit(event_type: str, key: str, message: str, **kwargs) -> None:
         event = repository.append_event(run_id, event_type=event_type, idempotency_key=key, message=message, **kwargs)
@@ -167,13 +164,12 @@ def _capability(settings: Settings, repository: Repository, artifacts: ArtifactS
     from cancerjev.research.capability import discover_cohort_capability
 
     target = project_id or LUAD_CAMPAIGN_V1.project_id
-    caps = BudgetCaps(
-        max_requests=12, max_bytes=4 * 1024 * 1024,
+    caps = production_caps(
         per_response_bytes=settings.gdc_per_response_bytes,
         timeout_seconds=settings.gdc_timeout_seconds,
     )
     run_id = repository.create_run("capability", mode="LIVE", fixture_id=None, fixture_version=None,
-                                   scope={"purpose": "CAPABILITY_PROBE", "project_id": target})
+                                   scope={"budget_policy": policy_payload(), "purpose": "CAPABILITY_PROBE", "project_id": target})
 
     def emit(event_type: str, key: str, message: str, **kwargs) -> None:
         event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
@@ -213,16 +209,13 @@ def _discover(settings: Settings, repository: Repository, artifacts: ArtifactSto
     # The systematic-discovery worker declares the mutation occurrence-scan budget
     # explicitly: a complete project scan is the scientific quantity source, and its
     # declared ceiling lives in domain.discovery (not env-adjustable in this change).
-    caps = BudgetCaps(
-        max_requests=DISCOVERY_RUN_MAX_REQUESTS,
-        max_bytes=OCCURRENCE_SCAN_MAX_BYTES,
+    caps = production_caps(
         per_response_bytes=settings.gdc_per_response_bytes,
-        max_pages_per_query=DISCOVERY_RUN_MAX_PAGES_PER_QUERY,
         timeout_seconds=settings.gdc_timeout_seconds,
     )
     run_id = repository.create_run(
         "discovery-worker", mode="LIVE", fixture_id=None, fixture_version=None,
-        scope={"purpose": "SYSTEMATIC_DISCOVERY", "spec_id": spec.spec_id,
+        scope={"budget_policy": policy_payload(), "purpose": "SYSTEMATIC_DISCOVERY", "spec_id": spec.spec_id,
                "domain": spec.cohort.domain, "cohort": spec.cohort.cohort_id,
                "project_id": spec.cohort.project_id, "discovery": asdict(spec.discovery),
                "selection_rule": spec.discovery_selection_rule()},
@@ -244,7 +237,7 @@ def _discover(settings: Settings, repository: Repository, artifacts: ArtifactSto
         code = getattr(exc, "code", type(exc).__name__)
         emit("RUN_FAILED", "run:failed", f"Systematic discovery failed: {code}.",
              level="error", data={"status": "FAILED", "reason_code": str(code), "detail": str(exc)})
-        return
+        raise SystemExit(1) from exc
     totals = repository.gdc_run_totals(run_id)
     emit("RUN_COMPLETED", "run:completed",
          f"Systematic discovery completed with {len(result.survivor_ids)} survivor(s).",
@@ -261,16 +254,13 @@ def _discover_expression(
     from cancerjev.research.specs import LUAD_RESEARCH_V1
 
     spec = LUAD_RESEARCH_V1
-    caps = BudgetCaps(
-        max_requests=EXPRESSION_RUN_MAX_REQUESTS,
-        max_bytes=EXPRESSION_RUN_MAX_BYTES,
+    caps = production_caps(
         per_response_bytes=settings.gdc_per_response_bytes,
-        max_pages_per_query=DISCOVERY_RUN_MAX_PAGES_PER_QUERY,
         timeout_seconds=settings.gdc_timeout_seconds,
     )
     run_id = repository.create_run(
         "expression-discovery-worker", mode="LIVE", fixture_id=None, fixture_version=None,
-        scope={"purpose": "EXPRESSION_DISCOVERY", "spec_id": spec.spec_id,
+        scope={"budget_policy": policy_payload(), "purpose": "EXPRESSION_DISCOVERY", "spec_id": spec.spec_id,
                "domain": spec.cohort.domain, "cohort": spec.cohort.cohort_id,
                "project_id": spec.cohort.project_id,
                "expression_discovery": asdict(spec.expression_discovery),
@@ -295,7 +285,7 @@ def _discover_expression(
         emit("RUN_FAILED", "run:failed", f"Expression discovery failed: {code}.",
              level="error", data={"status": "FAILED", "reason_code": str(code),
                                   "detail": str(exc)})
-        return
+        raise SystemExit(1) from exc
     totals = repository.gdc_run_totals(run_id)
     emit("RUN_COMPLETED", "run:completed",
          f"Expression discovery completed for {len(result.entries)} gene(s).",
@@ -313,15 +303,13 @@ def _discover_cnv(
     from cancerjev.research.specs import LUAD_RESEARCH_V1
 
     spec = LUAD_RESEARCH_V1
-    caps = BudgetCaps(
-        max_requests=DISCOVERY_RUN_MAX_REQUESTS, max_bytes=OCCURRENCE_SCAN_MAX_BYTES,
+    caps = production_caps(
         per_response_bytes=settings.gdc_per_response_bytes,
-        max_pages_per_query=DISCOVERY_RUN_MAX_PAGES_PER_QUERY,
         timeout_seconds=settings.gdc_timeout_seconds,
     )
     run_id = repository.create_run(
         "cnv-shard-scan-worker", mode="LIVE", fixture_id=None, fixture_version=None,
-        scope={"purpose": "CNV_SHARD_SCAN", "spec_id": spec.spec_id,
+        scope={"budget_policy": policy_payload(), "purpose": "CNV_SHARD_SCAN", "spec_id": spec.spec_id,
                "cohort": spec.cohort.cohort_id, "project_id": spec.cohort.project_id,
                "case_shard": case_shard, "case_shard_size": case_shard_size},
     )
@@ -344,7 +332,7 @@ def _discover_cnv(
         code = getattr(exc, "code", type(exc).__name__)
         emit("RUN_FAILED", "run:failed", f"CNV shard scan failed: {code}.", level="error",
              data={"status": "FAILED", "reason_code": str(code), "detail": str(exc)})
-        return
+        raise SystemExit(1) from exc
     totals = repository.gdc_run_totals(run_id)
     emit("RUN_COMPLETED", "run:completed",
          f"CNV case shard {case_shard} completed over {len(evidence.case_ids)} case(s).",
@@ -357,7 +345,7 @@ def _discover_cnv(
 
 def _cnv_merge(
     settings: Settings, repository: Repository, artifacts: ArtifactStore, shards: int,
-    case_shard_size: int,
+    case_shard_size: int, source_run_ids: tuple[str, ...],
 ) -> None:
     from cancerjev.research.cnv_discovery import run_cnv_shard_merge
     from cancerjev.research.specs import LUAD_RESEARCH_V1
@@ -365,7 +353,7 @@ def _cnv_merge(
     spec = LUAD_RESEARCH_V1
     run_id = repository.create_run(
         "cnv-merge-worker", mode="LIVE", fixture_id=None, fixture_version=None,
-        scope={"purpose": "CNV_PROJECT_SCAN", "spec_id": spec.spec_id,
+        scope={"budget_policy": policy_payload(), "purpose": "CNV_PROJECT_SCAN", "spec_id": spec.spec_id,
                "cohort": spec.cohort.cohort_id, "project_id": spec.cohort.project_id,
                "shards": shards, "case_shard_size": case_shard_size},
     )
@@ -381,12 +369,12 @@ def _cnv_merge(
     try:
         result = run_cnv_shard_merge(
             run_id, repository, artifacts, emit, spec, expected_shards=shards,
-            case_shard_size=case_shard_size)
+            case_shard_size=case_shard_size, source_run_ids=source_run_ids)
     except (LiveRunError, ContractError) as exc:
         code = getattr(exc, "code", type(exc).__name__)
         emit("RUN_FAILED", "run:failed", f"CNV project merge failed: {code}.", level="error",
              data={"status": "FAILED", "reason_code": str(code), "detail": str(exc)})
-        return
+        raise SystemExit(1) from exc
     emit("RUN_COMPLETED", "run:completed",
          f"Merged CNV project scan completed for {len(result.calls)} observed gene(s).",
          data={"status": "COMPLETED", "reason_code": "CNV_PROJECT_SCAN_COMPLETE",
@@ -410,7 +398,7 @@ def _program(settings: Settings, repository: Repository, artifacts: ArtifactStor
 
     run_id = repository.create_run(
         "program-worker", mode="LIVE", fixture_id=None, fixture_version=None,
-        scope={"purpose": "PROGRAM", "profiles": [profile.payload() for profile in profiles]},
+        scope={"budget_policy": policy_payload(), "purpose": "PROGRAM", "profiles": [profile.payload() for profile in profiles]},
         ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS,
     )
 
@@ -553,7 +541,8 @@ def main(argv: list[str] | None = None) -> None:
         try:
             with ResearchOwnership(settings.lock_path):
                 repository.recover_interrupted()
-                _cnv_merge(settings, repository, artifacts, args.shards, args.case_shard_size)
+                _cnv_merge(settings, repository, artifacts, args.shards, args.case_shard_size,
+                           tuple(args.source_run))
         except OwnershipError as exc:
             raise SystemExit(str(exc)) from exc
         return
@@ -593,7 +582,9 @@ def main(argv: list[str] | None = None) -> None:
             else:
                 orchestrator = DemoOrchestrator(settings, repository, artifacts, render_event)
             if args.command == "run":
-                orchestrator.run()
+                completed_run_id = orchestrator.run()
+                if repository.get_run(completed_run_id)["status"] != "COMPLETED":
+                    raise SystemExit(1)
                 return
             while True:
                 orchestrator.run()

@@ -525,55 +525,30 @@ def test_evaluate_evidence_record_judges_the_immutable_revision(runtime):
               context["repository"].events(context["run_id"], 0, 300)["items"]]
     assert "JEV_DEEP_EVIDENCE_JUDGED" in events
 
-# ------------------------------------------------------------------ provider budget
+# ------------------------------------------------------------------ per-request context
 
 
-def test_attempt_budget_exhaustion_is_a_typed_failure_without_a_call(runtime):
-    settings, repository, artifacts = runtime
+def test_context_refusal_is_not_a_provider_call(runtime, monkeypatch):
+    import cancerjev.jev.context as context
+    monkeypatch.setattr(context, "STATE_AND_LONGEST_QUESTION_BYTES", 100)
     adapter = StubAdapter()
-    service = JevService(
-        dataclasses.replace(settings, jev_max_attempts=0), repository, artifacts,
-        adapter_factory=lambda: adapter)
-    run_id = repository.create_run("jev-budget-attempts", mode="LIVE", fixture_id=None,
-                                   fixture_version=None)
-    record = state_record("budget-state")
-    register_state(repository, artifacts, run_id, record)
-    evaluation = service.evaluate_record(run_id=run_id, state=record, emit=_emit(repository))
-    assert evaluation.error_code == "JEV_ATTEMPT_BUDGET_EXHAUSTED"
-    assert evaluation.answers is None or not evaluation.answers
+    service, ctx = service_context(runtime, adapter)
+    evaluation = service.evaluate_record(run_id=ctx["run_id"], state=ctx["state"], emit=ctx["emit"])
+    assert evaluation.error_code == "JEV_CONTEXT_LIMIT_EXCEEDED"
     assert adapter.calls == 0
+    assert ctx["repository"].get_run(ctx["run_id"])["provider_usage"]["jev_calls"] == 0
 
 
-def test_input_token_reservation_refuses_before_the_provider_is_called(runtime):
+def test_shared_worker_service_has_no_cross_run_cost_quota(runtime):
     settings, repository, artifacts = runtime
-    adapter = StubAdapter()
-    service = JevService(
-        dataclasses.replace(settings, jev_max_input_units=1_000), repository, artifacts,
-        adapter_factory=lambda: adapter)
-    run_id = repository.create_run("jev-budget-tokens", mode="LIVE", fixture_id=None,
-                                   fixture_version=None)
-    record = state_record("token-budget-state")
-    register_state(repository, artifacts, run_id, record)
-    evaluation = service.evaluate_record(run_id=run_id, state=record, emit=_emit(repository))
-    assert evaluation.error_code == "JEV_INPUT_TOKEN_BUDGET_EXHAUSTED"
-    assert adapter.calls == 0
-
-
-def test_attempt_budget_spends_one_reservation_per_provider_call(runtime):
-    settings, repository, artifacts = runtime
-    adapter = StubAdapter()
-    service = JevService(
-        dataclasses.replace(settings, jev_max_attempts=1), repository, artifacts,
-        adapter_factory=lambda: adapter)
-    run_id = repository.create_run("jev-budget-spend", mode="LIVE", fixture_id=None,
-                                   fixture_version=None)
-    first_record = state_record("budget-state-1")
-    register_state(repository, artifacts, run_id, first_record)
-    first = service.evaluate_record(run_id=run_id, state=first_record, emit=_emit(repository))
-    assert first.error_code is None
-    second_record = state_record(
-        "budget-state-2", statistical_state(counts={PROJECT: {GENE.gene_id: 11}}))
-    register_state(repository, artifacts, run_id, second_record)
-    second = service.evaluate_record(run_id=run_id, state=second_record, emit=_emit(repository))
-    assert second.error_code == "JEV_ATTEMPT_BUDGET_EXHAUSTED"
-    assert adapter.calls == 1, "the exhausted budget must refuse before another attempt"
+    adapter = StubAdapter(model="jev-latest")
+    service = JevService(dataclasses.replace(settings, jev_model="jev-latest"), repository,
+                         artifacts, adapter_factory=lambda: adapter)
+    for index in range(30):
+        run_id = repository.create_run("worker", mode="LIVE", fixture_id=None, fixture_version=None)
+        record = state_record(f"worker-state-{index}")
+        register_state(repository, artifacts, run_id, record)
+        result = service.evaluate_record(run_id=run_id, state=record, emit=_emit(repository))
+        assert result.error_code is None
+        assert repository.get_run(run_id)["provider_usage"]["jev_calls"] == 1
+    assert adapter.calls == 30

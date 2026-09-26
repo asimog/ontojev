@@ -31,7 +31,10 @@ from cancerjev.domain.events import canonical_json
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash"
 GENERATOR_NAME = "openrouter-chat-v1"
-MAX_RESPONSE_BYTES = 32_768
+MAX_RESPONSE_BYTES = 131_072
+# Live observation (2026-09-26): current reasoning models return their reasoning payload in the
+# response body, which exceeded the previous 32 KiB cap while the generated content stayed small;
+# the cap bounds transport bytes only and the scientific content bound remains MAX_OUTPUT_TOKENS.
 # Reasoning models spend output tokens before emitting content, so the request must bound the
 # completion itself; without this the model can stream indefinitely and no socket timeout fires.
 # Live observation: reasoning used ~1,850-2,000 tokens before ~2,200 characters of content, so the

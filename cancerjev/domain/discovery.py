@@ -38,6 +38,12 @@ from cancerjev.domain.scientific import (
     MutationCountResult,
     UnavailableLane,
 )
+from cancerjev.gdc.budget import (
+    PAGE_DEFECT_CEILING,
+    REQUEST_DEFECT_CEILING,
+    RUN_DOWNLOAD_BYTES,
+    SHARD_DOWNLOAD_BYTES,
+)
 
 DISCOVERY_UNIVERSE_METHOD = "GENE_ID_ASC_INDEXED_PREFIX_V1"
 COMPLETE_UNIVERSE_METHOD = "GENE_ID_ASC_INDEXED_COMPLETE_V1"
@@ -48,11 +54,11 @@ SYSTEMATIC_UNIVERSE_PAGE_SIZE = 100
 MAX_UNIVERSE_DEFECT_PAGES = MAX_UNIVERSE_DEFECT_CEILING // SYSTEMATIC_UNIVERSE_PAGE_SIZE + 1
 DISCOVERY_RUN_MAX_REQUESTS = 1200
 DISCOVERY_RUN_MAX_PAGES_PER_QUERY = MAX_UNIVERSE_DEFECT_PAGES
-EXPRESSION_RUN_MAX_REQUESTS = 1500
-EXPRESSION_RUN_MAX_BYTES = 384 * 1024 * 1024
+EXPRESSION_RUN_MAX_REQUESTS = REQUEST_DEFECT_CEILING
+EXPRESSION_RUN_MAX_BYTES = RUN_DOWNLOAD_BYTES
 MAX_OCCURRENCE_SCAN_PAGE_SIZE = 10000
-OCCURRENCE_SCAN_MAX_PAGES = 128
-OCCURRENCE_SCAN_MAX_BYTES = 256 * 1024 * 1024
+OCCURRENCE_SCAN_MAX_PAGES = PAGE_DEFECT_CEILING
+OCCURRENCE_SCAN_MAX_BYTES = SHARD_DOWNLOAD_BYTES
 LIVE_RUN_MAX_REQUESTS = 300
 LIVE_RUN_MAX_BYTES = 384 * 1024 * 1024
 MAX_DISCOVERY_SURVIVORS = 10
@@ -149,7 +155,7 @@ CNV_SCAN_SELECTION_RULE = "CNV_PROJECT_CASE_SHARD_SCAN_V1"
 CNV_SHARD_EVIDENCE_METHOD_ID = "CNV_SHARD_OCCURRENCE_SCAN_V1"
 CNV_SHARD_EVIDENCE_VERSION = "1"
 CNV_CASE_SHARD_SIZE = 25
-CNV_SCAN_MAX_PAGES = 3000
+CNV_SCAN_MAX_PAGES = PAGE_DEFECT_CEILING
 CNV_DISPOSITION_POLICY_VERSION = "cnv-dispositions-v1"
 CNV_RETAIN_MIN_AMPLIFICATION_CASES = 5
 CNV_RETAIN_MIN_HOMOZYGOUS_DELETION_CASES = 5
@@ -752,9 +758,19 @@ class CnvShardEvidence:
     records: int
     sources: tuple[OperationalSource, ...]
     warnings: tuple[str, ...]
+    cohort_case_ids: tuple[str, ...]
+    case_shard_size: int
+    spec_hash: str
 
     def __post_init__(self) -> None:
         count(self.shard_index, "CNV shard index")
+        strings(self.cohort_case_ids, "CNV cohort cases")
+        require(bool(self.cohort_case_ids)
+                and self.cohort_case_ids == tuple(sorted(set(self.cohort_case_ids))),
+                "CNV cohort frame must be nonempty, sorted and unique")
+        count(self.case_shard_size, "CNV case shard size")
+        require(self.case_shard_size > 0, "CNV case shard size must be positive")
+        require(len(self.spec_hash) == 64, "CNV spec hash is required")
         strings(self.case_ids, "CNV shard cases")
         require(bool(self.case_ids) and self.case_ids == tuple(sorted(self.case_ids))
                 and len(set(self.case_ids)) == len(self.case_ids),
@@ -767,6 +783,9 @@ class CnvShardEvidence:
         gene_ids = [item.gene_id for item in self.genes]
         require(gene_ids == sorted(gene_ids) and len(set(gene_ids)) == len(gene_ids),
                 "CNV shard genes must be sorted and unique")
+        require(all(set(category.case_ids) <= set(self.case_ids)
+                    for gene in self.genes for category in gene.categories),
+                "CNV gene cases must belong to their shard")
         count(self.records, "CNV shard records")
         require(bool(self.genes) == (self.records >= 1),
                 "a shard records rows exactly when it carries genes")

@@ -72,7 +72,8 @@ def test_health_and_system_report_the_current_configuration(runtime, monkeypatch
     assert system["active_run_id"] is None
     assert system["budget_defaults"]["gdc_requests"] == 150
     assert system["budget_defaults"]["per_response_bytes"] == 5 * 1024 * 1024
-    assert system["budget_defaults"]["gdc_bytes"] == 64 * 1024 * 1024
+    assert system["budget_defaults"]["gdc_bytes"] == 768 * 1024 * 1024
+    assert system["budget_policy"]["max_shard_bytes"] == 512 * 1024 * 1024
     assert system["budget_defaults"]["max_case_ids"] == 250
     assert system["budget_defaults"]["max_gene_ids"] == 100
     assert system["cursor"]["present"] is False

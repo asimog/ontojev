@@ -9,22 +9,11 @@ from cancerjev.gdc.transport import BudgetCaps
 
 ENV_LOCAL_FILENAME = ".env.local"
 
-# Documented hard ceilings (BudgetCaps in gdc.transport). Operational settings may lower
-# these but may never raise them; an above-default value is rejected at load time.
-# The byte and page ceilings were enlarged for the Stage 4 mutation occurrence scan
-# (MUTATION_AFFECTED_CASE_COUNT_V2): a complete TCGA-LUAD released-occurrence scan is
-# ~71 pages of ~2.9 MB (~205 MB) with canonical consequence fields. Per-stage Settings
-# defaults remain at the original values; the systematic-discovery and live workers
-# construct their declared run budgets explicitly.
+# Fixed transport controls; production acquisition allowances are owned by gdc.budget.
 _DOCUMENTED_CAPS = BudgetCaps()
-GDC_MAX_REQUESTS_HARD_CAP = _DOCUMENTED_CAPS.max_requests
-GDC_MAX_BYTES_HARD_CAP = _DOCUMENTED_CAPS.max_bytes
 GDC_PER_RESPONSE_BYTES_HARD_CAP = _DOCUMENTED_CAPS.per_response_bytes
 GDC_TIMEOUT_SECONDS_HARD_CAP = _DOCUMENTED_CAPS.timeout_seconds
 JEV_MAX_STATES_HARD_CAP = 1000
-JEV_MAX_ATTEMPTS_HARD_CAP = 1015
-JEV_INPUT_TOKEN_RESERVATION_PER_ATTEMPT = 64_000
-JEV_MAX_INPUT_TOKENS_HARD_CAP = JEV_MAX_ATTEMPTS_HARD_CAP * JEV_INPUT_TOKEN_RESERVATION_PER_ATTEMPT
 # Documented ceiling for one Jev provider request. Like the GDC socket timeout,
 # the default equals the hard cap: operational settings may lower it only.
 JEV_TIMEOUT_SECONDS_HARD_CAP = 30.0
@@ -85,15 +74,11 @@ class Settings:
     fixture_stage_delay_ms: int
     run_interval_minutes: int
     web_origin: str
-    gdc_max_requests: int = 150
-    gdc_max_bytes: int = 64 * 1024 * 1024
     gdc_per_response_bytes: int = 5 * 1024 * 1024
     gdc_timeout_seconds: float = 30.0
     gdc_cache_enabled: bool = True
     jev_model: str = "jev-1.13.0"
     jev_max_states: int = 1000
-    jev_max_attempts: int = 25
-    jev_max_input_units: int = 1_600_000
     jev_timeout_seconds: float = 30.0
     llm_model: str = DEFAULT_LLM_MODEL
     llm_timeout_seconds: float = 120.0
@@ -109,8 +94,6 @@ class Settings:
             fixture_stage_delay_ms=delay,
             run_interval_minutes=interval,
             web_origin=os.getenv("CANCERJEV_WEB_ORIGIN", "http://localhost:3000"),
-            gdc_max_requests=_bounded_int("CANCERJEV_GDC_MAX_REQUESTS", 150, GDC_MAX_REQUESTS_HARD_CAP),
-            gdc_max_bytes=_bounded_int("CANCERJEV_GDC_MAX_BYTES", 64 * 1024 * 1024, GDC_MAX_BYTES_HARD_CAP),
             gdc_per_response_bytes=_bounded_int(
                 "CANCERJEV_GDC_PER_RESPONSE_BYTES", 5 * 1024 * 1024, GDC_PER_RESPONSE_BYTES_HARD_CAP,
             ),
@@ -120,10 +103,6 @@ class Settings:
             gdc_cache_enabled=os.getenv("CANCERJEV_GDC_CACHE", "1") not in {"0", "false", "False"},
             jev_model=os.getenv("CANCERJEV_JEV_MODEL", "jev-1.13.0"),
             jev_max_states=_bounded_int("CANCERJEV_JEV_MAX_STATES", 1000, JEV_MAX_STATES_HARD_CAP),
-            jev_max_attempts=_bounded_int(
-                "CANCERJEV_JEV_MAX_ATTEMPTS", 25, JEV_MAX_ATTEMPTS_HARD_CAP),
-            jev_max_input_units=_bounded_int(
-                "CANCERJEV_JEV_MAX_INPUT_TOKENS", 1_600_000, JEV_MAX_INPUT_TOKENS_HARD_CAP),
             jev_timeout_seconds=_bounded_seconds(
                 "CANCERJEV_JEV_TIMEOUT_SECONDS", 30.0, JEV_TIMEOUT_SECONDS_HARD_CAP,
             ),

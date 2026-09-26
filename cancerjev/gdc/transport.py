@@ -8,17 +8,19 @@ allowlisted; redirects are refused; every response is bounded and retained.
 from __future__ import annotations
 
 import http.client
+import json
 import ssl
 import threading
 import time
 import urllib.parse
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
 from cancerjev.domain.events import canonical_json, utc_now
+from cancerjev.gdc.budget import PAGE_DEFECT_CEILING, REQUEST_DEFECT_CEILING, shard_key
 from cancerjev.gdc.endpoints import ENDPOINTS, EndpointSpec, GDCRequest
 from cancerjev.storage.artifacts import ArtifactStore, PublishedArtifact
 from cancerjev.storage.repositories import Repository
@@ -45,6 +47,7 @@ class TransportErrorCode(StrEnum):
     REQUEST_BUDGET_EXHAUSTED = "REQUEST_BUDGET_EXHAUSTED"
     BYTE_BUDGET_EXHAUSTED = "BYTE_BUDGET_EXHAUSTED"
     PAGE_BUDGET_EXHAUSTED = "PAGE_BUDGET_EXHAUSTED"
+    SHARD_BYTE_BUDGET_EXHAUSTED = "SHARD_BYTE_BUDGET_EXHAUSTED"
 
 
 class TransportError(Exception):
@@ -68,6 +71,8 @@ class BudgetCaps:
     max_gene_ids: int = 100
     max_retries: int = 2
     timeout_seconds: float = 30.0
+    adaptive: bool = False
+    max_shard_bytes: int | None = None
 
 
 @dataclass
@@ -76,10 +81,29 @@ class RunBudget:
     requests_started: int = 0
     bytes_read: int = 0
     pages_by_query: dict[str, int] = field(default_factory=dict)
+    bytes_by_shard: dict[str, int] = field(default_factory=dict)
+    active_shard: str = ""
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def reserve(self, request: GDCRequest) -> None:
+    def reserve(self, request: GDCRequest) -> dict[str, int] | None:
         with self._lock:
+            self.active_shard = shard_key(request)
+            if (self.caps.max_shard_bytes is not None
+                    and self.bytes_by_shard.get(self.active_shard, 0) >= self.caps.max_shard_bytes):
+                raise TransportError(TransportErrorCode.SHARD_BYTE_BUDGET_EXHAUSTED,
+                                     "shard download allowance exhausted; acquisition is incomplete")
+            expansion = None
+            if self.caps.adaptive:
+                requests, pages = self.caps.max_requests, self.caps.max_pages_per_query
+                while requests < self.requests_started + 1 and requests < REQUEST_DEFECT_CEILING:
+                    requests = min(REQUEST_DEFECT_CEILING, requests * 2)
+                while pages < request.page and pages < PAGE_DEFECT_CEILING:
+                    pages = min(PAGE_DEFECT_CEILING, pages * 2)
+                if (requests, pages) != (self.caps.max_requests, self.caps.max_pages_per_query):
+                    expansion = {"previous_requests": self.caps.max_requests,
+                                 "previous_pages": self.caps.max_pages_per_query,
+                                 "max_requests": requests, "max_pages_per_query": pages}
+                    self.caps = replace(self.caps, max_requests=requests, max_pages_per_query=pages)
             if self.requests_started + 1 > self.caps.max_requests:
                 raise TransportError(
                     TransportErrorCode.REQUEST_BUDGET_EXHAUSTED,
@@ -100,14 +124,20 @@ class RunBudget:
                     f"byte cap {self.caps.max_bytes} already reached",
                 )
             self.requests_started += 1
+            return expansion
 
     def charge(self, count: int) -> None:
         with self._lock:
             self.bytes_read += max(0, count)
+            self.bytes_by_shard[self.active_shard] = self.bytes_by_shard.get(self.active_shard, 0) + max(0, count)
 
     @property
     def remaining_bytes(self) -> int:
-        return max(0, self.caps.max_bytes - self.bytes_read)
+        remaining = max(0, self.caps.max_bytes - self.bytes_read)
+        if self.caps.max_shard_bytes is not None:
+            remaining = min(remaining, max(0, self.caps.max_shard_bytes
+                                           - self.bytes_by_shard.get(self.active_shard, 0)))
+        return remaining
 
 
 @dataclass(frozen=True)
@@ -158,6 +188,15 @@ class GDCTransport:
         self.host = host
         self.port = port
         self.connection_factory = connection_factory
+        self._release_identity: str | None = None
+
+    def _cache_contract(self) -> str:
+        run = self.repository.get_run(self.run_id)
+        scope = {"release": self._release_identity or self.run_id,
+                 "host": self.host, "port": self.port,
+                 "ownership": run["execution_ownership"] if run else None,
+                 "mode": run["mode"] if run else None}
+        return f"{TRANSPORT_CONTRACT_VERSION}:release-owner-v2:{_sha256(canonical_json(scope))}"
 
     def request(self, request: GDCRequest) -> GDCResponse:
         spec = request.endpoint
@@ -169,22 +208,37 @@ class GDCTransport:
         if request.body is not None:
             canonical_json(request.body)
         request_hash = request.request_hash()
-        if self.cache_enabled:
+        if self.cache_enabled and spec.path != "/status":
             cached = self._cache_get(request_hash, spec, request.logical_query_id)
             if cached is not None:
                 return cached
-        return self._dispatch_with_retries(spec, request, request_hash)
+        response = self._dispatch_with_retries(spec, request, request_hash)
+        if spec.path == "/status":
+            try:
+                status = json.loads(response.body)
+                release = status.get("data_release")
+                if isinstance(release, str) and release:
+                    identity = _sha256(canonical_json({key: status.get(key)
+                                                      for key in ("data_release", "commit", "tag")}))
+                    if self._release_identity is not None and self._release_identity != identity:
+                        raise TransportError(TransportErrorCode.INVALID_REQUEST,
+                                             "GDC release changed within an acquisition")
+                    self._release_identity = identity
+            except (ValueError, AttributeError):
+                # Strict parser reports malformed status; do not enable cross-run reuse.
+                self._release_identity = None
+        return response
 
     # ---------------------------------------------------------------- cache
 
     def _cache_get(self, request_hash: str, spec: EndpointSpec,
                    logical_query_id: str) -> GDCResponse | None:
-        row = self.repository.gdc_cache_get(request_hash, TRANSPORT_CONTRACT_VERSION)
+        row = self.repository.gdc_cache_get(request_hash, self._cache_contract())
         if row is None:
             return None
         if row.get("completeness") != "COMPLETE":
             return None
-        if row.get("contract_version") != TRANSPORT_CONTRACT_VERSION:
+        if row.get("contract_version") != self._cache_contract():
             return None
         cached_size = int(row.get("size_bytes") or 0)
         if cached_size > self.budget.caps.per_response_bytes:
@@ -250,7 +304,12 @@ class GDCTransport:
                 raise
 
     def _attempt(self, spec: EndpointSpec, request: GDCRequest, request_hash: str, attempt_no: int) -> GDCResponse:
-        self.budget.reserve(request)
+        expansion = self.budget.reserve(request)
+        if expansion is not None:
+            self.emit("GDC_BUDGET_EXPANDED", f"gdc-budget:{uuid4()}",
+                      "Operational request/page allowances expanded under the declared policy.",
+                      stage=None, data={**expansion, "max_bytes": self.budget.caps.max_bytes,
+                                        "max_shard_bytes": self.budget.caps.max_shard_bytes})
         request_id = str(uuid4())
         started_at = utc_now()
         self.repository.gdc_attempt_start(
@@ -304,12 +363,12 @@ class GDCTransport:
         body_sha = _sha256(body)
         artifact: PublishedArtifact | None = None
         try:
+            self.budget.charge(len(body))
             artifact = self.artifacts.publish(
                 f"gdc/{request_hash}/{body_sha}.body", body,
                 "application/json" if request.accept == "application/json" else "text/tab-separated-values",
                 "gdc-response",
             )
-            self.budget.charge(len(body))
             self.repository.register_artifact(artifact, self.run_id)
         except Exception as exc:
             self._finalize_unstored_response(
@@ -323,12 +382,13 @@ class GDCTransport:
             response_artifact_id=artifact.artifact_id, response_hash=body_sha,
             completeness="COMPLETE", error=None, finished_at=utc_now(),
         )
-        self.repository.gdc_cache_put(
+        if spec.path != "/status" and self.cache_enabled:
+            self.repository.gdc_cache_put(
             request_hash=request_hash, method=spec.method, endpoint=spec.path,
             response_artifact_id=artifact.artifact_id, response_hash=body_sha,
             size_bytes=len(body), completeness="COMPLETE",
-            contract_version=TRANSPORT_CONTRACT_VERSION, created_at=utc_now(),
-        )
+                contract_version=self._cache_contract(), created_at=utc_now(),
+            )
         self.emit(
             "GDC_REQUEST_COMPLETED", f"gdc:{request_id}:completed",
             f"GDC {spec.method} {spec.path} completed with {len(body)} bytes.",
@@ -472,6 +532,12 @@ class GDCTransport:
                 bytes_read += len(chunk)
             body = b"".join(chunks)
             if bytes_read >= allowance:
+                if declared is not None and int(declared) == bytes_read:
+                    return status, response_headers, body
+                if allowance == self.budget.remaining_bytes:
+                    raise TransportError(TransportErrorCode.BYTE_BUDGET_EXHAUSTED,
+                                         "run or shard download ceiling reached before confirmed EOF",
+                                         bytes_read=bytes_read)
                 probe = response.read(1)
                 if probe:
                     bytes_read += len(probe)

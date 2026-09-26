@@ -9,6 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 
+from cancerjev.gdc.budget import INITIAL_REQUESTS, RUN_DOWNLOAD_BYTES, policy_payload
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.database import SCHEMA_VERSION
 from cancerjev.storage.readers import (
@@ -69,13 +70,14 @@ def system(request: Request):
             "artifact_files": artifacts["count"],
         },
         "versions": {"api": API_VERSION, "schema": SCHEMA_VERSION, "worker": worker["version"] if worker else None},
+        "budget_policy": policy_payload(),
         "budget_defaults": {
-            "gdc_requests": settings.gdc_max_requests,
-            "gdc_bytes": settings.gdc_max_bytes,
+            "gdc_requests": INITIAL_REQUESTS,
+            "gdc_bytes": RUN_DOWNLOAD_BYTES,
             "per_response_bytes": settings.gdc_per_response_bytes,
             "max_case_ids": 250,
             "max_gene_ids": 100,
-            "reason": "Application caps enforced by GDCTransport; not provider guarantees.",
+            "reason": "Initial request allowance grows under budget_policy; run and shard byte ceilings are fixed.",
         },
         "cursor": {"present": False, "reason": "Phase 2 bounded sweeps are self-contained and use no cross-run discovery cursor."},
         "cache": {

@@ -78,7 +78,7 @@ def test_bounded_live_run_and_separate_generation(tmp_path, monkeypatch, record_
     totals = repository.gdc_run_totals(sweep_id)
     assert 0 < totals["attempts"] <= 150
     assert totals["cache_hits"] == 0
-    assert totals["bytes"] <= settings.gdc_max_bytes
+    assert totals["bytes"] <= __import__("cancerjev.gdc.budget", fromlist=["RUN_DOWNLOAD_BYTES"]).RUN_DOWNLOAD_BYTES
     symbol = _baseline_top_symbol(repository, artifacts, sweep_id)
     record_property("operator_symbol", symbol)
 

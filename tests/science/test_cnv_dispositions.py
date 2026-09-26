@@ -50,7 +50,8 @@ def _gene(gene_id: str, categories: dict[str, tuple[CnvCategory, tuple[str, ...]
 def _shard(index: int, case_ids: tuple[str, ...], genes: tuple[CnvGeneEvidence, ...],
            records: int = 1) -> CnvShardEvidence:
     return CnvShardEvidence(index, tuple(sorted(case_ids)), "TCGA-LUAD", "Data Release TEST",
-                            genes, records, (_source(),), ())
+                            genes, records, (_source(),), (),
+                            tuple(f"case-{i}" for i in range(6)), 3, "0" * 64)
 
 
 def test_recurrence_thresholds_are_declared_case_counts():

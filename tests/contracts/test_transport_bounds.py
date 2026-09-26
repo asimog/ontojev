@@ -23,7 +23,6 @@ from cancerjev.gdc.endpoints import (
     top_mutated_genes_request,
 )
 from cancerjev.gdc.transport import (
-    TRANSPORT_CONTRACT_VERSION,
     BudgetCaps,
     TransportError,
     TransportErrorCode,
@@ -58,9 +57,9 @@ def test_query_parameters_are_sorted_and_encoded(transport_builder, loopback):
 
 def test_request_completes_records_ledger_and_cache(transport_builder, loopback, runtime):
     _, repository, _ = runtime
-    loopback.json("/status", STATUS_BODY)
+    loopback.json("/projects", STATUS_BODY)
     transport = transport_builder()
-    response = transport.request(status_request())
+    response = transport.request(projects_request())
     assert response.body == STATUS_BODY
     assert response.from_cache is False
     assert response.completeness == "COMPLETE"
@@ -68,7 +67,7 @@ def test_request_completes_records_ledger_and_cache(transport_builder, loopback,
     totals = repository.gdc_run_totals(transport.run_id)
     assert totals == {"attempts": 1, "bytes": len(STATUS_BODY), "cache_hits": 0}
 
-    again = transport.request(status_request())
+    again = transport.request(projects_request())
     assert again.from_cache is True
     assert again.body == STATUS_BODY
     assert len(loopback.requests) == 1, "cache hit must not touch the network"
@@ -388,14 +387,14 @@ def test_received_body_storage_failure_leaves_no_reserved_attempt(runtime, loopb
 
 def test_stale_contract_version_cache_row_cannot_block_a_new_entry(runtime, loopback, transport_builder):
     _, repository, artifacts = runtime
-    loopback.json("/status", STATUS_BODY)
-    request = status_request()
+    loopback.json("/projects", STATUS_BODY)
+    request = projects_request()
     request_hash = request.request_hash()
     run_id = repository.create_run("stale-cache")
     stale_artifact = artifacts.publish("gdc/stale.body", STATUS_BODY, "application/json", "gdc-response")
     repository.register_artifact(stale_artifact, run_id)
     repository.gdc_cache_put(
-        request_hash=request_hash, method="GET", endpoint="/status",
+        request_hash=request_hash, method="GET", endpoint="/projects",
         response_artifact_id=stale_artifact.artifact_id, response_hash=stale_artifact.sha256,
         size_bytes=len(STATUS_BODY), completeness="COMPLETE", contract_version="gdc-transport-v0",
         created_at="2026-01-01T00:00:00Z",
@@ -406,9 +405,9 @@ def test_stale_contract_version_cache_row_cannot_block_a_new_entry(runtime, loop
     assert fresh.from_cache is False, "an older contract version must not be replayed as current evidence"
     assert len(loopback.requests) == 1
 
-    cached_transport = transport_builder(caps=BudgetCaps(max_requests=5, max_bytes=1_000_000))
+    cached_transport = fresh_transport
     cached = cached_transport.request(request)
     assert cached.from_cache is True
     assert len(loopback.requests) == 1, "the current contract version entry must be storable"
-    assert repository.gdc_cache_get(request_hash, TRANSPORT_CONTRACT_VERSION)["completeness"] == "COMPLETE"
+    assert repository.gdc_cache_get(request_hash, fresh_transport._cache_contract())["completeness"] == "COMPLETE"
     assert repository.gdc_cache_get(request_hash, "gdc-transport-v0")["created_at"] == "2026-01-01T00:00:00Z"

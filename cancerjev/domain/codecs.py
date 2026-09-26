@@ -113,7 +113,7 @@ EVIDENCE_SCHEMA_VERSION = 4
 DISCOVERY_SCHEMA_VERSION = 1
 EXPRESSION_DISCOVERY_SCHEMA_VERSION = 1
 CNV_DISCOVERY_SCHEMA_VERSION = 1
-CNV_SHARD_EVIDENCE_SCHEMA_VERSION = 1
+CNV_SHARD_EVIDENCE_SCHEMA_VERSION = 2
 CNV_PROJECT_SCAN_SCHEMA_VERSION = 1
 
 
@@ -1013,13 +1013,15 @@ def read_cnv_shard_evidence(data: bytes, *, expected_hash: str | None = None) ->
         d = decode(data)
         _unsupported(d, CNV_SHARD_EVIDENCE_SCHEMA_VERSION, "CNV_SHARD_EVIDENCE")
         obj(d, "schema_version kind shard_index case_ids project_id release genes records "
-               "sources warnings shard_hash")
+               "sources warnings shard_hash cohort_case_ids case_shard_size spec_hash")
         evidence = CnvShardEvidence(
             integer(d["shard_index"]), string_tuple(d["case_ids"]), string(d["project_id"]),
             string(d["release"]), tuple(_cnv_gene_evidence(item) for item in seq(d["genes"])),
             integer(d["records"]),
             tuple(_operational_source(item) for item in seq(d["sources"])),
             string_tuple(d["warnings"]),
+            string_tuple(d["cohort_case_ids"]), integer(d["case_shard_size"]),
+            string(d["spec_hash"]),
         )
         _binding(cnv_shard_identity(evidence), d["shard_hash"], expected_hash)
         return evidence

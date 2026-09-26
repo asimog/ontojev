@@ -18,6 +18,7 @@ from cancerjev.domain.events import canonical_json
 from cancerjev.domain.evidence import MeasuredObservation
 from cancerjev.gdc.endpoints import ssm_occurrence_gene_page_request
 from cancerjev.gdc.parsers import ParserError, parse_ssm_occurrence_page
+from cancerjev.gdc.transport import TransportError
 from cancerjev.research.acquisition import AcquisitionTransport, response_meta
 
 OCCURRENCE_DETAIL_PAGE_SIZE = 250
@@ -66,14 +67,18 @@ def measure_occurrence_detail(
     pages_read = 0
     total: int | None = None
     offset = 0
+    previous_id: str | None = None
     while True:
-        response = transport.request(
-            ssm_occurrence_gene_page_request(project_id, gene_id, offset=offset, size=page_size))
+        if pages_read >= max_pages:
+            return unavailable_observation(gene_id=gene_id, population_hash=population_hash,
+                                           reason="OCCURRENCE_DETAIL_PAGE_CAP_REACHED")
         try:
+            response = transport.request(
+                ssm_occurrence_gene_page_request(project_id, gene_id, offset=offset, size=page_size))
             page = parse_ssm_occurrence_page(
                 response.body, response_meta(response, release), expected_project=project_id,
                 expected_offset=offset, expected_size=page_size)
-        except ParserError as exc:
+        except (ParserError, TransportError) as exc:
             return _observation(
                 population_hash=population_hash,
                 observed={"gene_id": gene_id, "error_code": exc.code},
@@ -95,11 +100,19 @@ def measure_occurrence_detail(
                 availability="NOT_OBSERVED", n_effective=None,
                 reason="OCCURRENCE_DETAIL_TOTAL_CHANGED")
         for record in page.records:
+            if previous_id is not None and record.occurrence_id <= previous_id:
+                return unavailable_observation(gene_id=gene_id, population_hash=population_hash,
+                                               reason="OCCURRENCE_DETAIL_ORDER_VIOLATION")
+            if gene_id not in record.gene_ids:
+                return unavailable_observation(gene_id=gene_id, population_hash=population_hash,
+                                               reason="OCCURRENCE_DETAIL_UNEXPECTED_GENE")
+            previous_id = record.occurrence_id
             records += 1
-            terms = {row.consequence for row in record.canonical_rows if row.consequence}
+            rows = tuple(row for row in record.canonical_rows if row.gene_id == gene_id)
+            terms = {row.consequence for row in rows if row.consequence}
             for term in sorted(terms):
                 composition[term] = composition.get(term, 0) + 1
-            for row in record.canonical_rows:
+            for row in rows:
                 if row.transcript_id is not None:
                     transcripts.add(row.transcript_id)
         offset += page.count

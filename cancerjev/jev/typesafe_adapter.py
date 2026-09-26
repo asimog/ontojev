@@ -64,6 +64,9 @@ class TypeSafeAdapter:
         self.api_key = api_key
 
     def evaluate(self, state: dict[str, Any], definitions: tuple[QuestionDefinition, ...]) -> ProviderAnswerSet:
+        from cancerjev.jev.context import validate_context
+
+        validate_context(state, definitions)
         try:
             from typesafe_sdk import Choice, Noul, RetryPolicy, Score, TypeSafeClient
         except ImportError as exc:  # pragma: no cover - dependency is declared

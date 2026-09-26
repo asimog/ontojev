@@ -14,10 +14,11 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from cancerjev.config import JEV_INPUT_TOKEN_RESERVATION_PER_ATTEMPT, Settings
+from cancerjev.config import Settings
 from cancerjev.domain.envelopes import EvidenceRecord, HypothesisRecord, StateRecord
 from cancerjev.domain.events import canonical_json, utc_now
 from cancerjev.domain.measurements import digest
+from cancerjev.jev.context import validate_context
 from cancerjev.jev.contracts import (
     EvaluationRecord,
     JevContractError,
@@ -102,8 +103,6 @@ class JevService:
     artifacts: ArtifactStore
     adapter_factory: Callable[[], TypeSafeAdapter] | None = None
     _question_artifacts: dict[tuple[str, str], Any] = field(default_factory=dict, repr=False)
-    _provider_attempts_reserved: int = field(default=0, init=False, repr=False)
-    _input_tokens_reserved: int = field(default=0, init=False, repr=False)
 
     # ------------------------------------------------------------------ helpers
 
@@ -137,11 +136,17 @@ class JevService:
         self._question_artifacts[key] = artifact
         return artifact
 
-    def _cache_key(self, *, projection_hash_value: str, question_set_hash_value: str,
+    def _cache_key(self, *, run_id: str, projection_hash_value: str, question_set_hash_value: str,
                    requested_model: str) -> str | None:
         if not is_pinned_model_identity(requested_model):
             return None
+        run = self.repository.get_run(run_id)
+        if run is None:
+            raise ValueError("cache run missing")
         return digest({
+            "cache_scope_version": 2,
+            "ownership": run["execution_ownership"],
+            "mode": run["mode"],
             "projection_hash": projection_hash_value,
             "question_set_hash": question_set_hash_value,
             "resolved_model": requested_model,
@@ -186,16 +191,7 @@ class JevService:
     def _invoke(self, adapter: TypeSafeAdapter, projection: dict[str, Any],
                 questions: tuple[QuestionDefinition, ...]) -> tuple[ProviderAnswerSet, ValidatedAnswers]:
         """One provider call plus fail-closed validation of its answers."""
-        if self._provider_attempts_reserved >= self.settings.jev_max_attempts:
-            raise JevProviderError("JEV_ATTEMPT_BUDGET_EXHAUSTED", "no provider attempt remains")
-        reservation = JEV_INPUT_TOKEN_RESERVATION_PER_ATTEMPT
-        if self._input_tokens_reserved + reservation > self.settings.jev_max_input_units:
-            raise JevProviderError(
-                "JEV_INPUT_TOKEN_BUDGET_EXHAUSTED",
-                f"reserving {reservation} tokens would exceed the configured envelope",
-            )
-        self._provider_attempts_reserved += 1
-        self._input_tokens_reserved += reservation
+        validate_context(projection, questions)
         answer_set = adapter.evaluate(projection, questions)
         return answer_set, read_answers(questions, answer_set.answers)
 
@@ -256,7 +252,7 @@ class JevService:
                 provider_attempted=False,
             )
         requested_model = self.settings.jev_model
-        cache_key = self._cache_key(projection_hash_value=p_hash,
+        cache_key = self._cache_key(run_id=run_id, projection_hash_value=p_hash,
                                     question_set_hash_value=wide_question_set_hash(),
                                     requested_model=requested_model)
         if cache_key is not None:
@@ -288,7 +284,7 @@ class JevService:
         except (JevProviderError, JevContractError) as exc:
             return self._record_failure(run_id, state_id, state_hash, projection_id, p_hash,
                                         question_artifact, applicability, exc, emit,
-                                        provider_attempted=True)
+                                        provider_attempted=getattr(exc, "code", None) != "JEV_CONTEXT_LIMIT_EXCEEDED")
         if cache_key is not None and answer_set.resolved_model != requested_model:
             cache_key = None
         evaluation = {
@@ -490,7 +486,7 @@ class JevService:
         persist = dict(purpose=spec.purpose, stage=spec.stage, subject_label=spec.label,
                        candidate_id=spec.candidate_id, event_type=spec.event_type,
                        event_prefix=spec.event_prefix)
-        cache_key = self._cache_key(projection_hash_value=p_hash, question_set_hash_value=spec.set_hash,
+        cache_key = self._cache_key(run_id=run_id, projection_hash_value=p_hash, question_set_hash_value=spec.set_hash,
                                     requested_model=requested_model)
         if cache_key is not None:
             cached_id = self.repository.jev_cache_get(cache_key)
@@ -540,7 +536,7 @@ class JevService:
                 "error": {"code": str(code), "detail": str(exc)},
             }
             return self._persist_evaluation(run_id, evaluation, emit, cache_key=None,
-                                            provider_attempted=True, **persist)
+                                            provider_attempted=getattr(exc, "code", None) != "JEV_CONTEXT_LIMIT_EXCEEDED", **persist)
         if cache_key is not None and answer_set.resolved_model != requested_model:
             cache_key = None
         evaluation = {
