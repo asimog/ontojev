@@ -212,6 +212,14 @@ def _limitations(state: Any, wide: dict[str, Any],
         limitations.append("wide comparison unavailable")
     if investigation.get("comparison") == NOT_COMPARABLE:
         limitations.append("investigation-level baseline comparison is not comparable")
+    evidence = getattr(state, "pathway_evidence", None)
+    if evidence is not None:
+        limitations.append(
+            f"pathway membership for {evidence.gene_id} under {evidence.method.method_id} "
+            f"v{evidence.method.version}: {len(evidence.member_of)} pathway(s) recorded; "
+            f"{evidence.universe_mapped_genes}/{evidence.universe_size} universe genes mapped."
+        )
+        limitations.extend(evidence.limitations)
     return limitations
 
 

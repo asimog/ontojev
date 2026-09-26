@@ -45,7 +45,7 @@ __all__ = [
     "AcquisitionSpec", "CohortSpec", "CnvDiscoverySpec", "DiscoverySpec", "ExpressionDiscoverySpec",
     "LUAD_RESEARCH_V1", "LUAD_DISCOVERY_V1",
     "RESEARCH_SPEC_SCHEMA_VERSION", "ResearchSpec", "ScientificLimits", "UNIVERSE_PAGE_CAP",
-    "research_spec_from_dict",
+    "research_spec_by_id", "research_spec_from_dict",
 ]
 
 
@@ -262,3 +262,12 @@ LUAD_RESEARCH_V1 = ResearchSpec(
         "SUMMARIZE_EXPRESSION_TAIL_V1", "SUMMARIZE_CNV_CATEGORIES_V1",
     ),
 )
+
+DECLARED_RESEARCH_SPECS: dict[str, ResearchSpec] = {
+    LUAD_RESEARCH_V1.spec_id: LUAD_RESEARCH_V1,
+}
+
+
+def research_spec_by_id(spec_id: str) -> ResearchSpec | None:
+    """Lookup over code-declared specs only; unknown ids are never fabricated."""
+    return DECLARED_RESEARCH_SPECS.get(spec_id)

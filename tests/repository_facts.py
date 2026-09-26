@@ -50,7 +50,17 @@ from cancerjev.domain.pathway import (
     REACTOME_MEMBERSHIP_VERSION,
 )
 from cancerjev.domain.runs import ExecutionOwnership
+from cancerjev.gdc.budget import (
+    BUDGET_POLICY_VERSION,
+    INITIAL_PAGES,
+    INITIAL_REQUESTS,
+    PAGE_DEFECT_CEILING,
+    REQUEST_DEFECT_CEILING,
+    RUN_DOWNLOAD_BYTES,
+    SHARD_DOWNLOAD_BYTES,
+)
 from cancerjev.gdc.endpoints import GDC_DATA_MODEL_REFERENCE
+from cancerjev.jev.context import CONTEXT_GUARD_VERSION
 from cancerjev.jev.posture import ARM_JEV_DECISION, TYPESAFE_DECISION_RECORD_VERSION
 from cancerjev.jev.projection import (
     EVIDENCE_PROJECTION_VERSION,
@@ -108,6 +118,14 @@ def collect_facts() -> dict[str, object]:
             f"{MUTATION_INFERENCE_DECISION_ID} v{MUTATION_INFERENCE_DECISION_VERSION}"),
         "expression_disposition_policy": EXPRESSION_DISPOSITION_POLICY_VERSION,
         "expression_aliquot_identity": EXPRESSION_ALIQUOT_IDENTITY_STATUS,
+        "gdc_budget_policy": BUDGET_POLICY_VERSION,
+        "gdc_initial_pages_per_query": INITIAL_PAGES,
+        "gdc_initial_requests": INITIAL_REQUESTS,
+        "gdc_max_pages_per_query": PAGE_DEFECT_CEILING,
+        "gdc_max_requests": REQUEST_DEFECT_CEILING,
+        "gdc_run_download_bytes": RUN_DOWNLOAD_BYTES,
+        "gdc_shard_download_bytes": SHARD_DOWNLOAD_BYTES,
+        "jev_context_guard": CONTEXT_GUARD_VERSION,
         "cnv_disposition_policy": CNV_DISPOSITION_POLICY_VERSION,
         "evidence_maturity_policy": EVIDENCE_MATURITY_POLICY_VERSION,
         "pathway_membership_method": (

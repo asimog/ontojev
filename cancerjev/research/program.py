@@ -13,11 +13,17 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
 
+from cancerjev.domain.capability import CohortCapability
 from cancerjev.domain.events import canonical_json
 from cancerjev.domain.measurements import require
 from cancerjev.domain.program import CampaignStatus, ProgramState
 from cancerjev.domain.runs import ExecutionOwnership
-from cancerjev.research.campaign import CampaignProfile
+from cancerjev.research.campaign import (
+    CampaignActivationError,
+    CampaignProfile,
+    require_autonomous_activation,
+    require_capability,
+)
 from cancerjev.research.campaign_selection import (
     CAMPAIGN_SELECTION_POLICY_VERSION,
     IDLE_REASON,
@@ -49,6 +55,25 @@ class ProgramRunOutcome:
         for profile_id, status in self.campaign_statuses:
             require(bool(profile_id) and isinstance(status, CampaignStatus),
                     "invalid campaign status row")
+
+
+def dispatch_validated_campaign(*, profile: CampaignProfile,
+                                capability: CohortCapability | None,
+                                run_campaign: Callable[[CampaignProfile], bool]) -> bool:
+    """Ownership-gated autonomous dispatch: validated profile plus recorded capability.
+
+    A profile that is not validated for autonomous use and a capability that does not
+    cover the profile's enabled modalities are refused loudly; a missing capability
+    record blocks dispatch rather than being fabricated. No operator flags exist here,
+    so an autonomously dispatched campaign can never carry a researcher override.
+    """
+    require_autonomous_activation(profile)
+    if capability is None:
+        raise CampaignActivationError(
+            "CAPABILITY_RECORD_MISSING",
+            f"{profile.profile_id} has no recorded cohort capability for {profile.project_id}")
+    require_capability(profile, capability)
+    return bool(run_campaign(profile))
 
 
 def run_program_once(*, profiles: tuple[CampaignProfile, ...],

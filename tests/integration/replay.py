@@ -123,15 +123,22 @@ def coverage_body() -> bytes:
                   "aggregations": {"projects": {"buckets": buckets}}})
 
 
-def genes_body(*, size: int = 10, offset: int = 0) -> bytes:
+def genes_body(*, size: int = 10, offset: int = 0,
+               expression_only_gene: str | None = None) -> bytes:
     hits = [
         {"gene_id": GENES[0], "symbol": "GENEONE", "name": "Gene One", "biotype": "protein_coding",
          "is_cancer_gene_census": True},
         {"gene_id": GENES[1], "symbol": "GENETWO", "name": "Gene Two", "biotype": "protein_coding",
          "is_cancer_gene_census": False},
-    ][offset:offset + size]
-    return _json({"data": {"hits": hits, "pagination": {
-        "count": len(hits), "total": 2, "size": size, "from": offset, "pages": 1}}})
+    ]
+    if expression_only_gene is not None:
+        hits.append({"gene_id": expression_only_gene, "symbol": "GENETHREE", "name": "Gene Three",
+                     "biotype": "protein_coding", "is_cancer_gene_census": False})
+    total = len(hits)
+    page = hits[offset:offset + size]
+    return _json({"data": {"hits": page, "pagination": {
+        "count": len(page), "total": total, "size": size, "from": offset,
+        "pages": math.ceil(total / size) if size else 0}}})
 
 
 def count_records(project_id: str) -> list[dict[str, Any]]:
@@ -268,7 +275,8 @@ class ReplayTransport:
                   inconsistent_case_offset_after_first: bool = False,
                   constant_expression_value: float | None = None,
                   truncate_occurrence_page: bool = False,
-                  duplicate_occurrence_across_pages: bool = False) -> None:
+                  duplicate_occurrence_across_pages: bool = False,
+                  expression_only_gene: str | None = None) -> None:
         self.artifacts = artifacts
         self.run_id = run_id
         self.controlled_files = controlled_files
@@ -282,6 +290,7 @@ class ReplayTransport:
         self.constant_expression_value = constant_expression_value
         self.truncate_occurrence_page = truncate_occurrence_page
         self.duplicate_occurrence_across_pages = duplicate_occurrence_across_pages
+        self.expression_only_gene = expression_only_gene
         self.requests: list[GDCRequest] = []
         self.published: list[Any] = []
         self.repository = repository
@@ -313,7 +322,8 @@ class ReplayTransport:
                 gene_id=_filter_gene(json.loads(params["filters"])))
         elif name == "genes":
             params = dict(request.params)
-            body = genes_body(size=int(params["size"]), offset=int(params.get("from", 0)))
+            body = genes_body(size=int(params["size"]), offset=int(params.get("from", 0)),
+                              expression_only_gene=self.expression_only_gene)
         elif name == "cases":
             params = dict(request.params)
             offset = int(params["from"])

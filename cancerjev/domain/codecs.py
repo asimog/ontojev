@@ -86,6 +86,7 @@ from cancerjev.domain.measurements import (
     require,
     sha256,
 )
+from cancerjev.domain.pathway import PathwayEvidence
 from cancerjev.domain.scientific import (
     AcquisitionScope,
     CnvCategory,
@@ -259,6 +260,17 @@ def _method(value: object) -> MethodRef:
 def _method_identity(value: object) -> MethodIdentityRef:
     d = obj(value, "method_id version parameters_hash")
     return MethodIdentityRef(string(d["method_id"]), string(d["version"]), string(d["parameters_hash"]))
+
+
+def _pathway_evidence(value: object) -> PathwayEvidence | None:
+    if value is None:
+        return None
+    d = obj(value, "gene_id member_of universe_mapped_genes universe_size method limitations")
+    return PathwayEvidence(
+        string(d["gene_id"]), string_tuple(d["member_of"]),
+        integer(d["universe_mapped_genes"]), integer(d["universe_size"]),
+        _method_identity(d["method"]), string_tuple(d["limitations"]),
+    )
 
 
 def read_measurement(value: object) -> Measurement:
@@ -619,6 +631,8 @@ def _state_identity_payload(state: StatisticalState) -> dict[str, object]:
         payload.pop("nominations", None)
     if payload.get("evidence_level") == "MEASURED":
         payload.pop("evidence_level", None)
+    if payload.get("pathway_evidence") is None:
+        payload.pop("pathway_evidence", None)
     tested_context = payload["tested_context"]
     if isinstance(tested_context, dict):
         tested_context.pop("selection_artifact_id", None)
@@ -667,6 +681,8 @@ def evidence_identity(state: EvidenceState) -> str:
 def write_state(state: StatisticalState) -> bytes:
     payload = _jsonable(asdict(state))
     assert isinstance(payload, dict)
+    if payload.get("pathway_evidence") is None:
+        payload.pop("pathway_evidence", None)
     return canonical_bytes({"schema_version": STATE_SCHEMA_VERSION, "kind": "STATISTICAL_STATE",
                             **payload, "state_hash": state_identity(state)})
 
@@ -702,7 +718,7 @@ def read_state(data: bytes, *, expected_hash: str | None = None) -> StatisticalS
             "schema_version kind entity annotation research universe tested_context projects "
             "cross_project quality warnings missingness methods environment_hash sources "
             "operational_sources state_hash".split())
-        allowed = required | {"nominations", "evidence_level"}
+        allowed = required | {"nominations", "evidence_level", "pathway_evidence"}
         require(set(d) <= allowed, "state carries unexpected fields")
         require(set(d) >= required, "state is missing required fields")
         state = StatisticalState(
@@ -715,6 +731,7 @@ def read_state(data: bytes, *, expected_hash: str | None = None) -> StatisticalS
             tuple(_operational_source(item) for item in seq(d["operational_sources"])),
             tuple(_string_string_pair(item) for item in seq(d.get("nominations", []))),
             "MEASURED" if "evidence_level" not in d else string(d["evidence_level"]),
+            _pathway_evidence(d.get("pathway_evidence")),
         )
         _binding(state_identity(state), d["state_hash"], expected_hash)
         return state

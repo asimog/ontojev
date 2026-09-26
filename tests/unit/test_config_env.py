@@ -6,6 +6,7 @@ import pytest
 
 from cancerjev.config import (
     DEFAULT_LLM_MODEL,
+    GDC_PER_RESPONSE_BYTES_HARD_CAP,
     JEV_TIMEOUT_SECONDS_HARD_CAP,
     LLM_TIMEOUT_SECONDS_HARD_CAP,
     Settings,
@@ -54,12 +55,27 @@ def test_missing_file_and_opt_out_are_inert(tmp_path, monkeypatch):
 
 def test_above_hard_cap_settings_are_rejected(monkeypatch):
     monkeypatch.setenv("CANCERJEV_NO_DOTENV", "1")
-    monkeypatch.setenv("CANCERJEV_GDC_MAX_REQUESTS", "151")
+    monkeypatch.setenv("CANCERJEV_GDC_PER_RESPONSE_BYTES",
+                       str(GDC_PER_RESPONSE_BYTES_HARD_CAP + 1))
     with pytest.raises(ValueError):
         Settings.from_env()
+    monkeypatch.setenv("CANCERJEV_GDC_PER_RESPONSE_BYTES", str(GDC_PER_RESPONSE_BYTES_HARD_CAP))
     monkeypatch.setenv("CANCERJEV_JEV_TIMEOUT_SECONDS", str(JEV_TIMEOUT_SECONDS_HARD_CAP + 1))
     with pytest.raises(ValueError):
         Settings.from_env()
+
+
+def test_retired_request_and_attempt_knobs_are_inert(monkeypatch):
+    """Adaptive request/page growth and Jev context bounds replaced operator cost knobs."""
+    monkeypatch.setenv("CANCERJEV_NO_DOTENV", "1")
+    for name in ("CANCERJEV_GDC_MAX_REQUESTS", "CANCERJEV_GDC_MAX_BYTES",
+                 "CANCERJEV_JEV_MAX_ATTEMPTS", "CANCERJEV_JEV_MAX_INPUT_TOKENS"):
+        monkeypatch.setenv(name, "1")
+    settings = Settings.from_env()
+    assert not hasattr(settings, "gdc_max_requests")
+    assert not hasattr(settings, "gdc_max_bytes")
+    assert not hasattr(settings, "jev_max_attempts")
+    assert not hasattr(settings, "jev_max_input_tokens")
 
 
 @pytest.mark.parametrize("value", ["nan", "0", "-0.5"])

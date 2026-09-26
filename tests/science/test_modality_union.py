@@ -22,6 +22,7 @@ from cancerjev.domain.measurements import Acquisition, OperationalSource, Scient
 from cancerjev.domain.scientific import (
     CnvProjectFinding,
     Lane,
+    MutationCountResult,
     UnavailableLane,
     UnavailableStatus,
     cnv_category,
@@ -39,6 +40,7 @@ from cancerjev.research.specs import LUAD_RESEARCH_V1
 from tests.integration.replay import GENES, ReplayTransport
 
 G1, G2 = GENES[0], GENES[1]
+EXPRESSION_ONLY_GENE = "ENSG00000000003"
 
 
 def _emit_box(repository, run_id: str) -> tuple[list[dict], object]:
@@ -173,3 +175,30 @@ def test_union_marks_genes_without_positive_cnv_as_not_observed(runtime):
         assert isinstance(lane, UnavailableLane)
         assert lane.lane is Lane.CNV and lane.status is UnavailableStatus.NOT_OBSERVED
         assert all(modality != "cnv" for modality, _ in state.nominations)
+
+
+def test_union_includes_an_expression_only_member(runtime):
+    """A union member can be nominated by expression alone, outside mutation survivors."""
+    _, repository, artifacts = runtime
+    run_id = repository.create_run("modality-union", mode="LIVE", fixture_id=None,
+                                   fixture_version=None, scope={"purpose": "UNION"})
+    _, emit = _emit_box(repository, run_id)
+    transport = ReplayTransport(artifacts, run_id, repository=repository,
+                                expression_only_gene=EXPRESSION_ONLY_GENE)
+    mutation = run_mutation_discovery(run_id, transport, repository, artifacts, emit, LUAD_RESEARCH_V1)
+    expression = run_expression_discovery(run_id, transport, repository, artifacts, emit, LUAD_RESEARCH_V1)
+    cnv = _cnv_result(mutation, ())
+
+    states = compose_discovery_states(mutation, expression, cnv, LUAD_RESEARCH_V1)
+    by_gene = {state.entity.gene_id: state for state in states}
+
+    assert EXPRESSION_ONLY_GENE in by_gene
+    state = by_gene[EXPRESSION_ONLY_GENE]
+    assert state.nominations == (("expression", "RETAIN"),)
+    mutation_lane = state.projects[0].mutation
+    assert isinstance(mutation_lane, MutationCountResult)
+    assert mutation_lane.affected_cases.value == 0, \
+        "the complete scan observes zero occurrences; it never infers absence"
+    cnv_lane = state.projects[0].cnv
+    assert isinstance(cnv_lane, UnavailableLane)
+    assert cnv_lane.status is UnavailableStatus.NOT_OBSERVED

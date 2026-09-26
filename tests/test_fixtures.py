@@ -23,6 +23,7 @@ from cancerjev.domain.codecs import read_state, state_identity
 from cancerjev.domain.dossier import DOSSIER_SECTIONS
 from cancerjev.domain.events import REGISTERED_EVENT_TYPES
 from cancerjev.domain.states import STAGES
+from cancerjev.gdc.budget import production_caps
 from cancerjev.jev.questions import DEEP_QUESTIONS, HYPOTHESIS_QUESTIONS, WIDE_QUESTIONS
 from cancerjev.research.dossier import SYNTHETIC_NOTICE
 from cancerjev.research.fixtures import (
@@ -130,15 +131,20 @@ def test_demo_run_event_stream_and_caps_are_canonical(runtime):
     assert started["deep_hypotheses_requested"] is True
     assert started["research_spec"]["schema_version"] == RESEARCH_SPEC_SCHEMA_VERSION
     assert started["research_spec"]["spec_id"] == "LUAD_RESEARCH_V1"
+    settings = runtime[0]
+    caps = production_caps(per_response_bytes=settings.gdc_per_response_bytes,
+                           timeout_seconds=settings.gdc_timeout_seconds)
+    assert caps.max_requests == 150 and caps.max_bytes == 768 * 1024 * 1024, \
+        "declared adaptive budget drifted (gdc-adaptive-v1)"
     assert started["caps"] == {
-        "max_requests": 300,
-        "max_bytes": 384 * 1024 * 1024,
-        "per_response_bytes": 5 * 1024 * 1024,
-        "max_case_ids": 250,
-        "max_gene_ids": 100,
-        "timeout_seconds": 30.0,
-        "cache_enabled": runtime[0].gdc_cache_enabled,
-        "jev_max_states": runtime[0].jev_max_states,
+        "max_requests": caps.max_requests,
+        "max_bytes": caps.max_bytes,
+        "per_response_bytes": caps.per_response_bytes,
+        "max_case_ids": caps.max_case_ids,
+        "max_gene_ids": caps.max_gene_ids,
+        "timeout_seconds": caps.timeout_seconds,
+        "cache_enabled": settings.gdc_cache_enabled,
+        "jev_max_states": settings.jev_max_states,
     }
 
     completed_stages = {event["stage"] for event in events if event["type"] == "STAGE_COMPLETED"}

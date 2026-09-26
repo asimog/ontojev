@@ -236,6 +236,12 @@ Reuse verified immutable cached artifacts where useful.
 
 Do not permanently retain dispensable bulk files when deterministic reacquisition is adequate.
 
+Local workspace recovery: a data directory created by an older build is not migrated. When a
+run fails closed with an unsupported-schema error, move or delete the old SQLite database
+(including any `-wal`/`-shm` companions) and start a fresh workspace, or point
+`CANCERJEV_DATA_DIR` at a new directory. Historical evidence is never rewritten into a newer
+schema; superseded runs remain where they are for inspection.
+
 ## 12. Workflow provenance
 
 Where scientifically material, retain:
@@ -267,9 +273,9 @@ Do not build a large provenance ontology without a scientific consumer.
 
 Implemented now: `ScientificSource` carries optional `workflow_family`, `caller_family`, `strategy` and `annotation_context` provenance fields; expression workflow coverage is measured with one aggregate open-file facet request per cohort (per-workflow file counts recorded, `_missing` coverage recorded as a limitation and the single-family source annotation withheld, never a silent full-coverage claim); and the mutation occurrence-scan document pins its requested field set and field-set hash. Cross-workflow comparison remains forbidden by default (`Compatibility.UNVERIFIED`).
 
-The mutation scan's canonical consequence fields were measured on the live provider (500-record A/B: 297,136 → 612,999 bytes, ×2.06). To keep every page under the 5 MiB per-response cap, the declared scan page size is 2,500 records and the scan page cap is 128; the 256 MiB scan byte budget still fails closed on exhaustion. Transcript protein-position fields are not exposed by `/ssm_occurrences`, so protein-position recurrence and hotspot descriptors stay unavailable from the API plane and are recorded as such.
+The mutation scan's canonical consequence fields were measured on the live provider (500-record A/B: 297,136 → 612,999 bytes, ×2.06). To keep every page under the per-response byte cap, the declared scan page size is 2,500 records. Request and page allowances follow the adaptive `gdc-adaptive-v1` policy: a run starts inside a bounded declared allowance that doubles on demand and every expansion is audited in the run scope, up to declared defect ceilings; exhaustion fails closed as incomplete or unavailable and never shrinks the examined population. Byte budgets never auto-expand: the declared per-shard and per-run ceilings are fixed and exhaustion fails closed the same way. The declared initial, ceiling and byte values are indexed in `docs/REPOSITORY_FACTS.md`. Transcript protein-position fields are not exposed by `/ssm_occurrences`, so protein-position recurrence and hotspot descriptors stay unavailable from the API plane and are recorded as such.
 
-Stage 5 expression additionally publishes a declared run-volume plan (genes, cases, batches, requests, projected bytes) and refuses a run whose plan exceeds the 1,500-request / 384 MiB budgets. Aliquot identity is `NOT_API_DERIVABLE`: the harmonized expression endpoints key values by case, so expression values remain case-labelled and never support matched cross-modal claims.
+Stage 5 expression additionally publishes a declared run-volume plan (genes, cases, batches, requests, projected bytes) and refuses a run whose plan exceeds the declared run budget under the same `gdc-adaptive-v1` policy; the plan is admitted at the declared LUAD scale. Aliquot identity is `NOT_API_DERIVABLE`: the harmonized expression endpoints key values by case, so expression values remain case-labelled and never support matched cross-modal claims.
 
 ## 13. Testing and reconciliation
 

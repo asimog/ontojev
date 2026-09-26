@@ -146,4 +146,7 @@ def test_run_plan_admits_the_declared_luad_scale():
     assert plan.gene_batches == 199 and plan.case_batches == 3
     assert plan.request_count == 1_400
     assert plan.projected_bytes <= plan.max_bytes
-    assert plan.payload()["max_requests"] == 1_500
+    assert plan.max_requests == 10_000 and plan.max_bytes == 768 * 1024 * 1024, \
+        "declared expression run budget drifted (gdc-adaptive-v1)"
+    assert plan.payload()["max_requests"] == 10_000
+    assert plan.payload()["max_bytes"] == 768 * 1024 * 1024

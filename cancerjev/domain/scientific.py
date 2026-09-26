@@ -37,6 +37,7 @@ from cancerjev.domain.measurements import (
     strings,
     text,
 )
+from cancerjev.domain.pathway import PathwayEvidence
 
 
 class Lane(StrEnum):
@@ -574,6 +575,7 @@ class StatisticalState:
     operational_sources: tuple[OperationalSource, ...] = ()
     nominations: tuple[tuple[str, str], ...] = ()
     evidence_level: str = "MEASURED"
+    pathway_evidence: PathwayEvidence | None = None
 
     def __post_init__(self) -> None:
         require(isinstance(self.entity, EntityRef) and isinstance(self.annotation, GeneAnnotation)
@@ -614,6 +616,13 @@ class StatisticalState:
                 and all(isinstance(m, MethodIdentityRef) for m in self.methods), "state methods must be typed")
         strings(tuple(m.method_id for m in self.methods), "state method ids")
         sha256(self.environment_hash, "state environment hash")
+        if self.pathway_evidence is not None:
+            require(isinstance(self.pathway_evidence, PathwayEvidence),
+                    "invalid pathway evidence")
+            require(self.pathway_evidence.gene_id == self.entity.gene_id,
+                    "pathway evidence entity mismatch")
+            require(self.pathway_evidence.universe_size == len(self.universe.ordered_ids),
+                    "pathway evidence universe mismatch")
         for project in self.projects:
             for lane_result in (project.mutation, project.expression, project.cnv):
                 if isinstance(lane_result, UnavailableLane):

@@ -383,19 +383,88 @@ def _cnv_merge(
                "jev_review": len(result.jev_review_ids), "shards": shards})
 
 
+def _run_campaign_sweep(settings: Settings, repository: Repository, artifacts: ArtifactStore,
+                        profile: Any, spec: Any, transport_factory: Any) -> bool:
+    """The existing bounded sweep, dispatched under SYSTEM_AUTONOMOUS ownership only."""
+    orchestrator = LiveOrchestrator(
+        settings, repository, artifacts, render_event, transport_factory=transport_factory,
+        research_spec=spec, worker_id="campaign-worker",
+        execution_ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS)
+    run_id = orchestrator.run()
+    return repository.get_run(run_id)["status"] == "COMPLETED"
+
+
+def _dispatch_campaign(settings: Settings, repository: Repository, artifacts: ArtifactStore,
+                       profile: Any, *, capability: Any = None,
+                       transport_factory: Any = None) -> bool:
+    """Ownership-gated autonomous dispatch of one validated campaign; no operator flags.
+
+    A profile that is not validated for autonomous use, an unknown spec and a missing
+    or incomplete capability record are refused loudly. When no capability is supplied,
+    a bounded preflight probe (status, one project, one open-file facet aggregate) runs
+    first inside a SYSTEM_AUTONOMOUS run and its result feeds the same gate.
+    """
+    from cancerjev.research.campaign import CampaignActivationError, require_autonomous_activation
+    from cancerjev.research.capability import CapabilityError, discover_cohort_capability
+    from cancerjev.research.program import dispatch_validated_campaign
+    from cancerjev.research.specs import research_spec_by_id
+
+    spec = research_spec_by_id(profile.spec_id)
+    if spec is None:
+        raise CampaignActivationError("UNKNOWN_RESEARCH_SPEC",
+                                      f"{profile.profile_id} declares unknown spec {profile.spec_id}")
+    require_autonomous_activation(profile)
+    if capability is None:
+        preflight_run = repository.create_run(
+            "campaign-preflight", mode="LIVE", fixture_id=None, fixture_version=None,
+            scope={"budget_policy": policy_payload(), "purpose": "CAMPAIGN_CAPABILITY_PREFLIGHT",
+                   "profile_id": profile.profile_id, "project_id": profile.project_id},
+            ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS)
+
+        def preflight_emit(event_type: str, key: str, message: str, **kwargs: Any) -> None:
+            render_event(repository.append_event(preflight_run, event_type=event_type,
+                                                 idempotency_key=key, message=message, **kwargs))
+
+        preflight_emit("RUN_STARTED", "run:started",
+                       f"Campaign capability preflight started for {profile.project_id}.",
+                       data={"mode": "LIVE", "purpose": "CAMPAIGN_CAPABILITY_PREFLIGHT"})
+        caps = production_caps(per_response_bytes=settings.gdc_per_response_bytes,
+                               timeout_seconds=settings.gdc_timeout_seconds)
+        factory = transport_factory if transport_factory is not None else (
+            lambda repo, arts, budget, run_id, emit: GDCTransport(
+                repo, arts, budget, run_id, emit, cache_enabled=settings.gdc_cache_enabled))
+        transport = factory(repository, artifacts, RunBudget(caps=caps), preflight_run, preflight_emit)
+        try:
+            capability = discover_cohort_capability(transport, project_id=profile.project_id)
+        except (TransportError, ParserError, CapabilityError) as exc:
+            code = getattr(exc, "code", type(exc).__name__)
+            preflight_emit("RUN_FAILED", "run:failed",
+                           f"Campaign capability preflight failed: {code}.", level="error",
+                           data={"status": "FAILED", "reason_code": str(code), "coverage": "PARTIAL",
+                                 "project_id": profile.project_id, "detail": str(exc)})
+            raise
+        totals = repository.gdc_run_totals(preflight_run)
+        preflight_emit("RUN_COMPLETED", "run:completed",
+                       f"Campaign capability preflight completed for {profile.project_id}.",
+                       data={"status": "COMPLETED",
+                             "reason_code": "CAMPAIGN_CAPABILITY_PREFLIGHT_COMPLETE",
+                             "coverage": "COMPLETE_FOR_SCOPE", "project_id": profile.project_id,
+                             "available_modalities": [modality.value
+                                                      for modality in capability.available_modalities()],
+                             "bytes": totals["bytes"], "gdc_attempts": totals["attempts"]})
+    return dispatch_validated_campaign(
+        profile=profile, capability=capability,
+        run_campaign=lambda selected: _run_campaign_sweep(
+            settings, repository, artifacts, selected, spec, transport_factory))
+
+
 def _program(settings: Settings, repository: Repository, artifacts: ArtifactStore) -> None:
     """One autonomous program step; with no validated campaign it records PROGRAM_IDLE."""
-    from cancerjev.research.campaign import LUAD_CAMPAIGN_V1
+    from cancerjev.research.campaign import LUAD_CAMPAIGN_V1, CampaignActivationError
+    from cancerjev.research.capability import CapabilityError
     from cancerjev.research.program import run_program_worker
 
     profiles = (LUAD_CAMPAIGN_V1,)
-
-    def run_campaign(profile: Any) -> bool:
-        raise SystemExit(f"campaign {profile.profile_id} has no registered run entry yet")
-
-    def publish_json(target_run_id: str, path: str, payload: bytes, purpose: str) -> Any:
-        return artifacts.publish(path, payload, "application/json", purpose)
-
     run_id = repository.create_run(
         "program-worker", mode="LIVE", fixture_id=None, fixture_version=None,
         scope={"budget_policy": policy_payload(), "purpose": "PROGRAM", "profiles": [profile.payload() for profile in profiles]},
@@ -406,6 +475,22 @@ def _program(settings: Settings, repository: Repository, artifacts: ArtifactStor
         event = repository.append_event(target_run_id, event_type=event_type,
                                         idempotency_key=key, message=message, **kwargs)
         render_event(event)
+
+    def run_campaign(profile: Any) -> bool:
+        """Ownership-gated dispatch; a blocked campaign is recorded, never overridden."""
+        try:
+            return _dispatch_campaign(settings, repository, artifacts, profile)
+        except (CampaignActivationError, CapabilityError, TransportError, ParserError,
+                LiveRunError, ContractError) as exc:
+            code = getattr(exc, "code", type(exc).__name__)
+            emit(run_id, "CAMPAIGN_DISPATCH_FAILED",
+                 f"program:{run_id}:dispatch-failed:{profile.profile_id}",
+                 f"Campaign dispatch failed: {code}.", level="error",
+                 data={"profile_id": profile.profile_id, "reason_code": str(code)})
+            return False
+
+    def publish_json(target_run_id: str, path: str, payload: bytes, purpose: str) -> Any:
+        return artifacts.publish(path, payload, "application/json", purpose)
 
     emit(run_id, "RUN_STARTED", "run:started", "Autonomous program step started.",
          data={"mode": "LIVE", "purpose": "PROGRAM"})
