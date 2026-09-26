@@ -1,0 +1,12 @@
+.git
+.venv
+data
+.pytest-tmp
+.pytest_cache
+.playwright-mcp
+.kilo
+.upstream
+apps/web/.next
+apps/web/node_modules
+tests/browser/node_modules
+tests/browser/test-results
