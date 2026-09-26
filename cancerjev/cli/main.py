@@ -4,6 +4,8 @@ import argparse
 import json
 import os
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -128,34 +130,83 @@ def _services(settings: Settings) -> tuple[Repository, ArtifactStore]:
     return Repository(database), ArtifactStore(settings.data_dir)
 
 
+@contextmanager
+def _started_run(
+    repository: Repository,
+    *,
+    worker_id: str,
+    scope: dict[str, Any],
+    started_message: str,
+    started_data: dict[str, Any] | None = None,
+    mode: str = "LIVE",
+    fixture_id: str | None = None,
+    fixture_version: str | None = None,
+    ownership: ExecutionOwnership = ExecutionOwnership.SYSTEM_AUTONOMOUS,
+) -> Iterator[str]:
+    """Create one run and guarantee it reaches a terminal state in this invocation.
+
+    Normal failures end the run ``FAILED``; a deliberate operator interrupt ends it
+    ``STOPPED``. A process that dies without reaching either state is handled by
+    crash recovery (``recover_interrupted``), never by this routine handler.
+    """
+    run_id = repository.create_run(
+        worker_id, mode=mode, fixture_id=fixture_id, fixture_version=fixture_version,
+        scope=scope, ownership=ownership)
+    repository.append_event(
+        run_id, event_type="RUN_STARTED", idempotency_key="run:started",
+        message=started_message,
+        data={**(started_data or {}), "mode": mode, "purpose": scope.get("purpose")})
+    try:
+        yield run_id
+    except KeyboardInterrupt:
+        repository.append_event(
+            run_id, event_type="RUN_STOPPED", idempotency_key="run:stopped",
+            message="Run stopped by operator interrupt.", level="warning",
+            data={"status": "STOPPED", "reason_code": "INTERRUPTED_BY_OPERATOR"})
+        raise
+    except Exception as exc:
+        code = str(getattr(exc, "code", type(exc).__name__))
+        repository.append_event(
+            run_id, event_type="RUN_FAILED", idempotency_key="run:failed",
+            message=f"Run failed: {code}.", level="error",
+            data={"status": "FAILED", "reason_code": code, "coverage": "PARTIAL",
+                  "detail": str(exc)})
+        raise
+
+
 def _probe(settings: Settings, repository: Repository, artifacts: ArtifactStore, capture_dir: str | None) -> None:
     caps = production_caps(
         per_response_bytes=settings.gdc_per_response_bytes,
         timeout_seconds=settings.gdc_timeout_seconds,
     )
-    run_id = repository.create_run("probe", mode="LIVE", fixture_id=None, fixture_version=None,
-                                   scope={"budget_policy": policy_payload(), "purpose": "CONTRACT_PROBE"})
+    with _started_run(
+        repository, worker_id="probe",
+        scope={"budget_policy": policy_payload(), "purpose": "CONTRACT_PROBE"},
+        started_message="Contract probe run started.",
+    ) as run_id:
 
-    def emit(event_type: str, key: str, message: str, **kwargs) -> None:
-        event = repository.append_event(run_id, event_type=event_type, idempotency_key=key, message=message, **kwargs)
-        render_event(event)
+        def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+            event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
+                                            message=message, **kwargs)
+            render_event(event)
 
-    emit("RUN_STARTED", "run:started", "Contract probe run started.", data={"mode": "LIVE", "purpose": "CONTRACT_PROBE"})
-    transport = GDCTransport(repository, artifacts, RunBudget(caps=caps), run_id, emit, cache_enabled=False)
-    directory = (
-        Path(capture_dir) if capture_dir
-        else settings.data_dir / f"gdc-contract-captures-{time.strftime('%Y-%m-%d')}" / f"probe-{run_id[:8]}"
-    )
-    sink = CaptureSink(directory)
-    summary = run_contract_probe(transport, sink, release=None)
-    totals = repository.gdc_run_totals(run_id)
-    emit(
-        "RUN_COMPLETED", "run:completed",
-        f"Contract probe completed with {summary['captures']} captures.",
-        data={"status": "COMPLETED", "reason_code": "CONTRACT_PROBE_COMPLETE", "coverage": "COMPLETE_FOR_SCOPE",
-              "captures": summary["captures"], "bytes": totals["bytes"], "gdc_attempts": totals["attempts"]},
-    )
-    print(f"[PROBE] captures written to {directory} ({summary['captures']} requests, {summary['bytes']} bytes)", flush=True)
+        transport = GDCTransport(repository, artifacts, RunBudget(caps=caps), run_id, emit,
+                                 cache_enabled=False)
+        directory = (
+            Path(capture_dir) if capture_dir
+            else settings.data_dir / f"gdc-contract-captures-{time.strftime('%Y-%m-%d')}" / f"probe-{run_id[:8]}"
+        )
+        sink = CaptureSink(directory)
+        summary = run_contract_probe(transport, sink, release=None)
+        totals = repository.gdc_run_totals(run_id)
+        emit(
+            "RUN_COMPLETED", "run:completed",
+            f"Contract probe completed with {summary['captures']} captures.",
+            data={"status": "COMPLETED", "reason_code": "CONTRACT_PROBE_COMPLETE", "coverage": "COMPLETE_FOR_SCOPE",
+                  "captures": summary["captures"], "bytes": totals["bytes"], "gdc_attempts": totals["attempts"]},
+        )
+        print(f"[PROBE] captures written to {directory} ({summary['captures']} requests, {summary['bytes']} bytes)",
+              flush=True)
 
 
 def _capability(settings: Settings, repository: Repository, artifacts: ArtifactStore,
@@ -168,37 +219,39 @@ def _capability(settings: Settings, repository: Repository, artifacts: ArtifactS
         per_response_bytes=settings.gdc_per_response_bytes,
         timeout_seconds=settings.gdc_timeout_seconds,
     )
-    run_id = repository.create_run("capability", mode="LIVE", fixture_id=None, fixture_version=None,
-                                   scope={"budget_policy": policy_payload(), "purpose": "CAPABILITY_PROBE", "project_id": target})
+    with _started_run(
+        repository, worker_id="capability",
+        scope={"budget_policy": policy_payload(), "purpose": "CAPABILITY_PROBE", "project_id": target},
+        started_message=f"Cohort capability probe started for {target}.",
+        started_data={"project_id": target},
+    ) as run_id:
 
-    def emit(event_type: str, key: str, message: str, **kwargs) -> None:
-        event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
-                                        message=message, **kwargs)
-        render_event(event)
+        def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+            event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
+                                            message=message, **kwargs)
+            render_event(event)
 
-    emit("RUN_STARTED", "run:started", f"Cohort capability probe started for {target}.",
-         data={"mode": "LIVE", "purpose": "CAPABILITY_PROBE", "project_id": target})
-    transport = GDCTransport(repository, artifacts, RunBudget(caps=caps), run_id, emit,
-                             cache_enabled=False)
-    capability = discover_cohort_capability(transport, project_id=target)
-    payload = {"kind": "COHORT_CAPABILITY", "capability_hash": capability.capability_hash(),
-               **capability.payload()}
-    artifact = artifacts.publish(
-        f"runs/{run_id}/capability/{target}.json",
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
-        "application/json", "cohort-capability",
-    )
-    repository.register_artifact(artifact, run_id)
-    totals = repository.gdc_run_totals(run_id)
-    emit("RUN_COMPLETED", "run:completed", f"Cohort capability probe completed for {target}.",
-         data={"status": "COMPLETED", "reason_code": "CAPABILITY_PROBE_COMPLETE",
-               "coverage": "COMPLETE_FOR_SCOPE", "project_id": target,
-               "available_modalities": [modality.value
-                                        for modality in capability.available_modalities()],
-               "bytes": totals["bytes"], "gdc_attempts": totals["attempts"]})
-    print(json.dumps(payload, indent=2, sort_keys=True), flush=True)
-    print(f"[CAPABILITY] {target}: available modalities = "
-          f"{', '.join(modality.value for modality in capability.available_modalities())}", flush=True)
+        transport = GDCTransport(repository, artifacts, RunBudget(caps=caps), run_id, emit,
+                                 cache_enabled=False)
+        capability = discover_cohort_capability(transport, project_id=target)
+        payload = {"kind": "COHORT_CAPABILITY", "capability_hash": capability.capability_hash(),
+                   **capability.payload()}
+        artifact = artifacts.publish(
+            f"runs/{run_id}/capability/{target}.json",
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+            "application/json", "cohort-capability",
+        )
+        repository.register_artifact(artifact, run_id)
+        totals = repository.gdc_run_totals(run_id)
+        emit("RUN_COMPLETED", "run:completed", f"Cohort capability probe completed for {target}.",
+             data={"status": "COMPLETED", "reason_code": "CAPABILITY_PROBE_COMPLETE",
+                   "coverage": "COMPLETE_FOR_SCOPE", "project_id": target,
+                   "available_modalities": [modality.value
+                                            for modality in capability.available_modalities()],
+                   "bytes": totals["bytes"], "gdc_attempts": totals["attempts"]})
+        print(json.dumps(payload, indent=2, sort_keys=True), flush=True)
+        print(f"[CAPABILITY] {target}: available modalities = "
+              f"{', '.join(modality.value for modality in capability.available_modalities())}", flush=True)
 
 
 def _discover(settings: Settings, repository: Repository, artifacts: ArtifactStore) -> None:
@@ -213,38 +266,36 @@ def _discover(settings: Settings, repository: Repository, artifacts: ArtifactSto
         per_response_bytes=settings.gdc_per_response_bytes,
         timeout_seconds=settings.gdc_timeout_seconds,
     )
-    run_id = repository.create_run(
-        "discovery-worker", mode="LIVE", fixture_id=None, fixture_version=None,
-        scope={"budget_policy": policy_payload(), "purpose": "SYSTEMATIC_DISCOVERY", "spec_id": spec.spec_id,
-               "domain": spec.cohort.domain, "cohort": spec.cohort.cohort_id,
-               "project_id": spec.cohort.project_id, "discovery": asdict(spec.discovery),
-               "selection_rule": spec.discovery_selection_rule()},
-    )
-
-    def emit(event_type: str, key: str, message: str, **kwargs) -> None:
-        event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
-                                        message=message, **kwargs)
-        render_event(event)
-
-    emit("RUN_STARTED", "run:started", "Bounded systematic discovery run started.",
-         data={"mode": "LIVE", "purpose": "SYSTEMATIC_DISCOVERY", "research_spec": spec.as_dict()})
-    budget = RunBudget(caps=caps)
-    transport = GDCTransport(repository, artifacts, budget, run_id, emit,
-                             cache_enabled=settings.gdc_cache_enabled)
     try:
-        result = run_mutation_discovery(run_id, transport, repository, artifacts, emit, spec)
+        with _started_run(
+            repository, worker_id="discovery-worker",
+            scope={"budget_policy": policy_payload(), "purpose": "SYSTEMATIC_DISCOVERY",
+                   "spec_id": spec.spec_id, "domain": spec.cohort.domain,
+                   "cohort": spec.cohort.cohort_id, "project_id": spec.cohort.project_id,
+                   "discovery": asdict(spec.discovery),
+                   "selection_rule": spec.discovery_selection_rule()},
+            started_message="Bounded systematic discovery run started.",
+            started_data={"research_spec": spec.as_dict()},
+        ) as run_id:
+
+            def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+                event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
+                                                message=message, **kwargs)
+                render_event(event)
+
+            budget = RunBudget(caps=caps)
+            transport = GDCTransport(repository, artifacts, budget, run_id, emit,
+                                     cache_enabled=settings.gdc_cache_enabled)
+            result = run_mutation_discovery(run_id, transport, repository, artifacts, emit, spec)
+            totals = repository.gdc_run_totals(run_id)
+            emit("RUN_COMPLETED", "run:completed",
+                 f"Systematic discovery completed with {len(result.survivor_ids)} survivor(s).",
+                 data={"status": "COMPLETED", "reason_code": "DISCOVERY_COMPLETE",
+                       "coverage": "COMPLETE_FOR_SCOPE", "survivor_ids": list(result.survivor_ids),
+                       "gdc_attempts": totals["attempts"], "gdc_bytes": totals["bytes"],
+                       "gdc_cache_hits": totals["cache_hits"]})
     except (TransportError, ParserError, LiveRunError, ContractError) as exc:
-        code = getattr(exc, "code", type(exc).__name__)
-        emit("RUN_FAILED", "run:failed", f"Systematic discovery failed: {code}.",
-             level="error", data={"status": "FAILED", "reason_code": str(code), "detail": str(exc)})
         raise SystemExit(1) from exc
-    totals = repository.gdc_run_totals(run_id)
-    emit("RUN_COMPLETED", "run:completed",
-         f"Systematic discovery completed with {len(result.survivor_ids)} survivor(s).",
-         data={"status": "COMPLETED", "reason_code": "DISCOVERY_COMPLETE",
-               "coverage": "COMPLETE_FOR_SCOPE", "survivor_ids": list(result.survivor_ids),
-               "gdc_attempts": totals["attempts"], "gdc_bytes": totals["bytes"],
-               "gdc_cache_hits": totals["cache_hits"]})
 
 
 def _discover_expression(
@@ -258,41 +309,36 @@ def _discover_expression(
         per_response_bytes=settings.gdc_per_response_bytes,
         timeout_seconds=settings.gdc_timeout_seconds,
     )
-    run_id = repository.create_run(
-        "expression-discovery-worker", mode="LIVE", fixture_id=None, fixture_version=None,
-        scope={"budget_policy": policy_payload(), "purpose": "EXPRESSION_DISCOVERY", "spec_id": spec.spec_id,
-               "domain": spec.cohort.domain, "cohort": spec.cohort.cohort_id,
-               "project_id": spec.cohort.project_id,
-               "expression_discovery": asdict(spec.expression_discovery),
-               "selection_rule": spec.discovery_selection_rule()},
-    )
-
-    def emit(event_type: str, key: str, message: str, **kwargs) -> None:
-        event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
-                                        message=message, **kwargs)
-        render_event(event)
-
-    emit("RUN_STARTED", "run:started", "Bounded expression discovery run started.",
-         data={"mode": "LIVE", "purpose": "EXPRESSION_DISCOVERY",
-               "research_spec": spec.as_dict()})
-    transport = GDCTransport(repository, artifacts, RunBudget(caps=caps), run_id, emit,
-                             cache_enabled=settings.gdc_cache_enabled)
     try:
-        result = run_expression_discovery(
-            run_id, transport, repository, artifacts, emit, spec)
+        with _started_run(
+            repository, worker_id="expression-discovery-worker",
+            scope={"budget_policy": policy_payload(), "purpose": "EXPRESSION_DISCOVERY",
+                   "spec_id": spec.spec_id, "domain": spec.cohort.domain,
+                   "cohort": spec.cohort.cohort_id, "project_id": spec.cohort.project_id,
+                   "expression_discovery": asdict(spec.expression_discovery),
+                   "selection_rule": spec.discovery_selection_rule()},
+            started_message="Bounded expression discovery run started.",
+            started_data={"research_spec": spec.as_dict()},
+        ) as run_id:
+
+            def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+                event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
+                                                message=message, **kwargs)
+                render_event(event)
+
+            transport = GDCTransport(repository, artifacts, RunBudget(caps=caps), run_id, emit,
+                                     cache_enabled=settings.gdc_cache_enabled)
+            result = run_expression_discovery(
+                run_id, transport, repository, artifacts, emit, spec)
+            totals = repository.gdc_run_totals(run_id)
+            emit("RUN_COMPLETED", "run:completed",
+                 f"Expression discovery completed for {len(result.entries)} gene(s).",
+                 data={"status": "COMPLETED", "reason_code": "EXPRESSION_DISCOVERY_COMPLETE",
+                       "coverage": "COMPLETE_FOR_SCOPE", "genes": len(result.entries),
+                       "gdc_attempts": totals["attempts"], "gdc_bytes": totals["bytes"],
+                       "gdc_cache_hits": totals["cache_hits"]})
     except (TransportError, ParserError, LiveRunError, ContractError) as exc:
-        code = getattr(exc, "code", type(exc).__name__)
-        emit("RUN_FAILED", "run:failed", f"Expression discovery failed: {code}.",
-             level="error", data={"status": "FAILED", "reason_code": str(code),
-                                  "detail": str(exc)})
         raise SystemExit(1) from exc
-    totals = repository.gdc_run_totals(run_id)
-    emit("RUN_COMPLETED", "run:completed",
-         f"Expression discovery completed for {len(result.entries)} gene(s).",
-         data={"status": "COMPLETED", "reason_code": "EXPRESSION_DISCOVERY_COMPLETE",
-               "coverage": "COMPLETE_FOR_SCOPE", "genes": len(result.entries),
-               "gdc_attempts": totals["attempts"], "gdc_bytes": totals["bytes"],
-               "gdc_cache_hits": totals["cache_hits"]})
 
 
 def _discover_cnv(
@@ -307,40 +353,38 @@ def _discover_cnv(
         per_response_bytes=settings.gdc_per_response_bytes,
         timeout_seconds=settings.gdc_timeout_seconds,
     )
-    run_id = repository.create_run(
-        "cnv-shard-scan-worker", mode="LIVE", fixture_id=None, fixture_version=None,
-        scope={"budget_policy": policy_payload(), "purpose": "CNV_SHARD_SCAN", "spec_id": spec.spec_id,
-               "cohort": spec.cohort.cohort_id, "project_id": spec.cohort.project_id,
-               "case_shard": case_shard, "case_shard_size": case_shard_size},
-    )
-
-    def emit(event_type: str, key: str, message: str, **kwargs) -> None:
-        event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
-                                        message=message, **kwargs)
-        render_event(event)
-
-    emit("RUN_STARTED", "run:started", f"CNV case shard {case_shard} scan started.",
-         data={"mode": "LIVE", "purpose": "CNV_SHARD_SCAN", "case_shard": case_shard,
-               "case_shard_size": case_shard_size, "research_spec": spec.as_dict()})
-    transport = GDCTransport(repository, artifacts, RunBudget(caps=caps), run_id, emit,
-                             cache_enabled=settings.gdc_cache_enabled)
     try:
-        evidence = run_cnv_shard_scan(
-            run_id, transport, repository, artifacts, emit, spec, shard_index=case_shard,
-            case_shard_size=case_shard_size)
+        with _started_run(
+            repository, worker_id="cnv-shard-scan-worker",
+            scope={"budget_policy": policy_payload(), "purpose": "CNV_SHARD_SCAN",
+                   "spec_id": spec.spec_id, "cohort": spec.cohort.cohort_id,
+                   "project_id": spec.cohort.project_id, "case_shard": case_shard,
+                   "case_shard_size": case_shard_size},
+            started_message=f"CNV case shard {case_shard} scan started.",
+            started_data={"case_shard": case_shard, "case_shard_size": case_shard_size,
+                          "research_spec": spec.as_dict()},
+        ) as run_id:
+
+            def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+                event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
+                                                message=message, **kwargs)
+                render_event(event)
+
+            transport = GDCTransport(repository, artifacts, RunBudget(caps=caps), run_id, emit,
+                                     cache_enabled=settings.gdc_cache_enabled)
+            evidence = run_cnv_shard_scan(
+                run_id, transport, repository, artifacts, emit, spec, shard_index=case_shard,
+                case_shard_size=case_shard_size)
+            totals = repository.gdc_run_totals(run_id)
+            emit("RUN_COMPLETED", "run:completed",
+                 f"CNV case shard {case_shard} completed over {len(evidence.case_ids)} case(s).",
+                 data={"status": "COMPLETED", "reason_code": "CNV_SHARD_SCAN_COMPLETE",
+                       "coverage": "COMPLETE_SHARD", "shard_index": case_shard,
+                       "cases": len(evidence.case_ids), "genes": len(evidence.genes),
+                       "records": evidence.records, "gdc_attempts": totals["attempts"],
+                       "gdc_bytes": totals["bytes"], "gdc_cache_hits": totals["cache_hits"]})
     except (TransportError, ParserError, LiveRunError, ContractError) as exc:
-        code = getattr(exc, "code", type(exc).__name__)
-        emit("RUN_FAILED", "run:failed", f"CNV shard scan failed: {code}.", level="error",
-             data={"status": "FAILED", "reason_code": str(code), "detail": str(exc)})
         raise SystemExit(1) from exc
-    totals = repository.gdc_run_totals(run_id)
-    emit("RUN_COMPLETED", "run:completed",
-         f"CNV case shard {case_shard} completed over {len(evidence.case_ids)} case(s).",
-         data={"status": "COMPLETED", "reason_code": "CNV_SHARD_SCAN_COMPLETE",
-               "coverage": "COMPLETE_SHARD", "shard_index": case_shard,
-               "cases": len(evidence.case_ids), "genes": len(evidence.genes),
-               "records": evidence.records, "gdc_attempts": totals["attempts"],
-               "gdc_bytes": totals["bytes"], "gdc_cache_hits": totals["cache_hits"]})
 
 
 def _cnv_merge(
@@ -351,36 +395,33 @@ def _cnv_merge(
     from cancerjev.research.specs import LUAD_RESEARCH_V1
 
     spec = LUAD_RESEARCH_V1
-    run_id = repository.create_run(
-        "cnv-merge-worker", mode="LIVE", fixture_id=None, fixture_version=None,
-        scope={"budget_policy": policy_payload(), "purpose": "CNV_PROJECT_SCAN", "spec_id": spec.spec_id,
-               "cohort": spec.cohort.cohort_id, "project_id": spec.cohort.project_id,
-               "shards": shards, "case_shard_size": case_shard_size},
-    )
-
-    def emit(event_type: str, key: str, message: str, **kwargs) -> None:
-        event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
-                                        message=message, **kwargs)
-        render_event(event)
-
-    emit("RUN_STARTED", "run:started",
-         f"Merged CNV project scan started over {shards} shard(s).",
-         data={"mode": "LIVE", "purpose": "CNV_PROJECT_SCAN", "shards": shards})
     try:
-        result = run_cnv_shard_merge(
-            run_id, repository, artifacts, emit, spec, expected_shards=shards,
-            case_shard_size=case_shard_size, source_run_ids=source_run_ids)
+        with _started_run(
+            repository, worker_id="cnv-merge-worker",
+            scope={"budget_policy": policy_payload(), "purpose": "CNV_PROJECT_SCAN",
+                   "spec_id": spec.spec_id, "cohort": spec.cohort.cohort_id,
+                   "project_id": spec.cohort.project_id, "shards": shards,
+                   "case_shard_size": case_shard_size},
+            started_message=f"Merged CNV project scan started over {shards} shard(s).",
+            started_data={"shards": shards},
+        ) as run_id:
+
+            def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+                event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
+                                                message=message, **kwargs)
+                render_event(event)
+
+            result = run_cnv_shard_merge(
+                run_id, repository, artifacts, emit, spec, expected_shards=shards,
+                case_shard_size=case_shard_size, source_run_ids=source_run_ids)
+            emit("RUN_COMPLETED", "run:completed",
+                 f"Merged CNV project scan completed for {len(result.calls)} observed gene(s).",
+                 data={"status": "COMPLETED", "reason_code": "CNV_PROJECT_SCAN_COMPLETE",
+                       "coverage": "COMPLETE_PROJECT", "genes": len(result.calls),
+                       "retained": len(result.retained_ids),
+                       "jev_review": len(result.jev_review_ids), "shards": shards})
     except (LiveRunError, ContractError) as exc:
-        code = getattr(exc, "code", type(exc).__name__)
-        emit("RUN_FAILED", "run:failed", f"CNV project merge failed: {code}.", level="error",
-             data={"status": "FAILED", "reason_code": str(code), "detail": str(exc)})
         raise SystemExit(1) from exc
-    emit("RUN_COMPLETED", "run:completed",
-         f"Merged CNV project scan completed for {len(result.calls)} observed gene(s).",
-         data={"status": "COMPLETED", "reason_code": "CNV_PROJECT_SCAN_COMPLETE",
-               "coverage": "COMPLETE_PROJECT", "genes": len(result.calls),
-               "retained": len(result.retained_ids),
-               "jev_review": len(result.jev_review_ids), "shards": shards})
 
 
 def _run_campaign_sweep(settings: Settings, repository: Repository, artifacts: ArtifactStore,
@@ -405,7 +446,7 @@ def _dispatch_campaign(settings: Settings, repository: Repository, artifacts: Ar
     first inside a SYSTEM_AUTONOMOUS run and its result feeds the same gate.
     """
     from cancerjev.research.campaign import CampaignActivationError, require_autonomous_activation
-    from cancerjev.research.capability import CapabilityError, discover_cohort_capability
+    from cancerjev.research.capability import discover_cohort_capability
     from cancerjev.research.program import dispatch_validated_campaign
     from cancerjev.research.specs import research_spec_by_id
 
@@ -415,43 +456,35 @@ def _dispatch_campaign(settings: Settings, repository: Repository, artifacts: Ar
                                       f"{profile.profile_id} declares unknown spec {profile.spec_id}")
     require_autonomous_activation(profile)
     if capability is None:
-        preflight_run = repository.create_run(
-            "campaign-preflight", mode="LIVE", fixture_id=None, fixture_version=None,
-            scope={"budget_policy": policy_payload(), "purpose": "CAMPAIGN_CAPABILITY_PREFLIGHT",
-                   "profile_id": profile.profile_id, "project_id": profile.project_id},
-            ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS)
-
-        def preflight_emit(event_type: str, key: str, message: str, **kwargs: Any) -> None:
-            render_event(repository.append_event(preflight_run, event_type=event_type,
-                                                 idempotency_key=key, message=message, **kwargs))
-
-        preflight_emit("RUN_STARTED", "run:started",
-                       f"Campaign capability preflight started for {profile.project_id}.",
-                       data={"mode": "LIVE", "purpose": "CAMPAIGN_CAPABILITY_PREFLIGHT"})
         caps = production_caps(per_response_bytes=settings.gdc_per_response_bytes,
                                timeout_seconds=settings.gdc_timeout_seconds)
         factory = transport_factory if transport_factory is not None else (
             lambda repo, arts, budget, run_id, emit: GDCTransport(
                 repo, arts, budget, run_id, emit, cache_enabled=settings.gdc_cache_enabled))
-        transport = factory(repository, artifacts, RunBudget(caps=caps), preflight_run, preflight_emit)
-        try:
+        with _started_run(
+            repository, worker_id="campaign-preflight",
+            scope={"budget_policy": policy_payload(), "purpose": "CAMPAIGN_CAPABILITY_PREFLIGHT",
+                   "profile_id": profile.profile_id, "project_id": profile.project_id},
+            started_message=f"Campaign capability preflight started for {profile.project_id}.",
+            started_data={"project_id": profile.project_id},
+        ) as preflight_run:
+
+            def preflight_emit(event_type: str, key: str, message: str, **kwargs: Any) -> None:
+                render_event(repository.append_event(preflight_run, event_type=event_type,
+                                                     idempotency_key=key, message=message, **kwargs))
+
+            transport = factory(repository, artifacts, RunBudget(caps=caps), preflight_run,
+                                preflight_emit)
             capability = discover_cohort_capability(transport, project_id=profile.project_id)
-        except (TransportError, ParserError, CapabilityError) as exc:
-            code = getattr(exc, "code", type(exc).__name__)
-            preflight_emit("RUN_FAILED", "run:failed",
-                           f"Campaign capability preflight failed: {code}.", level="error",
-                           data={"status": "FAILED", "reason_code": str(code), "coverage": "PARTIAL",
-                                 "project_id": profile.project_id, "detail": str(exc)})
-            raise
-        totals = repository.gdc_run_totals(preflight_run)
-        preflight_emit("RUN_COMPLETED", "run:completed",
-                       f"Campaign capability preflight completed for {profile.project_id}.",
-                       data={"status": "COMPLETED",
-                             "reason_code": "CAMPAIGN_CAPABILITY_PREFLIGHT_COMPLETE",
-                             "coverage": "COMPLETE_FOR_SCOPE", "project_id": profile.project_id,
-                             "available_modalities": [modality.value
-                                                      for modality in capability.available_modalities()],
-                             "bytes": totals["bytes"], "gdc_attempts": totals["attempts"]})
+            totals = repository.gdc_run_totals(preflight_run)
+            preflight_emit("RUN_COMPLETED", "run:completed",
+                           f"Campaign capability preflight completed for {profile.project_id}.",
+                           data={"status": "COMPLETED",
+                                 "reason_code": "CAMPAIGN_CAPABILITY_PREFLIGHT_COMPLETE",
+                                 "coverage": "COMPLETE_FOR_SCOPE", "project_id": profile.project_id,
+                                 "available_modalities": [modality.value
+                                                          for modality in capability.available_modalities()],
+                                 "bytes": totals["bytes"], "gdc_attempts": totals["attempts"]})
     return dispatch_validated_campaign(
         profile=profile, capability=capability,
         run_campaign=lambda selected: _run_campaign_sweep(
@@ -465,45 +498,44 @@ def _program(settings: Settings, repository: Repository, artifacts: ArtifactStor
     from cancerjev.research.program import run_program_worker
 
     profiles = (LUAD_CAMPAIGN_V1,)
-    run_id = repository.create_run(
-        "program-worker", mode="LIVE", fixture_id=None, fixture_version=None,
-        scope={"budget_policy": policy_payload(), "purpose": "PROGRAM", "profiles": [profile.payload() for profile in profiles]},
-        ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS,
-    )
+    with _started_run(
+        repository, worker_id="program-worker",
+        scope={"budget_policy": policy_payload(), "purpose": "PROGRAM",
+               "profiles": [profile.payload() for profile in profiles]},
+        started_message="Autonomous program step started.",
+    ) as run_id:
 
-    def emit(target_run_id: str, event_type: str, key: str, message: str, **kwargs) -> None:
-        event = repository.append_event(target_run_id, event_type=event_type,
-                                        idempotency_key=key, message=message, **kwargs)
-        render_event(event)
+        def emit(target_run_id: str, event_type: str, key: str, message: str, **kwargs) -> None:
+            event = repository.append_event(target_run_id, event_type=event_type,
+                                            idempotency_key=key, message=message, **kwargs)
+            render_event(event)
 
-    def run_campaign(profile: Any) -> bool:
-        """Ownership-gated dispatch; a blocked campaign is recorded, never overridden."""
-        try:
-            return _dispatch_campaign(settings, repository, artifacts, profile)
-        except (CampaignActivationError, CapabilityError, TransportError, ParserError,
-                LiveRunError, ContractError) as exc:
-            code = getattr(exc, "code", type(exc).__name__)
-            emit(run_id, "CAMPAIGN_DISPATCH_FAILED",
-                 f"program:{run_id}:dispatch-failed:{profile.profile_id}",
-                 f"Campaign dispatch failed: {code}.", level="error",
-                 data={"profile_id": profile.profile_id, "reason_code": str(code)})
-            return False
+        def run_campaign(profile: Any) -> bool:
+            """Ownership-gated dispatch; a blocked campaign is recorded, never overridden."""
+            try:
+                return _dispatch_campaign(settings, repository, artifacts, profile)
+            except (CampaignActivationError, CapabilityError, TransportError, ParserError,
+                    LiveRunError, ContractError) as exc:
+                code = getattr(exc, "code", type(exc).__name__)
+                emit(run_id, "CAMPAIGN_DISPATCH_FAILED",
+                     f"program:{run_id}:dispatch-failed:{profile.profile_id}",
+                     f"Campaign dispatch failed: {code}.", level="error",
+                     data={"profile_id": profile.profile_id, "reason_code": str(code)})
+                return False
 
-    def publish_json(target_run_id: str, path: str, payload: bytes, purpose: str) -> Any:
-        return artifacts.publish(path, payload, "application/json", purpose)
+        def publish_json(target_run_id: str, path: str, payload: bytes, purpose: str) -> Any:
+            return artifacts.publish(path, payload, "application/json", purpose)
 
-    emit(run_id, "RUN_STARTED", "run:started", "Autonomous program step started.",
-         data={"mode": "LIVE", "purpose": "PROGRAM"})
-    outcome, artifact = run_program_worker(
-        run_id=run_id, repository=repository, artifacts=artifacts, emit=emit,
-        publish_json=publish_json, profiles=profiles, run_campaign=run_campaign)
-    emit(run_id, "RUN_COMPLETED", "run:completed", "Program step completed.",
-         data={"status": "COMPLETED", "reason_code": outcome.reason_code,
-               "state": outcome.state.value, "selected_profile_id": outcome.selected_profile_id,
-               "artifact_id": artifact.artifact_id},
-         artifact_refs=[artifact.ref()])
-    print(f"[PROGRAM] state={outcome.state.value} reason={outcome.reason_code} "
-          f"selected={outcome.selected_profile_id}", flush=True)
+        outcome, artifact = run_program_worker(
+            run_id=run_id, repository=repository, artifacts=artifacts, emit=emit,
+            publish_json=publish_json, profiles=profiles, run_campaign=run_campaign)
+        emit(run_id, "RUN_COMPLETED", "run:completed", "Program step completed.",
+             data={"status": "COMPLETED", "reason_code": outcome.reason_code,
+                   "state": outcome.state.value, "selected_profile_id": outcome.selected_profile_id,
+                   "artifact_id": artifact.artifact_id},
+             artifact_refs=[artifact.ref()])
+        print(f"[PROGRAM] state={outcome.state.value} reason={outcome.reason_code} "
+              f"selected={outcome.selected_profile_id}", flush=True)
 
 
 def main(argv: list[str] | None = None) -> None:

@@ -1,18 +1,19 @@
-"""Live capture for SCIENTIFIC_RECONCILIATION_FIXTURE (opt-in, ``live_gdc`` marked).
+"""Live capture for SCIENTIFIC_RECONCILIATION_FIXTURE (manual, not collected by pytest).
 
 Fetches, for one fixed validation panel on TCGA-LUAD:
 
-* A â€” ``/analysis/top_cases_counts_by_genes`` with one gene per request;
-* B â€” production-form batched requests (sentinel batch plus the exact
-  contiguous 100-gene production batches of the retained Stage-4 universe that
-  contain the panel genes);
-* C â€” ``/ssm_occurrences`` records for the same project/gene filter.
+* A — ``/analysis/top_cases_counts_by_genes`` with one gene per request;
+* B — production-form batched requests (sentinel batch plus the frozen
+  contiguous 100-gene production batches that contain the panel genes);
+* C — ``/ssm_occurrences`` records for the same project/gene filter.
 
 Every response is frozen verbatim with its SHA-256 and request parameters, and
 the independent expected values are derived from the raw bytes by
 ``tests.reconciliation.independent_counts`` (never by the production parser).
-The prior Stage-4 result artifact in ``data/runs`` is only read for panel
-selection (survivor and universe membership); it is never mutated.
+The panel and the production batch composition come from the already-frozen
+``MANIFEST.json`` (repository-owned evidence), so re-capture never reads an
+untracked developer runtime artifact. No file is mutated unless this module is
+explicitly invoked.
 
 Run: ``.venv/Scripts/python -m tests.reconciliation.capture_reconciliation``
 Requires network access to api.gdc.cancer.gov (open data only, no credentials).
@@ -20,7 +21,6 @@ Requires network access to api.gdc.cancer.gov (open data only, no credentials).
 
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 import urllib.error
@@ -38,15 +38,10 @@ BASE_URL = "https://api.gdc.cancer.gov"
 PROJECT_ID = "TCGA-LUAD"
 USER_AGENT = "CancerJEV-reconciliation-capture/0.1 (scientific reconciliation; anonymous)"
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "reconciliation_dr46"
-PRIOR_RESULT = Path(__file__).parents[1] / ".." / "data" / "runs" / (
-    "e2035487-cb7e-47b2-83d4-0cee31153143"
-) / "discovery" / "result.json"
 
 SENTINELS = ("TP53", "KRAS", "EGFR", "STK11", "KEAP1")
 SURVIVOR_SYMBOLS = ("USH2A", "ASPM", "INSRR")
 LOW_SYMBOLS = ("TSPAN6", "TNMD", "LAS1L")
-RANDOM_SEED = "ontojev-reconciliation-random-1"
-RANDOM_COUNT = 5
 ZERO_PROBE_LIMIT = 8
 OCCURRENCE_PAGE_SIZE = 250
 
@@ -183,17 +178,22 @@ def _resolve_symbols() -> dict[str, str]:
     return resolved
 
 
-def _random_universe_genes(ordered_ids: list[str], start_index: int) -> list[str]:
-    chosen: list[str] = []
-    cursor = start_index
-    while len(chosen) < RANDOM_COUNT:
-        digest = hashlib.sha256(f"{RANDOM_SEED}:{cursor}".encode()).hexdigest()
-        position = int(digest[:8], 16) % len(ordered_ids)
-        gene_id = ordered_ids[position]
-        if gene_id not in chosen:
-            chosen.append(gene_id)
-        cursor += 1
-    return chosen
+def _frozen_panel() -> tuple[list[str], dict[int, list[str]], dict[str, int], str, list[str]]:
+    """Read the validation panel and production batches from the frozen MANIFEST."""
+    manifest = json.loads((FIXTURE_ROOT / "MANIFEST.json").read_text(encoding="utf-8"))
+    panel = sorted(
+        record["params"]["gene_ids"]
+        for record in manifest["records"]
+        if record["slug"].startswith("A_top_cases_counts_by_genes_"))
+    batch_ids_by_index: dict[int, list[str]] = {}
+    for record in manifest["records"]:
+        label = record.get("batch_label")
+        if label and str(label).startswith("production_"):
+            index = int(str(label).removeprefix("production_"))
+            batch_ids_by_index[index] = record["params"]["gene_ids"].split(",")
+    batch_of = {gene_id: index for index, ids in batch_ids_by_index.items() for gene_id in ids}
+    random_ids = [str(gene_id) for gene_id in manifest["panel"]["random_from_prior_universe"]]
+    return panel, batch_ids_by_index, batch_of, str(manifest["prior_stage4_release"]), random_ids
 
 
 def _find_zero_gene(resolved: dict[str, str], extra_candidates: list[str]) -> str | None:
@@ -218,10 +218,8 @@ def main() -> None:
     captured: dict[str, dict] = {}
     records: list[dict] = []
 
-    prior = json.loads(PRIOR_RESULT.read_text(encoding="utf-8"))
-    ordered_ids: list[str] = prior["universe"]["ordered_ids"]
-    survivor_ids: list[str] = prior["survivor_ids"]
-    prior_release = prior["release"]
+    panel, batch_ids_by_index, batch_of, prior_release, random_ids = _frozen_panel()
+    production_batches = sorted(batch_ids_by_index)
 
     status = _get("/status")
     release = status["data_release"]
@@ -230,25 +228,11 @@ def main() -> None:
     resolved = _resolve_symbols()
     by_id = {gene_id: symbol for symbol, gene_id in resolved.items()}
 
-    random_ids = _random_universe_genes(ordered_ids, 0)
-
-    batch_of = {gene_id: index // 100 for index, gene_id in enumerate(ordered_ids)}
-    survivor_ids_in_universe = [gene_id for gene_id in survivor_ids if gene_id in batch_of]
-    random_positions = [ordered_ids.index(gene_id) for gene_id in random_ids]
-
-    # Production batches: every contiguous 100-gene batch containing a panel gene.
-    survivor_batches = sorted({batch_of[gene_id] for gene_id in survivor_ids_in_universe})
-    random_batches = sorted({position // 100 for position in random_positions})
-    low_batches = sorted({
-        ordered_ids.index(resolved[symbol]) // 100 for symbol in LOW_SYMBOLS
-    })
-    production_batches = sorted(set(survivor_batches + random_batches + low_batches))
-
-    # Zero/absent-bucket candidate: genes beyond the tested prefix prefix range.
+    # Zero/absent-bucket candidate: genes beyond the tested prefix range.
     beyond = _get("/genes", {
         "filters": json.dumps({
             "op": "in", "content": {"field": "biotype", "value": ["protein_coding"]}}),
-        "size": "8",
+        "size": str(ZERO_PROBE_LIMIT),
         "from": "15000",
         "sort": "gene_id:asc",
         "fields": "gene_id,symbol",
@@ -257,15 +241,6 @@ def main() -> None:
     zero_gene = _find_zero_gene(resolved, zero_candidates)
     zero_symbol = by_id.get(zero_gene, zero_gene) if zero_gene else None
     print(f"zero-bucket gene: {zero_gene} ({zero_symbol})")
-
-    panel: list[str] = [resolved[symbol] for symbol in SENTINELS]
-    panel += [gene_id for gene_id in survivor_ids_in_universe if gene_id in {
-        resolved[symbol] for symbol in SURVIVOR_SYMBOLS}]
-    panel += [resolved[symbol] for symbol in LOW_SYMBOLS]
-    panel += random_ids
-    if zero_gene:
-        panel.append(zero_gene)
-    panel = sorted(set(panel))
 
     for gene_id in panel:
         a_capture = capture_a(gene_id)
@@ -277,8 +252,7 @@ def main() -> None:
     sentinel_batch = capture_b([resolved[s] for s in SENTINELS], "sentinels")
     captured[sentinel_batch["slug"]] = sentinel_batch
     for batch_index in production_batches:
-        batch_ids = ordered_ids[batch_index * 100:(batch_index + 1) * 100]
-        batch_capture = capture_b(batch_ids, f"production_{batch_index:03d}")
+        batch_capture = capture_b(batch_ids_by_index[batch_index], f"production_{batch_index:03d}")
         captured[batch_capture["slug"]] = batch_capture
         print(f"captured B production batch {batch_index}")
 

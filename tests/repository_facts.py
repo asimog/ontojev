@@ -21,6 +21,7 @@ import json
 import sys
 from pathlib import Path
 
+from cancerjev import __version__ as PACKAGE_VERSION
 from cancerjev.domain.codecs import (
     CNV_DISCOVERY_SCHEMA_VERSION,
     DISCOVERY_SCHEMA_VERSION,
@@ -149,6 +150,7 @@ def collect_facts() -> dict[str, object]:
         "mutation_discovery_result_schema_version": DISCOVERY_SCHEMA_VERSION,
         "mutation_reduction_method": f"{REDUCER_METHOD_ID} v{REDUCER_VERSION}",
         "no_jev_baseline_version": NO_JEV_BASELINE_VERSION,
+        "package_version": PACKAGE_VERSION,
         "presentation_payload_schema_version": _presentation_schema_version(),
         "research_spec_schema_version": RESEARCH_SPEC_SCHEMA_VERSION,
         "run_event_schema_version": SUPPORTED_SCHEMA_VERSION,

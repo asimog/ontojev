@@ -6,6 +6,7 @@ import sqlite3
 from typing import Any
 from uuid import uuid4
 
+from cancerjev import __version__ as PACKAGE_VERSION
 from cancerjev.domain.events import RunEvent, utc_now
 from cancerjev.domain.measurements import require
 from cancerjev.domain.runs import ExecutionOwnership, validate_run_transition
@@ -652,7 +653,7 @@ class Repository:
 
     def heartbeat(self, owner_id: str) -> None:
         with self.database.connect(write=True) as connection:
-            connection.execute("INSERT INTO worker_status(singleton,owner_id,heartbeat_at,version) VALUES(1,?,?,?) ON CONFLICT(singleton) DO UPDATE SET owner_id=excluded.owner_id,heartbeat_at=excluded.heartbeat_at,version=excluded.version", (owner_id, utc_now(), "0.1.0"))
+            connection.execute("INSERT INTO worker_status(singleton,owner_id,heartbeat_at,version) VALUES(1,?,?,?) ON CONFLICT(singleton) DO UPDATE SET owner_id=excluded.owner_id,heartbeat_at=excluded.heartbeat_at,version=excluded.version", (owner_id, utc_now(), PACKAGE_VERSION))
 
 
 def gdc_cache_key(request_hash: str, contract_version: str) -> str:

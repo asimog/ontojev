@@ -10,6 +10,9 @@ from cancerjev.gdc.transport import BudgetCaps
 ENV_LOCAL_FILENAME = ".env.local"
 
 # Fixed transport controls; production acquisition allowances are owned by gdc.budget.
+# Retired operator knobs (CANCERJEV_GDC_MAX_REQUESTS, CANCERJEV_GDC_MAX_BYTES,
+# CANCERJEV_JEV_MAX_ATTEMPTS, CANCERJEV_JEV_MAX_INPUT_TOKENS) are intentionally
+# inert: they are not Settings fields and can never reduce scientific scope.
 _DOCUMENTED_CAPS = BudgetCaps()
 GDC_PER_RESPONSE_BYTES_HARD_CAP = _DOCUMENTED_CAPS.per_response_bytes
 GDC_TIMEOUT_SECONDS_HARD_CAP = _DOCUMENTED_CAPS.timeout_seconds

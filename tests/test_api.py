@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
 from apps.api.serializers import PRESENTATION_SCHEMA_VERSION, response_etag
+from cancerjev import __version__ as PACKAGE_VERSION
 from cancerjev.config import Settings
 from cancerjev.research.dossier import SYNTHETIC_NOTICE
 from cancerjev.research.orchestrator import DemoOrchestrator
@@ -66,7 +67,7 @@ def test_health_and_system_report_the_current_configuration(runtime, monkeypatch
     assert system["providers"] == {"gdc": True, "jev": False, "llm": False}
     assert system["versions"]["api"] == "3.0.0"
     assert system["versions"]["schema"] == SCHEMA_VERSION
-    assert system["versions"]["worker"] == "0.1.0"
+    assert system["versions"]["worker"] == PACKAGE_VERSION
     assert system["worker"]["owner_id"] == "api-test-worker"
     assert system["worker"]["fresh"] is None
     assert system["active_run_id"] is None

@@ -297,6 +297,14 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
                         max_states=self.settings.jev_max_states,
                     ),
                 )
+        except KeyboardInterrupt:
+            self._event(
+                run_id, "RUN_STOPPED", "run:stopped",
+                "Live sweep stopped by operator interrupt.", level="warning",
+                data={"status": "STOPPED", "reason_code": "INTERRUPTED_BY_OPERATOR",
+                      "coverage": "PARTIAL"},
+            )
+            raise
         except (TransportError, ParserError, ScienceError, LiveRunError) as exc:
             code = getattr(exc, "code", type(exc).__name__)
             self._event(
@@ -337,6 +345,14 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
                 data=completion_data,
             )
             return run_id
+        except KeyboardInterrupt:
+            self._event(
+                run_id, "RUN_STOPPED", "run:stopped",
+                "Live sweep stopped by operator interrupt during deep investigation.", level="warning",
+                data={"status": "STOPPED", "reason_code": "INTERRUPTED_BY_OPERATOR",
+                      "coverage": "PARTIAL"},
+            )
+            raise
         except Exception as exc:
             self._event(run_id, "RUN_FAILED", "run:failed",
                         f"Deep investigation failed: {type(exc).__name__}.", level="error",

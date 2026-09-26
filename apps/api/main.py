@@ -7,7 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from apps.api.routes import router
+from apps.api.routes import API_VERSION, router
 from cancerjev.config import Settings
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.database import Database
@@ -18,7 +18,7 @@ def create_app() -> FastAPI:
     settings = Settings.from_env()
     database = Database(settings.database_path)
     database.bootstrap()
-    app = FastAPI(title="CancerJEV Phase 1 Read API", version="1.0.0")
+    app = FastAPI(title="CancerJEV Read API", version=API_VERSION)
     app.state.settings = settings
     app.state.repository = Repository(database)
     app.state.artifacts = ArtifactStore(settings.data_dir)

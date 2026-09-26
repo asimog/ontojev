@@ -162,19 +162,30 @@ def test_production_top_cases_parser_sees_the_same_frozen_bucket():
         assert bucket == independent == row["A_single_gene_count"]
 
 
-def test_sentinels_are_validation_controls_only():
-    """The sentinel panel must never enter the tested universe artifacts.
+def test_validation_controls_stay_outside_the_measured_population():
+    """Validation controls never enter the measured population or production code.
 
-    The sentinels live outside the first-1000 gene-id-ascending prefix of the
-    retained Stage-4 universe (verified live at capture time); this test pins
-    that property so a future universe change cannot silently absorb the
-    validation controls into target selection.
+    The measured population is read from the frozen production batch request
+    parameters (repository-owned evidence: each B record pins the exact gene ids
+    that were measured), never from a developer runtime artifact. The sentinel
+    panel is a validation control: it must stay outside the measured population
+    and must not appear in the discovery, science, judgment or domain modules, so
+    validation knowledge cannot influence discovery or admission. The bounded GDC
+    contract probe is a capture surface, not a selection feature.
     """
-    prior_universe = json.loads(
-        (Path(__file__).parents[1] / ".." / "data" / "runs" /
-         "e2035487-cb7e-47b2-83d4-0cee31153143" / "discovery" / "result.json")
-        .read_text(encoding="utf-8"))["universe"]["ordered_ids"]
-    universe_set = set(prior_universe)
-    assert universe_set.isdisjoint(SENTINEL_IDS)
+    measured: set[str] = set()
+    for record in MANIFEST["records"]:
+        label = record.get("batch_label")
+        if label and str(label).startswith("production_"):
+            measured.update(record["params"]["gene_ids"].split(","))
+    assert measured, "the frozen production batches must pin the measured population"
+    assert measured.isdisjoint(SENTINEL_IDS)
     for survivor_gene in MANIFEST["panel"]["survivors"].values():
-        assert survivor_gene in universe_set
+        assert survivor_gene in measured
+
+    package_root = Path(__file__).resolve().parents[2] / "cancerjev"
+    for area in ("research", "science", "jev", "domain"):
+        for source in sorted((package_root / area).rglob("*.py")):
+            source_text = source.read_text(encoding="utf-8")
+            for sentinel in SENTINEL_IDS:
+                assert sentinel not in source_text, f"validation control leaked into {source}"
