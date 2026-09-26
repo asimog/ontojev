@@ -76,6 +76,22 @@ def test_program_worker_idles_without_eligible_campaigns(runtime):
     assert "PROGRAM_IDLE" in [event["type"] for event in events]
 
 
+def test_program_cli_step_records_idle_and_persists_state(runtime):
+    from cancerjev.cli.main import _program
+
+    settings, repository, artifacts = runtime
+    _program(settings, repository, artifacts)
+
+    runs = repository.list_runs(5, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS)
+    assert runs
+    run_id = runs[0]["run_id"]
+    assert repository.get_run(run_id)["status"] == "COMPLETED"
+    types = [event["type"] for event in repository.events(run_id, 0, 200)["items"]]
+    assert "RUN_STARTED" in types and "PROGRAM_IDLE" in types and "RUN_COMPLETED" in types
+    state = load_program_state(run_id=run_id, repository=repository, artifacts=artifacts)
+    assert state is not None and state["state"] == "PROGRAM_IDLE"
+
+
 def test_program_worker_refuses_a_researcher_owned_run(runtime):
     run_id, repository, artifacts, emit, publish_json, _ = _worker(
         runtime, ownership=ExecutionOwnership.RESEARCHER_RUN)

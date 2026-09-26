@@ -6,6 +6,7 @@ import os
 import time
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from cancerjev.cli.console import render_event, render_json_event
 from cancerjev.config import Settings, load_local_env
@@ -71,6 +72,10 @@ def parser() -> argparse.ArgumentParser:
     capability.add_argument(
         "--project", default=None,
         help="open GDC project id to probe (default: the declared LUAD campaign project)",
+    )
+    commands.add_parser(
+        "program",
+        help="one autonomous program step: select an eligible campaign by the declared policy",
     )
     discover = commands.add_parser(
         "discover",
@@ -390,6 +395,44 @@ def _cnv_merge(
                "jev_review": len(result.jev_review_ids), "shards": shards})
 
 
+def _program(settings: Settings, repository: Repository, artifacts: ArtifactStore) -> None:
+    """One autonomous program step; with no validated campaign it records PROGRAM_IDLE."""
+    from cancerjev.research.campaign import LUAD_CAMPAIGN_V1
+    from cancerjev.research.program import run_program_worker
+
+    profiles = (LUAD_CAMPAIGN_V1,)
+
+    def run_campaign(profile: Any) -> bool:
+        raise SystemExit(f"campaign {profile.profile_id} has no registered run entry yet")
+
+    def publish_json(target_run_id: str, path: str, payload: bytes, purpose: str) -> Any:
+        return artifacts.publish(path, payload, "application/json", purpose)
+
+    run_id = repository.create_run(
+        "program-worker", mode="LIVE", fixture_id=None, fixture_version=None,
+        scope={"purpose": "PROGRAM", "profiles": [profile.payload() for profile in profiles]},
+        ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS,
+    )
+
+    def emit(target_run_id: str, event_type: str, key: str, message: str, **kwargs) -> None:
+        event = repository.append_event(target_run_id, event_type=event_type,
+                                        idempotency_key=key, message=message, **kwargs)
+        render_event(event)
+
+    emit(run_id, "RUN_STARTED", "run:started", "Autonomous program step started.",
+         data={"mode": "LIVE", "purpose": "PROGRAM"})
+    outcome, artifact = run_program_worker(
+        run_id=run_id, repository=repository, artifacts=artifacts, emit=emit,
+        publish_json=publish_json, profiles=profiles, run_campaign=run_campaign)
+    emit(run_id, "RUN_COMPLETED", "run:completed", "Program step completed.",
+         data={"status": "COMPLETED", "reason_code": outcome.reason_code,
+               "state": outcome.state.value, "selected_profile_id": outcome.selected_profile_id,
+               "artifact_id": artifact.artifact_id},
+         artifact_refs=[artifact.ref()])
+    print(f"[PROGRAM] state={outcome.state.value} reason={outcome.reason_code} "
+          f"selected={outcome.selected_profile_id}", flush=True)
+
+
 def main(argv: list[str] | None = None) -> None:
     load_local_env()
     args = parser().parse_args(argv)
@@ -470,6 +513,14 @@ def main(argv: list[str] | None = None) -> None:
             with ResearchOwnership(settings.lock_path):
                 repository.recover_interrupted()
                 _capability(settings, repository, artifacts, project_id=args.project)
+        except OwnershipError as exc:
+            raise SystemExit(str(exc)) from exc
+        return
+    if args.command == "program":
+        try:
+            with ResearchOwnership(settings.lock_path):
+                repository.recover_interrupted()
+                _program(settings, repository, artifacts)
         except OwnershipError as exc:
             raise SystemExit(str(exc)) from exc
         return
