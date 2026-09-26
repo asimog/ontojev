@@ -80,7 +80,11 @@ from cancerjev.research.file_admission import FILE_ADMISSION_VERSION
 from cancerjev.research.finalize import FINAL_RESULT_SCHEMA_VERSION, NO_JEV_BASELINE_VERSION
 from cancerjev.research.nextmove import DEEP_POLICY_VERSION
 from cancerjev.research.program import PROGRAM_LOOP_VERSION
-from cancerjev.research.ranking import BASELINE_POLICY_VERSION, JEV_POLICY_VERSION
+from cancerjev.research.ranking import (
+    BASELINE_POLICY_VERSION,
+    JEV_POLICY_VERSION,
+    PRE_WIDE_POLICY_VERSION,
+)
 from cancerjev.research.release_compare import RELEASE_COMPARISON_POLICY_VERSION
 from cancerjev.research.release_monitor import RELEASE_MONITOR_VERSION
 from cancerjev.research.specs import LUAD_DISCOVERY_V1, RESEARCH_SPEC_SCHEMA_VERSION
@@ -151,6 +155,7 @@ def collect_facts() -> dict[str, object]:
         "mutation_reduction_method": f"{REDUCER_METHOD_ID} v{REDUCER_VERSION}",
         "no_jev_baseline_version": NO_JEV_BASELINE_VERSION,
         "package_version": PACKAGE_VERSION,
+        "pre_wide_selection_policy": PRE_WIDE_POLICY_VERSION,
         "presentation_payload_schema_version": _presentation_schema_version(),
         "research_spec_schema_version": RESEARCH_SPEC_SCHEMA_VERSION,
         "run_event_schema_version": SUPPORTED_SCHEMA_VERSION,

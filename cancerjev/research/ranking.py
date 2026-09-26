@@ -17,6 +17,10 @@ ADMISSION_MIN_WARRANTS = 0.60
 ADMISSION_MIN_UNCERTAINTY = 0.50
 ADMISSION_MIN_QUALITY = 0.40
 ADMISSION_MAX_CONFOUND = 0.50
+PRE_WIDE_POLICY_VERSION = "pre-wide-policy-v1"
+PRE_WIDE_ORDERING_DESCRIPTION = (
+    "affected_cases desc, mutation_observed desc, coverage_imbalance asc"
+)
 
 _ADMISSION_THRESHOLDS = {
     "warrants_deeper_investigation_min": ADMISSION_MIN_WARRANTS,
@@ -35,6 +39,7 @@ class RankingState:
     coverage_imbalance: bool
     completeness: str
     expression_availability: str
+    pending_semantic_review: bool
 
 
 def _expression_availability(state: StatisticalState) -> str:
@@ -53,12 +58,39 @@ def _ranking_state(record: StateRecord) -> RankingState:
         measurement = project.mutation.affected_cases
         if isinstance(measurement, ObservedCount):
             affected = measurement.value
+    nominations = getattr(state, "nominations", None) or ()
+    pending_review = (
+        any(disposition == "JEV_REVIEW" for _, disposition in nominations)
+        or "PENDING_SEMANTIC_REVIEW" in state.warnings
+    )
     return RankingState(
         record.state_id, record.state_hash, state.gene_symbol, affected,
         state.cross_project.coverage_imbalance,
         "COMPLETE" if state.quality.acquisition is Acquisition.COMPLETE else "PARTIAL",
         _expression_availability(state),
+        pending_review,
     )
+
+
+def measured_ordering_key(record: StateRecord) -> tuple[float, int, int]:
+    """Declared pre-Wide measured ordering key; no Jev, no ids, no hashes."""
+    state = _ranking_state(record)
+    affected = state.affected_cases
+    return (
+        -(affected if affected is not None else -1.0),
+        -int(affected is not None),
+        int(state.coverage_imbalance),
+    )
+
+
+def measured_dimensions(record: StateRecord) -> dict[str, object]:
+    """The measured evidence behind one pre-Wide ordering key."""
+    state = _ranking_state(record)
+    return {
+        "affected_cases": state.affected_cases,
+        "mutation_observed": state.affected_cases is not None,
+        "coverage_imbalance": state.coverage_imbalance,
+    }
 
 
 def baseline_ranking(states: list[StateRecord]) -> dict[str, Any]:
@@ -100,6 +132,10 @@ def _applicable(evaluation: EvaluationRecord, question_id: str) -> bool:
 
 def _eligibility_exclusions(state: RankingState) -> list[str]:
     reasons = []
+    if state.pending_semantic_review:
+        # Arm Jev is deferred: a state whose admission still depends on
+        # JEV_REVIEW can never be promoted by favorable Wide answers.
+        reasons.append("PENDING_SEMANTIC_REVIEW")
     if state.completeness != "COMPLETE":
         reasons.append("INCOMPLETE_ACQUISITION")
     if state.affected_cases is None:

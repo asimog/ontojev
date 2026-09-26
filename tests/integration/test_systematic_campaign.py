@@ -18,7 +18,6 @@ from cancerjev.domain.capability import ScientificReadiness
 from cancerjev.domain.events import canonical_json
 from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.jev.service import JevService
-from cancerjev.research.acquisition import LiveRunError
 from cancerjev.research.campaign import LUAD_CAMPAIGN_V1
 from cancerjev.research.cutover import UNION_SELECTION_RULE_ID
 from cancerjev.research.specs import LUAD_RESEARCH_V1
@@ -122,25 +121,35 @@ def test_gdc_fast_search_is_not_the_autonomous_science_path(runtime):
     assert repository.get_run(run_id)["purpose"] == "SYSTEMATIC_CAMPAIGN"
 
 
-def test_pre_wide_boundary_never_truncates_the_union(runtime):
+def test_pre_wide_boundary_cuts_by_measured_evidence_and_never_truncates(runtime):
     _, repository, _ = runtime
     run_id, _, events, result = _execute(runtime)
-    persisted = len(result.state_ids)
-    assert persisted >= 2
+    assert len(result.state_ids) >= 2
+    assert result.pre_wide.reason_code == "WITHIN_CEILING"
 
-    before = {run["run_id"] for run in repository.list_runs(50)}
-    with pytest.raises(LiveRunError) as failure:
-        _execute(runtime, max_states=1)
-    assert failure.value.code == "PRE_WIDE_SELECTION_UNAVAILABLE"
+    cut_run, _, cut_events, cut_result = _execute(runtime, max_states=1)
+    assert cut_result.pre_wide.considered >= 2
+    assert len(cut_result.pre_wide.states) == 1
+    assert cut_result.pre_wide.reason_code == "CUT_AT_MEASURED_ORDERING"
+    excluded = {entry["state_id"] for entry in cut_result.pre_wide.excluded}
+    assert excluded, "the cut records the excluded states explicitly"
+    assert all(entry["reason"] == "BELOW_PRE_WIDE_CUTOFF"
+               for entry in cut_result.pre_wide.excluded)
+    assert cut_result.pre_wide.states[0].state_id not in excluded
 
-    types = [event["type"] for event in events]
-    assert "JEV_WIDE_STARTED" in types, "the successful run reached Wide"
-    created = [run for run in repository.list_runs(50) if run["run_id"] not in before]
-    assert len(created) == 1, "the refused run is distinct"
-    failed_run = created[0]["run_id"]
-    assert not repository.list_table("jev_evaluations", failed_run), \
-        "an over-ceiling population is refused before any Jev evaluation"
-    assert not repository.list_table("candidates", failed_run)
+    persisted = repository.list_table("statistical_states", cut_run)
+    assert len(persisted) == cut_result.pre_wide.considered, \
+        "the complete union stays persisted even when Wide is bounded"
+    recorded = [event for event in cut_events
+                if event["type"] == "PRE_WIDE_SELECTION_RECORDED"]
+    assert len(recorded) == 1
+    data = recorded[0]["data"]
+    assert data["policy_version"] == "pre-wide-policy-v1"
+    assert data["considered"] == cut_result.pre_wide.considered
+    assert data["selected"] == 1 and data["excluded"] == len(excluded)
+    assert len(repository.list_table("jev_evaluations", cut_run)) == 1, \
+        "only the selected population reaches Jev"
+    assert "JEV_WIDE_STARTED" in [event["type"] for event in events]
 
 
 def test_replay_determinism_is_stable(runtime):

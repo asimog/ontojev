@@ -42,7 +42,12 @@ from cancerjev.research.expression_discovery import run_expression_discovery
 from cancerjev.research.seams import PublishJson, run_stage
 from cancerjev.research.specs import ResearchSpec
 from cancerjev.research.state_store import persist_state
-from cancerjev.research.wide import PreWideSelection, run_wide_evaluation, select_pre_wide_states
+from cancerjev.research.wide import (
+    PreWideSelection,
+    record_pre_wide_selection,
+    run_wide_evaluation,
+    select_pre_wide_states,
+)
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
 
@@ -176,6 +181,8 @@ def run_systematic_campaign(*, run_id: str, profile: CampaignProfile, spec: Rese
     if any(record.state.quality.acquisition is not Acquisition.COMPLETE for record in records):
         coverage = "PARTIAL"
     selection = select_pre_wide_states(records, ceiling=max_states)
+    record_pre_wide_selection(run_id=run_id, selection=selection, repository=repository,
+                              publish_json=publish_json, emit=emit)
     wide_result = run_stage(
         emit, run_id, "JEV_WIDE",
         lambda: run_wide_evaluation(

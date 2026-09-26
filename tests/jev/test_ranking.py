@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from cancerjev.domain.envelopes import StateRecord
 from cancerjev.domain.events import canonical_json
 from cancerjev.jev.contracts import EvaluationRecord, QuestionApplicability, read_answers
@@ -240,3 +242,43 @@ def test_admission_exclusion_reasons_are_named():
     assert ranking["admitted_state_ids"] == []
     assert "BELOW_ADMISSION_THRESHOLD:warrants_deeper_investigation" in \
         ranking["entries"][0]["excluded_reason"]
+
+
+def _review_state(*, nominations=(), warnings=()):
+    return replace(statistical_state(counts={PROJECT: {GENE.gene_id: 40}}),
+                   nominations=tuple(sorted(nominations)), warnings=tuple(warnings))
+
+
+def test_jev_review_states_are_never_promotable_by_favorable_answers():
+    review = state_record("state-review", _review_state(
+        nominations=(("mutation", "JEV_REVIEW"),),
+        warnings=("PENDING_SEMANTIC_REVIEW",)))
+    ordinary = _record("state-ordinary", 40)
+    ranking = jev_ranking([review, ordinary], [
+        _evaluation(review, warrants=1.0, uncertainty=1.0, quality=1.0, confound=0.0),
+        _evaluation(ordinary, warrants=0.9, uncertainty=0.9, quality=0.9, confound=0.1),
+    ])
+    entry = next(item for item in ranking["entries"] if item["state_id"] == "state-review")
+    assert entry["qualified"] is False
+    assert entry["excluded_reason"] == "PENDING_SEMANTIC_REVIEW"
+    assert "state-review" not in ranking["admitted_state_ids"]
+    assert ranking["admitted_state_ids"] == ["state-ordinary"]
+    assert ranking["admission"]["decision"] == "ADMIT"
+
+
+def test_review_warning_alone_still_blocks_admission():
+    warned = state_record("state-warned", _review_state(warnings=("PENDING_SEMANTIC_REVIEW",)))
+    ranking = jev_ranking([warned], [
+        _evaluation(warned, warrants=1.0, uncertainty=1.0, quality=1.0, confound=0.0)])
+    assert ranking["admission"]["decision"] == "ABSTAIN"
+    assert ranking["admitted_state_ids"] == []
+    assert ranking["entries"][0]["excluded_reason"] == "PENDING_SEMANTIC_REVIEW"
+
+
+def test_retained_nominations_do_not_block_admission():
+    retained = state_record("state-retained", _review_state(
+        nominations=(("mutation", "RETAINED"), ("cnv", "RETAIN"))))
+    ranking = jev_ranking([retained], [
+        _evaluation(retained, warrants=1.0, uncertainty=1.0, quality=1.0, confound=0.0)])
+    assert ranking["admission"]["decision"] == "ADMIT"
+    assert ranking["admitted_state_ids"] == ["state-retained"]

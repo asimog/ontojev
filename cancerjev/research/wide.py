@@ -23,15 +23,17 @@ from cancerjev.research.acquisition import LiveRunError
 from cancerjev.research.ranking import (
     BASELINE_POLICY_VERSION,
     JEV_POLICY_VERSION,
+    PRE_WIDE_ORDERING_DESCRIPTION,
+    PRE_WIDE_POLICY_VERSION,
     PROMOTION_LIMIT,
     baseline_ranking,
     jev_ranking,
+    measured_dimensions,
+    measured_ordering_key,
 )
 from cancerjev.research.seams import PublishJson
 from cancerjev.storage.artifacts import PublishedArtifact
 from cancerjev.storage.repositories import Repository
-
-PRE_WIDE_POLICY_VERSION = "pre-wide-policy-v1"
 
 
 @dataclass(frozen=True)
@@ -42,12 +44,13 @@ class PreWideSelection:
     states: tuple[StateRecord, ...]
     considered: int
     ceiling: int | None
-    excluded: tuple[dict[str, str], ...]
+    excluded: tuple[dict[str, Any], ...]
     reason_code: str
 
     def payload(self) -> dict[str, Any]:
         return {
             "policy_version": self.policy_version,
+            "ordering": PRE_WIDE_ORDERING_DESCRIPTION,
             "ceiling": self.ceiling,
             "considered": self.considered,
             "selected": len(self.states),
@@ -58,23 +61,73 @@ class PreWideSelection:
 
 def select_pre_wide_states(states: list[StateRecord], *,
                            ceiling: int | None) -> PreWideSelection:
-    """Bound the Wide population without ever cutting the union by list order.
+    """Bound the Wide population with explicit measured ordering, never list order.
 
     This is the explicit typed boundary between the complete modality union and
     Wide evaluation. The complete union is already persisted; the population
-    entering Jev is all of it while it fits the declared ceiling. An oversized
-    population fails closed here until the deterministic pre-Wide policy exists
-    (Prompt 3); it is never prefix-truncated and ``run_wide_evaluation`` is never
-    called with an implicit cut in the canonical path.
+    entering Jev is all of it while it fits the declared ceiling.
+
+    When a cut is required, states are ordered only by the declared measured
+    evidence (affected cases, mutation observation, coverage imbalance) already
+    present in the state contract: no Jev judgment, no validation labels, no
+    gene-id/database/filesystem/input order. If the ceiling falls inside a group
+    of states sharing the boundary key, no scientifically valid deterministic
+    choice exists and the run fails closed instead of truncating.
     """
-    if ceiling is None or len(states) <= ceiling:
-        return PreWideSelection(PRE_WIDE_POLICY_VERSION, tuple(states), len(states), ceiling,
+    if ceiling is not None and ceiling < 1:
+        raise LiveRunError("INVALID_PRE_WIDE_CEILING", f"ceiling must be positive, got {ceiling}")
+    ordered = sorted(states, key=lambda record: (measured_ordering_key(record), record.state_id))
+    if ceiling is None or len(ordered) <= ceiling:
+        return PreWideSelection(PRE_WIDE_POLICY_VERSION, tuple(ordered), len(ordered), ceiling,
                                 (), "WITHIN_CEILING")
-    raise LiveRunError(
-        "PRE_WIDE_SELECTION_UNAVAILABLE",
-        f"{len(states)} union states exceed the configured Jev ceiling {ceiling}; "
-        "the deterministic pre-Wide policy has not been applied",
+    selected: list[StateRecord] = []
+    index = 0
+    while index < len(ordered) and len(selected) < ceiling:
+        key = measured_ordering_key(ordered[index])
+        group_end = index
+        while group_end < len(ordered) and measured_ordering_key(ordered[group_end]) == key:
+            group_end += 1
+        group = ordered[index:group_end]
+        capacity = ceiling - len(selected)
+        if len(group) > capacity:
+            raise LiveRunError(
+                "PRE_WIDE_ORDERING_AMBIGUOUS",
+                f"{len(group)} union states share the boundary ordering key with only "
+                f"{capacity} Wide slot(s) left; there is no scientifically valid deterministic "
+                "way to choose among them",
+            )
+        selected.extend(group)
+        index = group_end
+    excluded = tuple(
+        {"state_id": record.state_id, "state_hash": record.state_hash,
+         "reason": "BELOW_PRE_WIDE_CUTOFF", **measured_dimensions(record)}
+        for record in ordered[index:]
     )
+    return PreWideSelection(PRE_WIDE_POLICY_VERSION, tuple(selected), len(ordered), ceiling,
+                            excluded, "CUT_AT_MEASURED_ORDERING")
+
+
+def record_pre_wide_selection(*, run_id: str, selection: PreWideSelection,
+                              repository: Repository, publish_json: PublishJson,
+                              emit: Callable[..., Any]) -> PublishedArtifact:
+    """Persist the pre-Wide policy identity and counts before Wide evaluation."""
+    payload = {"kind": "PRE_WIDE_SELECTION", "run_id": run_id, **selection.payload()}
+    artifact = publish_json(run_id, f"runs/{run_id}/wide/pre_wide_selection.json",
+                            canonical_json(payload), "pre-wide-selection")
+    registration = repository.artifact_registration(artifact, run_id)
+    emit(
+        run_id, "PRE_WIDE_SELECTION_RECORDED", "jev:pre-wide:recorded",
+        f"Pre-Wide policy selected {len(selection.states)} of {selection.considered} state(s) "
+        f"({selection.reason_code}).",
+        stage="JEV_WIDE",
+        data={"policy_version": selection.policy_version, "reason_code": selection.reason_code,
+              "ordering": PRE_WIDE_ORDERING_DESCRIPTION, "ceiling": selection.ceiling,
+              "considered": selection.considered, "selected": len(selection.states),
+              "excluded": len(selection.excluded),
+              "artifact_id": artifact.artifact_id, "artifact_sha256": artifact.sha256},
+        artifact_refs=[artifact.ref()], registrations=[registration],
+    )
+    return artifact
 
 
 def run_wide_evaluation(*, run_id: str, states: list[StateRecord], coverage: str,
