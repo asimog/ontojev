@@ -19,7 +19,8 @@ from cancerjev.domain.capability import (
     ScientificReadiness,
     readiness_rank,
 )
-from cancerjev.domain.measurements import require, text
+from cancerjev.domain.measurements import count, require, text
+from cancerjev.domain.program import CampaignStatus
 
 
 class CampaignActivationError(Exception):
@@ -38,6 +39,8 @@ class CampaignProfile:
     enabled_modalities: tuple[Modality, ...]
     readiness: ScientificReadiness
     readiness_reason: str
+    priority: int = 0
+    status: CampaignStatus = CampaignStatus.PENDING
 
     def __post_init__(self) -> None:
         text(self.profile_id, "campaign profile id")
@@ -46,6 +49,8 @@ class CampaignProfile:
         text(self.project_id, "campaign project id")
         text(self.readiness_reason, "campaign readiness reason")
         require(isinstance(self.readiness, ScientificReadiness), "invalid campaign readiness")
+        count(self.priority, "campaign priority")
+        require(isinstance(self.status, CampaignStatus), "invalid campaign status")
         require(type(self.enabled_modalities) is tuple
                 and all(isinstance(modality, Modality) for modality in self.enabled_modalities),
                 "enabled modalities must be an immutable modality tuple")

@@ -23,6 +23,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "action_registry_version": "4",
   "api_version": "3.0.0",
   "arm_jev_decision": "DEFER",
+  "campaign_selection_policy": "campaign-selection-v1",
   "cnv_discovery_result_schema_version": 1,
   "cnv_disposition_policy": "cnv-dispositions-v1",
   "deep_action_policy": "deep-action-policy-v1",
@@ -40,6 +41,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "gdc_data_model_reference": "gdcdatamodel2@9c6a046b96c130ea131d2ce2c9160381edd2fcc1",
   "hypothesis_projection_version": "jev-hypothesis-projection-v2",
   "hypothesis_question_set": "hypothesis-v2",
+  "luad_campaign_readiness": "EXPERIMENTAL",
   "mutation_composition_method": "MUTATION_CANONICAL_COMPOSITION_V1 v1",
   "mutation_discovery_result_schema_version": 1,
   "mutation_inference_decision": "DEFER_WITH_JUSTIFICATION v1",
@@ -48,6 +50,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "open_file_admission_version": "1",
   "pathway_membership_method": "REACTOME_TOP_LEVEL_ENSEMBL_V1 v1",
   "presentation_payload_schema_version": 4,
+  "program_loop_version": "program-loop-v1",
   "registered_action_ids": [
     "CHECK_EVIDENCE_INTEGRITY_V1",
     "CHECK_REVISION_FAITHFULNESS_V1",
@@ -55,6 +58,7 @@ that describes behavior (see the source-of-truth hierarchy in
     "SUMMARIZE_CNV_CATEGORIES_V1",
     "SUMMARIZE_EXPRESSION_TAIL_V1"
   ],
+  "release_comparison_policy": "release-comparison-v1",
   "research_spec_schema_version": 8,
   "run_event_schema_version": 1,
   "sqlite_schema_version": 6,

@@ -30,6 +30,8 @@ The TypeSafe/Jev capability posture is committed in [TYPESAFE_DECISIONS.md](TYPE
 
 Every run records its execution ownership (`SYSTEM_AUTONOMOUS` or `RESEARCHER_RUN`, SQLite schema 6): operator deep flags are rejected before any work on autonomous runs, cross-owner guards fail closed in both directions, and researcher runs keep their own typed scope while sharing only provenance-exact immutable caches.
 
+Campaign coordination is named, versioned and deterministic: `campaign-selection-v1` admits only profiles validated for autonomous use in declared priority-then-campaign-id order (never registry or filesystem order), `program-loop-v1` runs at most one bounded Campaign per step and records `PROGRAM_IDLE` when none is eligible, and `release-comparison-v1` classifies release changes from persisted snapshots with source/method changes explicitly `NOT_COMPARABLE` rather than attributed to biology.
+
 ### Measurement reconciliation retained from the previous architecture document
 
 The frozen `tests/reconciliation/fixtures/reconciliation_dr46` corpus independently compares analysis buckets with released `/ssm_occurrences`. For its TP53/TCGA-LUAD capture, the analysis bucket is 393, released occurrences are 299 and distinct cases are 281. These are fixture-specific observations, not current live counts. A gene with no released occurrences can still have a nonzero analysis bucket. The bucket must therefore not be presented as a distinct released-case measurement.

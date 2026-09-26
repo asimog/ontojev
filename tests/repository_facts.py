@@ -45,7 +45,6 @@ from cancerjev.domain.pathway import (
     REACTOME_MEMBERSHIP_VERSION,
 )
 from cancerjev.domain.runs import ExecutionOwnership
-from cancerjev.research.deep import DEEP_ACTION_POLICY_VERSION
 from cancerjev.gdc.endpoints import GDC_DATA_MODEL_REFERENCE
 from cancerjev.jev.posture import ARM_JEV_DECISION, TYPESAFE_DECISION_RECORD_VERSION
 from cancerjev.jev.projection import (
@@ -58,10 +57,15 @@ from cancerjev.jev.questions import (
     HYPOTHESIS_QUESTION_SET_VERSION,
     WIDE_QUESTION_SET_VERSION,
 )
+from cancerjev.research.campaign import LUAD_CAMPAIGN_V1
+from cancerjev.research.campaign_selection import CAMPAIGN_SELECTION_POLICY_VERSION
+from cancerjev.research.deep import DEEP_ACTION_POLICY_VERSION
 from cancerjev.research.file_admission import FILE_ADMISSION_VERSION
 from cancerjev.research.finalize import FINAL_RESULT_SCHEMA_VERSION, NO_JEV_BASELINE_VERSION
 from cancerjev.research.nextmove import DEEP_POLICY_VERSION
+from cancerjev.research.program import PROGRAM_LOOP_VERSION
 from cancerjev.research.ranking import BASELINE_POLICY_VERSION, JEV_POLICY_VERSION
+from cancerjev.research.release_compare import RELEASE_COMPARISON_POLICY_VERSION
 from cancerjev.research.specs import LUAD_DISCOVERY_V1, RESEARCH_SPEC_SCHEMA_VERSION
 from cancerjev.science.actions import ACTION_REGISTRY, ACTION_REGISTRY_VERSION
 from cancerjev.science.methods import (
@@ -107,6 +111,10 @@ def collect_facts() -> dict[str, object]:
         "execution_ownership_values": ",".join(
             ownership.value for ownership in ExecutionOwnership),
         "deep_action_policy": DEEP_ACTION_POLICY_VERSION,
+        "campaign_selection_policy": CAMPAIGN_SELECTION_POLICY_VERSION,
+        "release_comparison_policy": RELEASE_COMPARISON_POLICY_VERSION,
+        "program_loop_version": PROGRAM_LOOP_VERSION,
+        "luad_campaign_readiness": LUAD_CAMPAIGN_V1.readiness.value,
         "hypothesis_projection_version": HYPOTHESIS_PROJECTION_VERSION,
         "hypothesis_question_set": HYPOTHESIS_QUESTION_SET_VERSION,
         "mutation_discovery_result_schema_version": DISCOVERY_SCHEMA_VERSION,
