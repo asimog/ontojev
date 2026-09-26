@@ -23,7 +23,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "action_registry_version": "4",
   "api_version": "3.0.0",
   "arm_jev_decision": "DEFER",
-  "campaign_selection_policy": "campaign-selection-v1",
+  "campaign_selection_policy": "campaign-selection-v2",
   "cnv_discovery_result_schema_version": 1,
   "cnv_disposition_policy": "cnv-dispositions-v1",
   "deep_action_policy": "deep-action-policy-v1",
@@ -62,7 +62,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "pathway_membership_method": "REACTOME_TOP_LEVEL_ENSEMBL_V1 v1",
   "pre_wide_selection_policy": "pre-wide-policy-v1",
   "presentation_payload_schema_version": 4,
-  "program_loop_version": "program-loop-v1",
+  "program_loop_version": "program-loop-v2",
   "registered_action_ids": [
     "CHECK_EVIDENCE_INTEGRITY_V1",
     "CHECK_REVISION_FAITHFULNESS_V1",

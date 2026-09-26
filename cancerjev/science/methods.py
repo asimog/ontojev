@@ -451,6 +451,11 @@ def _environment_hash() -> str:
     })).hexdigest()
 
 
+def method_environment_hash() -> str:
+    """Public identity of the admitted deterministic method environment."""
+    return _environment_hash()
+
+
 # ------------------------------------------------------------ typed assembly
 
 

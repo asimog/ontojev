@@ -10,6 +10,7 @@ from apps.api.main import create_app
 from apps.api.serializers import PRESENTATION_SCHEMA_VERSION, response_etag
 from cancerjev import __version__ as PACKAGE_VERSION
 from cancerjev.config import Settings
+from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.research.dossier import SYNTHETIC_NOTICE
 from cancerjev.research.orchestrator import DemoOrchestrator
 from cancerjev.storage.artifacts import ArtifactStore
@@ -73,6 +74,23 @@ def test_health_and_system_report_the_current_configuration(runtime, monkeypatch
     assert system["active_run_id"] is None
     assert system["budget_defaults"]["gdc_requests"] == 150
     assert system["budget_defaults"]["per_response_bytes"] == 5 * 1024 * 1024
+
+
+def test_worker_heartbeat_freshness_tracks_the_active_run(runtime, monkeypatch):
+    settings, repository, _ = runtime
+    client = _client(settings, monkeypatch)
+    assert client.get("/api/system").json()["worker"] is None
+
+    run_id = repository.create_run(
+        "program-worker", mode="LIVE", fixture_id=None, fixture_version=None,
+        scope={"purpose": "PROGRAM"}, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS)
+    repository.heartbeat("program-worker")
+
+    system = client.get("/api/system").json()
+    assert system["active_run_id"] == run_id
+    assert system["worker"]["owner_id"] == "program-worker"
+    assert system["worker"]["version"] == PACKAGE_VERSION
+    assert system["worker"]["fresh"] is True
     assert system["budget_defaults"]["gdc_bytes"] == 768 * 1024 * 1024
     assert system["budget_policy"]["max_shard_bytes"] == 512 * 1024 * 1024
     assert system["budget_defaults"]["max_case_ids"] == 250

@@ -67,3 +67,15 @@ def canned_capability(*, complete: bool = True) -> CohortCapability:
         cohort_id="TCGA-LUAD", project_id="TCGA-LUAD", release="Data Release TEST",
         release_commit="0" * 40, data_categories=("Clinical",), facets=facets,
         sources=(), warnings=())
+
+
+def fake_release_observation(*, release: str = "Data Release TEST",
+                             commit: str | None = "0" * 40):
+    """A typed release observation that never touches a provider."""
+    from cancerjev.domain.measurements import Acquisition, ScientificSource
+    from cancerjev.research.release_monitor import ReleaseObservation
+
+    source = ScientificSource(
+        endpoint="/status", request_hash="a" * 64, response_hash="b" * 64,
+        parser_version="gdc-parser-v1", release=release, acquisition=Acquisition.COMPLETE)
+    return ReleaseObservation(release=release, release_commit=commit, source=source)

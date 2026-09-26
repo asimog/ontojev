@@ -12,6 +12,7 @@ from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.research.campaign import LUAD_CAMPAIGN_V1
 from cancerjev.research.program import load_program_state, run_program_worker
 from cancerjev.storage.ownership import OwnershipError
+from tests.helpers import fake_release_observation
 
 VALIDATED = replace(LUAD_CAMPAIGN_V1, profile_id="LUAD_CAMPAIGN_V2",
                     readiness=ScientificReadiness.VALIDATED_FOR_AUTONOMOUS_USE)
@@ -50,7 +51,7 @@ def test_program_worker_selects_persists_and_completes(runtime):
     assert calls == [VALIDATED.profile_id]
     assert outcome.state is ProgramState.CAMPAIGN_COMPLETE
     assert artifact.sha256
-    state = load_program_state(run_id=run_id, repository=repository, artifacts=artifacts)
+    state = load_program_state(repository=repository, artifacts=artifacts)
     assert state is not None
     assert state["state"] == "CAMPAIGN_COMPLETE"
     statuses = {campaign["profile_id"]: campaign["status"] for campaign in state["campaigns"]}
@@ -76,10 +77,12 @@ def test_program_worker_idles_without_eligible_campaigns(runtime):
     assert "PROGRAM_IDLE" in [event["type"] for event in events]
 
 
-def test_program_cli_step_records_idle_and_persists_state(runtime):
+def test_program_cli_step_records_idle_and_persists_state(runtime, monkeypatch):
     from cancerjev.cli.main import _program
 
     settings, repository, artifacts = runtime
+    monkeypatch.setattr("cancerjev.research.release_monitor.observe_release",
+                        lambda transport: fake_release_observation())
     _program(settings, repository, artifacts)
 
     runs = repository.list_runs(5, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS)
@@ -87,9 +90,11 @@ def test_program_cli_step_records_idle_and_persists_state(runtime):
     run_id = runs[0]["run_id"]
     assert repository.get_run(run_id)["status"] == "COMPLETED"
     types = [event["type"] for event in repository.events(run_id, 0, 200)["items"]]
-    assert "RUN_STARTED" in types and "PROGRAM_IDLE" in types and "RUN_COMPLETED" in types
-    state = load_program_state(run_id=run_id, repository=repository, artifacts=artifacts)
+    assert "RUN_STARTED" in types and "RELEASE_OBSERVED" in types
+    assert "PROGRAM_IDLE" in types and "RUN_COMPLETED" in types
+    state = load_program_state(repository=repository, artifacts=artifacts)
     assert state is not None and state["state"] == "PROGRAM_IDLE"
+    assert state["release"] == "Data Release TEST"
 
 
 def test_program_worker_refuses_a_researcher_owned_run(runtime):

@@ -651,6 +651,18 @@ class Repository:
             row = connection.execute("SELECT * FROM artifacts WHERE relative_path=?", (relative_path,)).fetchone()
             return dict(row) if row else None
 
+    def latest_artifact_by_purpose(self, purpose: str) -> dict[str, Any] | None:
+        """Newest artifact of one purpose, ordered by its registering run's creation."""
+        with self.database.read() as connection:
+            row = connection.execute(
+                "SELECT artifacts.* FROM artifacts"
+                " LEFT JOIN research_runs ON research_runs.run_id=artifacts.run_id"
+                " WHERE artifacts.purpose=?"
+                " ORDER BY research_runs.created_at DESC, artifacts.artifact_id DESC LIMIT 1",
+                (purpose,),
+            ).fetchone()
+            return dict(row) if row else None
+
     def heartbeat(self, owner_id: str) -> None:
         with self.database.connect(write=True) as connection:
             connection.execute("INSERT INTO worker_status(singleton,owner_id,heartbeat_at,version) VALUES(1,?,?,?) ON CONFLICT(singleton) DO UPDATE SET owner_id=excluded.owner_id,heartbeat_at=excluded.heartbeat_at,version=excluded.version", (owner_id, utc_now(), PACKAGE_VERSION))

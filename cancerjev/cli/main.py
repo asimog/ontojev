@@ -23,12 +23,17 @@ from cancerjev.gdc.capture import CaptureSink, run_contract_probe
 from cancerjev.gdc.parsers import ParserError
 from cancerjev.gdc.transport import GDCTransport, RunBudget, TransportError
 from cancerjev.research.acquisition import LiveRunError
+from cancerjev.research.campaign import LUAD_CAMPAIGN_V1
 from cancerjev.research.live import LiveOrchestrator
 from cancerjev.research.orchestrator import DemoOrchestrator
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.database import Database
 from cancerjev.storage.ownership import OwnershipError, ResearchOwnership
 from cancerjev.storage.repositories import Repository
+
+# The program's declared campaign set. Production is exactly the LUAD campaign
+# profile until a profile is deliberately promoted; tests may replace this seam.
+PROGRAM_PROFILES: tuple[Any, ...] = (LUAD_CAMPAIGN_V1,)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -547,22 +552,31 @@ def _dispatch_campaign(settings: Settings, repository: Repository, artifacts: Ar
 
 def _program(settings: Settings, repository: Repository, artifacts: ArtifactStore) -> None:
     """One autonomous program step; with no validated campaign it records PROGRAM_IDLE."""
-    from cancerjev.research.campaign import LUAD_CAMPAIGN_V1, CampaignActivationError
+    from cancerjev.research.campaign import CampaignActivationError
     from cancerjev.research.capability import CapabilityError
     from cancerjev.research.program import run_program_worker
+    from cancerjev.research.release_monitor import observe_release
 
-    profiles = (LUAD_CAMPAIGN_V1,)
+    profiles = PROGRAM_PROFILES
     with _started_run(
         repository, worker_id="program-worker",
         scope={"budget_policy": policy_payload(), "purpose": "PROGRAM",
                "profiles": [profile.payload() for profile in profiles]},
-        started_message="Autonomous program step started.",
+        started_message="Autonomous program cycle started.",
     ) as run_id:
 
         def emit(target_run_id: str, event_type: str, key: str, message: str, **kwargs) -> None:
             event = repository.append_event(target_run_id, event_type=event_type,
                                             idempotency_key=key, message=message, **kwargs)
             render_event(event)
+
+        def observe():
+            """One bounded release observation with its own declared budget."""
+            caps = production_caps(per_response_bytes=settings.gdc_per_response_bytes,
+                                   timeout_seconds=settings.gdc_timeout_seconds)
+            transport = GDCTransport(repository, artifacts, RunBudget(caps=caps), run_id, emit,
+                                     cache_enabled=False)
+            return observe_release(transport)
 
         def run_campaign(profile: Any) -> bool:
             """Ownership-gated dispatch; a blocked campaign is recorded, never overridden."""
@@ -582,10 +596,12 @@ def _program(settings: Settings, repository: Repository, artifacts: ArtifactStor
 
         outcome, artifact = run_program_worker(
             run_id=run_id, repository=repository, artifacts=artifacts, emit=emit,
-            publish_json=publish_json, profiles=profiles, run_campaign=run_campaign)
-        emit(run_id, "RUN_COMPLETED", "run:completed", "Program step completed.",
+            publish_json=publish_json, profiles=profiles, run_campaign=run_campaign,
+            observe=observe)
+        emit(run_id, "RUN_COMPLETED", "run:completed", "Program cycle completed.",
              data={"status": "COMPLETED", "reason_code": outcome.reason_code,
                    "state": outcome.state.value, "selected_profile_id": outcome.selected_profile_id,
+                   "campaign_decisions": dict(outcome.reasons_by_profile),
                    "artifact_id": artifact.artifact_id},
              artifact_refs=[artifact.ref()])
         print(f"[PROGRAM] state={outcome.state.value} reason={outcome.reason_code} "
@@ -621,7 +637,9 @@ def main(argv: list[str] | None = None) -> None:
     if (deep_candidate or deep_action or deep_followup or deep_hypotheses) \
             and not getattr(args, "researcher", False):
         raise SystemExit("operator deep flags require --researcher (autonomous runs reject operator overrides).")
-    if args.command in {"run", "worker"} and not live and getattr(args, "fixture", None) != "demo":
+    if args.command == "worker" and not live:
+        raise SystemExit("worker runs the autonomous program loop against real open-access GDC; pass --live.")
+    if args.command == "run" and not live and getattr(args, "fixture", None) != "demo":
         raise SystemExit("Choose --fixture demo for the offline demonstration or --live for a real open-access GDC sweep.")
     if args.command in {"discover", "discover-expression", "discover-cnv"} and not live:
         raise SystemExit(f"{args.command} requires --live (systematic discovery is a real bounded open-access GDC task).")
@@ -717,6 +735,29 @@ def main(argv: list[str] | None = None) -> None:
         except OwnershipError as exc:
             raise SystemExit(str(exc)) from exc
         return
+    if args.command == "worker":
+        # The long-running loop owns the research lock only around each mutation
+        # window; it sleeps outside the lock so researcher commands are never blocked
+        # between cycles. A failed cycle is recorded by the cycle run and the loop
+        # keeps its normal interval, so a failing operation is never hammered.
+        try:
+            while True:
+                with ResearchOwnership(settings.lock_path):
+                    repository.recover_interrupted()
+                    repository.heartbeat("program-worker")
+                    try:
+                        _program(settings, repository, artifacts)
+                    except Exception as exc:  # noqa: BLE001 - the loop survives a failed cycle
+                        print(f"[WORKER] program cycle failed: {type(exc).__name__}: {exc}",
+                              flush=True)
+                    repository.heartbeat("program-worker")
+                print(f"[WORKER] sleeping {settings.run_interval_minutes} minute(s)", flush=True)
+                time.sleep(settings.run_interval_minutes * 60)
+        except OwnershipError as exc:
+            raise SystemExit(str(exc)) from exc
+        except KeyboardInterrupt:
+            print("[WORKER] stopped", flush=True)
+        return
     try:
         with ResearchOwnership(settings.lock_path):
             recovered = repository.recover_interrupted()
@@ -752,16 +793,8 @@ def main(argv: list[str] | None = None) -> None:
                                                 llm_generator=llm_generator)
             else:
                 orchestrator = DemoOrchestrator(settings, repository, artifacts, render_event)
-            if args.command == "run":
-                completed_run_id = orchestrator.run()
-                if repository.get_run(completed_run_id)["status"] != "COMPLETED":
-                    raise SystemExit(1)
-                return
-            while True:
-                orchestrator.run()
-                print(f"[WORKER] sleeping {settings.run_interval_minutes} minute(s)", flush=True)
-                time.sleep(settings.run_interval_minutes * 60)
+            completed_run_id = orchestrator.run()
+            if repository.get_run(completed_run_id)["status"] != "COMPLETED":
+                raise SystemExit(1)
     except OwnershipError as exc:
         raise SystemExit(str(exc)) from exc
-    except KeyboardInterrupt:
-        print("[WORKER] stopped", flush=True)
