@@ -19,3 +19,4 @@ tests/browser/test-results/
 .tmp-*/
 *.tsbuildinfo
 
+.playwright-mcp/
