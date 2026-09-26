@@ -20,7 +20,7 @@ that describes behavior (see the source-of-truth hierarchy in
 <!-- repository-facts:begin (generated; python tests/repository_facts.py render) -->
 ```json
 {
-  "action_registry_version": "3",
+  "action_registry_version": "4",
   "api_version": "3.0.0",
   "arm_jev_decision": "DEFER",
   "cnv_discovery_result_schema_version": 1,
@@ -51,6 +51,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "registered_action_ids": [
     "CHECK_EVIDENCE_INTEGRITY_V1",
     "CHECK_REVISION_FAITHFULNESS_V1",
+    "OCCURRENCE_DETAIL_EVIDENCE_V1",
     "SUMMARIZE_CNV_CATEGORIES_V1",
     "SUMMARIZE_EXPRESSION_TAIL_V1"
   ],

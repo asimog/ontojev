@@ -27,6 +27,27 @@ def _json(payload: Any) -> bytes:
     return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
 
 
+def _filter_gene(filters: object) -> str | None:
+    def find(node: object) -> str | None:
+        if isinstance(node, list):
+            for item in node:
+                found = find(item)
+                if found is not None:
+                    return found
+            return None
+        if not isinstance(node, dict):
+            return None
+        content = node.get("content")
+        if node.get("op") == "in" and isinstance(content, dict):
+            value = content.get("value")
+            if (isinstance(value, list) and value
+                    and content.get("field") == "ssm.consequence.transcript.gene.gene_id"):
+                return str(value[0])
+        return find(content)
+
+    return find(filters)
+
+
 def _filter_project(request: GDCRequest) -> str:
     """Project id from a provider filter tree (field-named clause, any nesting)."""
     filters = json.loads(dict(request.params)["filters"])
@@ -135,8 +156,11 @@ def count_records(project_id: str) -> list[dict[str, Any]]:
 
 
 def ssm_occurrence_body(project_id: str, *, offset: int, size: int, truncate: bool = False,
-                        duplicate_previous: bool = False) -> bytes:
+                        duplicate_previous: bool = False, gene_id: str | None = None) -> bytes:
     records = count_records(project_id)
+    if gene_id is not None:
+        records = [record for record in records
+                   if record["ssm"]["consequence"][0]["transcript"]["gene"]["gene_id"] == gene_id]
     page = [dict(record) for record in records[offset:offset + size]]
     if duplicate_previous and offset > 0 and page:
         page[0]["ssm_occurrence_id"] = records[offset - 1]["ssm_occurrence_id"]
@@ -285,7 +309,8 @@ class ReplayTransport:
             body = ssm_occurrence_body(
                 _filter_project(request), offset=int(params["from"]), size=int(params["size"]),
                 truncate=self.truncate_occurrence_page,
-                duplicate_previous=self.duplicate_occurrence_across_pages)
+                duplicate_previous=self.duplicate_occurrence_across_pages,
+                gene_id=_filter_gene(json.loads(params["filters"])))
         elif name == "genes":
             params = dict(request.params)
             body = genes_body(size=int(params["size"]), offset=int(params.get("from", 0)))

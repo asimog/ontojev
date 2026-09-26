@@ -317,7 +317,7 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
         totals = self.repository.gdc_run_totals(run_id)
         deep_summary = None
         if self._deep_selections() and wide_result is not None:
-            deep_summary = self._deep_candidates(run_id, wide_result)
+            deep_summary = self._deep_candidates(run_id, wide_result, transport=transport)
         completion_data = {
             "status": "COMPLETED", "reason_code": "BOUNDED_SWEEP_COMPLETE", "coverage": coverage,
             "states": len(states), "gdc_attempts": totals["attempts"], "gdc_bytes": totals["bytes"],
@@ -501,7 +501,8 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
             )
         return candidate
 
-    def _deep_candidates(self, run_id: str, wide_result: dict[str, Any]) -> dict[str, Any]:
+    def _deep_candidates(self, run_id: str, wide_result: dict[str, Any],
+                         transport: AcquisitionTransport | None = None) -> dict[str, Any]:
         """Investigate each explicitly selected candidate with the bounded arc."""
         promoted = wide_result.get("promoted", [])
         selections = self._deep_selections()
@@ -540,6 +541,7 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
                 authorize_iteration=self.deep_followup_authorized,
                 hypotheses_requested=self.deep_hypotheses_requested,
                 llm_generator=self.llm_generator,
+                transport=transport,
                 mode=self.run_mode,
             )
             summaries.append(investigation.summary())

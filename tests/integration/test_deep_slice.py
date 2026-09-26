@@ -350,10 +350,11 @@ def test_a_failed_attempt_consumes_follow_up_budget(runtime, monkeypatch):
 
     real_execute = deep.execute
 
-    def failing_execute(action_id, state, *, read_artifact):
+    def failing_execute(action_id, state, *, read_artifact, observations=()):
         if isinstance(state, EvidenceState):
             raise ActionError("ACTION_EXECUTION_FAILED", "synthetic dispatched-action failure")
-        return real_execute(action_id, state, read_artifact=read_artifact)
+        return real_execute(action_id, state, read_artifact=read_artifact,
+                            observations=observations)
 
     monkeypatch.setattr(deep, "execute", failing_execute)
     run_id, summary, repository = _completed_slice(
@@ -456,10 +457,19 @@ def test_several_eligible_actions_are_resolved_by_the_declared_policy(runtime, m
                      if event["type"] == "RUN_COMPLETED")
     summary = completed["data"]["deep"]["candidates"][0]
     assert summary["status"] == "COMPLETED"
-    assert summary["first_step"]["action_id"] in (
-        "CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1",
-        "SUMMARIZE_EXPRESSION_TAIL_V1", "SUMMARIZE_CNV_CATEGORIES_V1")
-    assert repository.followup_executions_for(summary["candidate_id"])
+    assert summary["first_step"]["action_id"] == "OCCURRENCE_DETAIL_EVIDENCE_V1"
+    candidate = repository.get_candidate(summary["candidate_id"])
+    revision = _candidate_chain(runtime, repository, candidate)[-1].evidence
+    assert revision.action is not None
+    assert revision.action.action_id == "OCCURRENCE_DETAIL_EVIDENCE_V1"
+    assert len(revision.measured_observations) == 1
+    observation = revision.measured_observations[0]
+    assert observation.availability == "OBSERVED"
+    assert observation.evidence_kind == "MUTATION_CANONICAL_COMPOSITION"
+    assert observation.n_effective == 20
+    assert observation.population_hash
+    assert any("no p-value" in limitation or "descriptive" in limitation
+               for limitation in observation.limitations)
 
 
 def test_unmatched_selection_is_not_dispatched(runtime, monkeypatch):

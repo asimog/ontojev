@@ -22,11 +22,16 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any, cast
 
+from cancerjev.domain._json import decode
 from cancerjev.domain.actions import IntegrityCheck, IntegrityOutcome
 from cancerjev.domain.codecs import read_state, state_identity
-from cancerjev.domain.discovery import ExpressionDiscoverySpec
+from cancerjev.domain.discovery import (
+    MUTATION_CANONICAL_COMPOSITION_METHOD_ID,
+    MUTATION_CANONICAL_COMPOSITION_VERSION,
+    ExpressionDiscoverySpec,
+)
 from cancerjev.domain.events import canonical_json
-from cancerjev.domain.evidence import EvidenceState, InputArtifactRef
+from cancerjev.domain.evidence import EvidenceState, InputArtifactRef, MeasuredObservation
 from cancerjev.domain.measurements import (
     MetricAvailability,
     MetricRecord,
@@ -36,6 +41,7 @@ from cancerjev.domain.measurements import (
 from cancerjev.domain.scientific import (
     CnvOccurrenceResult,
     ExpressionSummaryResult,
+    MutationCountResult,
     StatisticalState,
     UnavailableLane,
 )
@@ -90,7 +96,7 @@ class ActionDefinition:
         }
 
 
-ACTION_REGISTRY_VERSION = "3"
+ACTION_REGISTRY_VERSION = "4"
 
 ACTION_REGISTRY: dict[str, ActionDefinition] = {
     "CHECK_EVIDENCE_INTEGRITY_V1": ActionDefinition(
@@ -188,6 +194,32 @@ ACTION_REGISTRY: dict[str, ActionDefinition] = {
         ),
         input_kind="STATISTICAL_STATE",
     ),
+    "OCCURRENCE_DETAIL_EVIDENCE_V1": ActionDefinition(
+        action_id="OCCURRENCE_DETAIL_EVIDENCE_V1", version="1",
+        title="Measure canonical occurrence detail for one candidate gene",
+        question=(
+            "What is this gene's canonical-transcript consequence composition and transcript "
+            "context in this cohort, measured from its complete bounded released-occurrence "
+            "detail pages?"
+        ),
+        interpretation=(
+            "A descriptive canonical-only composition over the declared project/gene occurrence "
+            "detail pages produced by the shared MUTATION_CANONICAL_COMPOSITION_V1 reducer. It is "
+            "not driver significance, not a p-value and not a causal claim."
+        ),
+        method_id=MUTATION_CANONICAL_COMPOSITION_METHOD_ID,
+        method_version=MUTATION_CANONICAL_COMPOSITION_VERSION, unit="occurrences",
+        required_evidence=("MUTATION_CANONICAL_OCCURRENCE_DETAIL", "COHORT_CASE_FRAME"),
+        limitations=(
+            "Bounded per-gene detail pages under a declared page cap; over-cap yields an "
+            "unavailable observation with its reason, never a truncated claim.",
+            "Protein-position recurrence is not exposed by the occurrence endpoint and stays "
+            "unavailable here.",
+            "Composition is descriptive only; no p-value, q-value or driver-significance claim "
+            "is representable.",
+        ),
+        input_kind="STATISTICAL_STATE",
+    ),
 }
 
 
@@ -208,12 +240,19 @@ class ActionOutcome:
     contradictions: int
     unavailable_reason: str | None
     definition: ActionDefinition
+    observations: tuple[MeasuredObservation, ...] = ()
 
     def __post_init__(self) -> None:
         if self.contradictions != sum(check.outcome == CHECK_CONTRADICTED for check in self.checks):
             raise ActionError("INVALID_CHECK_SUMMARY", "contradiction count disagrees with checks")
         if type(self.inputs) is not tuple or not all(isinstance(i, InputArtifactRef) for i in self.inputs):
             raise ActionError("INVALID_ACTION_INPUTS", "action inputs must be typed artifact references")
+        if type(self.observations) is not tuple \
+                or not all(isinstance(o, MeasuredObservation) for o in self.observations):
+            raise ActionError("INVALID_OBSERVATIONS", "observations must be typed measured records")
+        if self.observations and self.action_id != "OCCURRENCE_DETAIL_EVIDENCE_V1":
+            raise ActionError("UNEXPECTED_OBSERVATIONS",
+                              f"{self.action_id} is not a measured-evidence-producing action")
 
     @property
     def verified(self) -> int:
@@ -324,6 +363,13 @@ def eligibility(record: StatisticalState | EvidenceState, definition: ActionDefi
                 reasons.append("CNV_OCCURRENCES_NOT_OBSERVED")
             else:
                 prerequisites["cnv_occurrences"] = len(cnv.occurrences)
+        elif definition.action_id == "OCCURRENCE_DETAIL_EVIDENCE_V1":
+            mutation = next((project.mutation for project in record.projects
+                             if isinstance(project.mutation, MutationCountResult)), None)
+            if mutation is None or not isinstance(mutation.affected_cases, ObservedCount):
+                reasons.append("MUTATION_MEASUREMENT_NOT_OBSERVED")
+            else:
+                prerequisites["affected_cases"] = mutation.affected_cases.value
     elif definition.input_kind == "EVIDENCE_STATE":
         if not isinstance(record, EvidenceState):
             raise ActionError("WRONG_INPUT_KIND", f"{definition.action_id} requires an EvidenceState")
@@ -834,7 +880,8 @@ def _revision_checks(revision: EvidenceState, read_artifact: Callable[[str], byt
 
 
 def execute(action_id: str, record: StatisticalState | EvidenceState, *,
-            read_artifact: Callable[[str], bytes | None]) -> ActionOutcome:
+            read_artifact: Callable[[str], bytes | None],
+            observations: tuple[MeasuredObservation, ...] = ()) -> ActionOutcome:
     """Run one registered deterministic action over its declared immutable input kind."""
     definition = ACTION_REGISTRY.get(action_id)
     if definition is None:
@@ -886,6 +933,24 @@ def execute(action_id: str, record: StatisticalState | EvidenceState, *,
         ),)
         inputs = [InputArtifactRef("STATISTICAL_STATE_ARTIFACT", record.entity.gene_id,
                                    state_identity(record), True)]
+    elif isinstance(record, StatisticalState) and action_id == "OCCURRENCE_DETAIL_EVIDENCE_V1":
+        if not observations:
+            raise ActionError("MEASURED_OBSERVATION_MISSING",
+                              "the detail action requires its measured observation")
+        observation = observations[0]
+        checks = (_check(
+            "OCCURRENCE_DETAIL_COMPOSITION",
+            "The canonical occurrence-detail composition is measured from the bounded gene detail "
+            "pages under the declared composition method.",
+            CHECK_VERIFIED if observation.availability == "OBSERVED" else CHECK_NOT_OBSERVED,
+            observed=decode(observation.observed),
+            expected={"method_id": definition.method_id,
+                      "availability": observation.availability,
+                      "population_hash": observation.population_hash,
+                      "reason": observation.reason},
+            limitations=definition.limitations, n_effective=observation.n_effective),)
+        inputs = [InputArtifactRef("STATISTICAL_STATE_ARTIFACT", record.entity.gene_id,
+                                   state_identity(record), True)]
     elif isinstance(record, StatisticalState):
         frame = _check_frame_agreement(record)
         coverage = _check_expression_coverage(record)
@@ -902,7 +967,7 @@ def execute(action_id: str, record: StatisticalState | EvidenceState, *,
         action_id=definition.action_id, status=OUTCOME_COMPLETED, checks=checks,
         inputs=tuple(inputs),
         contradictions=sum(1 for check in checks if check.outcome == CHECK_CONTRADICTED),
-        unavailable_reason=None, definition=definition,
+        unavailable_reason=None, definition=definition, observations=observations,
     )
 
 

@@ -28,6 +28,7 @@ from functools import partial
 from typing import Any, cast
 
 from cancerjev.jev.service import JevService
+from cancerjev.research.acquisition import AcquisitionTransport
 from cancerjev.research.deep import (
     FOLLOWUP_LIMIT,
     FollowUpResult,
@@ -120,6 +121,7 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
                                 jev_service: JevService | None = None, requested_action_id: str | None = None,
                                 authorize_iteration: bool = False, hypotheses_requested: bool = False,
                                 llm_generator: HypothesisGenerator | None = None,
+                                transport: AcquisitionTransport | None = None,
                                 mode: str = "LIVE") -> CandidateInvestigation:
     """Run the bounded arc for one explicitly selected candidate, then Stage 8."""
     plan = stage("DEEP_ANALYSIS", lambda: plan_deep_slice(
@@ -150,7 +152,7 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
                               **finalization})
     result = stage("FOLLOWUP", lambda: execute_followup(
         run_id=run_id, plan=plan, repository=repository, emit=emit, publish_json=publish_json,
-        read_artifact=read_artifact,
+        read_artifact=read_artifact, transport=transport,
     ))
     if result.status == "FAILED":
         return CandidateInvestigation(

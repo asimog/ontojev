@@ -29,6 +29,7 @@ from cancerjev.domain.evidence import (
     EvidenceProvenance,
     EvidenceState,
     InputArtifactRef,
+    MeasuredObservation,
     MethodIdentityRef,
     MissingEvidence,
     ProjectEvidenceRow,
@@ -49,6 +50,8 @@ from cancerjev.domain.scientific import (
     UnavailableLane,
 )
 from cancerjev.jev.service import JevService
+from cancerjev.research.acquisition import AcquisitionTransport
+from cancerjev.research.followup import measure_occurrence_detail, unavailable_observation
 from cancerjev.research.nextmove import DEEP_POLICY_VERSION, DeepJudgment, decide_next_move
 from cancerjev.research.seams import PublishJson
 from cancerjev.science.actions import (
@@ -67,7 +70,7 @@ from cancerjev.storage.readers import ScientificReadError, read_candidate_state,
 from cancerjev.storage.repositories import Repository
 
 DEEP_ACTION_POLICY_VERSION = "deep-action-policy-v1"
-EVIDENCE_PRODUCING_ACTIONS: tuple[str, ...] = ()
+EVIDENCE_PRODUCING_ACTIONS: tuple[str, ...] = ("OCCURRENCE_DETAIL_EVIDENCE_V1",)
 CHECK_ACTION_ORDER = ("CHECK_EVIDENCE_INTEGRITY_V1", "CHECK_REVISION_FAITHFULNESS_V1")
 SUMMARY_ACTION_ORDER = ("SUMMARIZE_EXPRESSION_TAIL_V1", "SUMMARIZE_CNV_CATEGORIES_V1")
 
@@ -383,11 +386,19 @@ def _followup_evidence(outcome: ActionOutcome, candidate: CandidateEvidence, rec
         )
         for check in outcome.checks if check.outcome == "NOT_OBSERVED"
     ]
-    missing_evidence.append(MissingEvidence(
-        needed_evidence="new_gdc_measurement",
-        availability=MetricAvailability.NOT_ACQUIRED,
-        reason="this deterministic action acquires no new GDC evidence",
-    ))
+    if outcome.observations:
+        missing_evidence.append(MissingEvidence(
+            needed_evidence="downstream_inference",
+            availability=MetricAvailability.NOT_OBSERVED,
+            reason=("descriptive measurement only; no declared inferential population/null/FDR "
+                    "contract exists"),
+        ))
+    else:
+        missing_evidence.append(MissingEvidence(
+            needed_evidence="new_gdc_measurement",
+            availability=MetricAvailability.NOT_ACQUIRED,
+            reason="this deterministic action acquires no new GDC evidence",
+        ))
     return EvidenceState(
         entity=state.entity,
         accepted_state_hash=record.state_hash,
@@ -417,6 +428,7 @@ def _followup_evidence(outcome: ActionOutcome, candidate: CandidateEvidence, rec
                                             definition.ref()["parameters_hash"]),
             input_artifacts=outcome.inputs,
         ),
+        measured_observations=outcome.observations,
     )
 
 
@@ -634,7 +646,8 @@ def _execute_action(*, run_id: str, candidate: CandidateEvidence, record: StateR
                     previous_evidence_hash: str, iteration: int, execution_id: str,
                     evidence_state_id: str, repository: Repository, emit: Callable[..., Any],
                     publish_json: PublishJson,
-                    read_artifact: Callable[[str], bytes | None]) -> FollowUpResult:
+                    read_artifact: Callable[[str], bytes | None],
+                    transport: AcquisitionTransport | None = None) -> FollowUpResult:
     """Run one registered deterministic action and persist an immutable revision.
 
     The action's declared input kind decides what it reads: an accepted
@@ -664,8 +677,29 @@ def _execute_action(*, run_id: str, candidate: CandidateEvidence, record: StateR
               "input_ref_kind": input_kind, "input_evidence_state_id": input_evidence_state_id,
               "input_evidence_hash": input_evidence_hash},
     )
+    observations: tuple[MeasuredObservation, ...]
+    if action_id == "OCCURRENCE_DETAIL_EVIDENCE_V1":
+        if not isinstance(record, StateRecord):
+            observations = (unavailable_observation(
+                gene_id=candidate.entity.gene_id, population_hash=(
+                    record.evidence_hash if isinstance(record, EvidenceRecord)
+                    else candidate.state_artifact_sha256),
+                reason="DETAIL_REQUIRES_ACCEPTED_STATISTICAL_STATE"),)
+        elif transport is None:
+            observations = (unavailable_observation(
+                gene_id=record.state.entity.gene_id,
+                population_hash=record.state.projects[0].population.frame.membership_hash,
+                reason="DETAIL_TRANSPORT_UNAVAILABLE"),)
+        else:
+            observations = (measure_occurrence_detail(
+                transport, project_id=record.state.research.project_id,
+                gene_id=record.state.entity.gene_id, release=record.state.entity.release,
+                population_hash=record.state.projects[0].population.frame.membership_hash),)
+    else:
+        observations = ()
     try:
-        outcome = execute(action_id, action_input, read_artifact=read_artifact)
+        outcome = execute(action_id, action_input, read_artifact=read_artifact,
+                          observations=observations)
     except ActionError as exc:
         emit(
             run_id, "FOLLOWUP_FAILED", f"deep:{execution_id}:failed",
@@ -771,7 +805,8 @@ def _execute_action(*, run_id: str, candidate: CandidateEvidence, record: StateR
 
 def execute_followup(*, run_id: str, plan: DeepPlan, repository: Repository, emit: Callable[..., Any],
                      publish_json: PublishJson,
-                     read_artifact: Callable[[str], bytes | None]) -> FollowUpResult:
+                           read_artifact: Callable[[str], bytes | None],
+                           transport: AcquisitionTransport | None = None) -> FollowUpResult:
     """Run the selected deterministic action over the candidate's accepted evidence."""
     if plan.selected_action_id is None or plan.iteration_number is None or plan.execution_id is None \
             or plan.evidence_state_id is None:
@@ -786,6 +821,7 @@ def execute_followup(*, run_id: str, plan: DeepPlan, repository: Repository, emi
         iteration=plan.iteration_number,
         execution_id=plan.execution_id, evidence_state_id=plan.evidence_state_id,
         repository=repository, emit=emit, publish_json=publish_json, read_artifact=read_artifact,
+        transport=transport,
     )
 
 

@@ -45,7 +45,8 @@ def test_projection_is_deterministic_and_compact():
     assert first["cohort"]["expression_observed"] is True
     assert first["cohort"]["coverage_imbalance"] is False
     assert first["eligible_followups"] == [
-        "CHECK_EVIDENCE_INTEGRITY_V1", "SUMMARIZE_EXPRESSION_TAIL_V1"]
+        "CHECK_EVIDENCE_INTEGRITY_V1", "OCCURRENCE_DETAIL_EVIDENCE_V1",
+        "SUMMARIZE_EXPRESSION_TAIL_V1"]
     assert len(str(first)) < PROJECTION_BYTE_CAP
 
 
