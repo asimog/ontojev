@@ -60,6 +60,19 @@ class CampaignProfile:
                                                         key=lambda modality: modality.value),
                 "enabled modalities must be sorted")
 
+    def payload(self) -> dict[str, object]:
+        return {
+            "profile_id": self.profile_id,
+            "spec_id": self.spec_id,
+            "cohort_id": self.cohort_id,
+            "project_id": self.project_id,
+            "enabled_modalities": [modality.value for modality in self.enabled_modalities],
+            "readiness": self.readiness.value,
+            "readiness_reason": self.readiness_reason,
+            "priority": self.priority,
+            "status": self.status.value,
+        }
+
 
 LUAD_CAMPAIGN_V1 = CampaignProfile(
     profile_id="LUAD_CAMPAIGN_V1",
