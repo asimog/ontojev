@@ -26,7 +26,7 @@ computational target candidate
 != therapeutically validated target
 ```
 
-Functional, therapeutic, safety, and clinical validation require additional evidence outside the computational discovery result.
+Functional, therapeutic, safety, and clinical validation require additional evidence outside the computational discovery result. No functional or external axis is adopted today: every evaluated source (DepMap CRISPR, Sanger CGC, targetability resources, independent-cohort replication) is deferred with its access/licensing reason in [docs/FUNCTIONAL_SOURCES.md](docs/FUNCTIONAL_SOURCES.md), and `FUNCTIONALLY_SUPPORTED` remains unattainable without an adopted contract.
 
 ## Target architecture
 

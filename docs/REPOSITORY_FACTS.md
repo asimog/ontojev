@@ -38,6 +38,8 @@ that describes behavior (see the source-of-truth hierarchy in
   "expression_discovery_result_schema_version": 1,
   "expression_disposition_policy": "expression-dispositions-v1",
   "final_candidate_result_schema_version": 1,
+  "functional_source_decision": "DEFER",
+  "functional_sources_record": "1",
   "gdc_data_model_reference": "gdcdatamodel2@9c6a046b96c130ea131d2ce2c9160381edd2fcc1",
   "hypothesis_projection_version": "jev-hypothesis-projection-v2",
   "hypothesis_question_set": "hypothesis-v2",

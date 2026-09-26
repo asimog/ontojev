@@ -39,6 +39,11 @@ from cancerjev.domain.discovery import (
 )
 from cancerjev.domain.dossier import DOSSIER_SCHEMA_VERSION
 from cancerjev.domain.events import SUPPORTED_SCHEMA_VERSION
+from cancerjev.domain.functional import (
+    FUNCTIONAL_SOURCE_DECISION_RECORD_VERSION,
+    FUNCTIONAL_SOURCE_DECISIONS,
+    SourceDecision,
+)
 from cancerjev.domain.maturity import EVIDENCE_MATURITY_POLICY_VERSION
 from cancerjev.domain.pathway import (
     REACTOME_MEMBERSHIP_METHOD_ID,
@@ -115,6 +120,10 @@ def collect_facts() -> dict[str, object]:
         "release_comparison_policy": RELEASE_COMPARISON_POLICY_VERSION,
         "program_loop_version": PROGRAM_LOOP_VERSION,
         "luad_campaign_readiness": LUAD_CAMPAIGN_V1.readiness.value,
+        "functional_sources_record": FUNCTIONAL_SOURCE_DECISION_RECORD_VERSION,
+        "functional_source_decision": ("DEFER" if all(
+            decision is SourceDecision.DEFER for decision in FUNCTIONAL_SOURCE_DECISIONS.values())
+            else "REVIEW"),
         "hypothesis_projection_version": HYPOTHESIS_PROJECTION_VERSION,
         "hypothesis_question_set": HYPOTHESIS_QUESTION_SET_VERSION,
         "mutation_discovery_result_schema_version": DISCOVERY_SCHEMA_VERSION,

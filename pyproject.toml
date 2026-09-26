@@ -27,7 +27,7 @@ files = [
   "cancerjev/domain/actions.py", "cancerjev/domain/discovery.py",
   "cancerjev/domain/shards.py", "cancerjev/domain/capability.py",
   "cancerjev/domain/maturity.py", "cancerjev/domain/pathway.py",
-  "cancerjev/domain/program.py", "cancerjev/domain/runs.py",
+  "cancerjev/domain/program.py", "cancerjev/domain/functional.py", "cancerjev/domain/runs.py",
   "cancerjev/gdc/endpoints.py", "cancerjev/gdc/parsers.py",
   "cancerjev/research/specs.py", "cancerjev/research/acquisition.py",
   "cancerjev/research/discovery.py", "cancerjev/research/expression_discovery.py",
