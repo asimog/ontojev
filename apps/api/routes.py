@@ -55,7 +55,6 @@ def system(request: Request) -> dict[str, Any]:
         fresh = (datetime.now(UTC) - datetime.fromisoformat(heartbeat_at.replace("Z", "+00:00"))).total_seconds() <= 60
     return {
         "schema_version": SCHEMA_VERSION,
-        "phase": 3,
         "mode": "LIVE_AND_FIXTURE",
         "providers": {
             "gdc": True,

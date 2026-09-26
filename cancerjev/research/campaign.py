@@ -86,10 +86,12 @@ LUAD_CAMPAIGN_V1 = CampaignProfile(
     ),
     readiness=ScientificReadiness.EXPERIMENTAL,
     readiness_reason=(
-        "the mutation and expression lanes are reconciled over the complete release-bound "
-        "universe with declared dispositions and independent nomination, but no modality union, "
-        "replication design or release comparison exists yet, and the CNV lane is still "
-        "survivor-scoped"
+        "the canonical systematic spine (complete-universe mutation discovery, independent "
+        "expression discovery, complete CNV case-shard scan with terminal merge, deterministic "
+        "modality union, measured-evidence pre-Wide policy and the autonomous candidate queue) "
+        "is implemented, production-wired and offline-verified, but no full live campaign with "
+        "real Wide/Deep Jev has completed and no dossier has been reviewed; promotion requires "
+        "that reviewed live evidence"
     ),
 )
 

@@ -177,7 +177,6 @@ export type EvidenceRevision = {
 
 export type SystemStatus = {
   schema_version: number;
-  phase: number;
   mode: string;
   providers: Record<string, boolean>;
   worker: { owner_id: string; heartbeat_at: string; version: string; fresh: boolean | null } | null;
