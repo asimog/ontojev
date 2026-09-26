@@ -65,6 +65,7 @@ files = [
   "cancerjev/storage/ownership.py", "cancerjev/storage/doctor.py",
   "cancerjev/observability.py",
   "cancerjev/cli/console.py", "cancerjev/cli/main.py",
+  "deploy/serve.py",
   "apps/api/serializers.py", "apps/api/routes.py", "apps/api/main.py",
 ]
 strict = true
@@ -77,7 +78,7 @@ module = ["typesafe_sdk.*"]
 ignore_missing_imports = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["cancerjev", "apps"]
+packages = ["cancerjev", "apps", "deploy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

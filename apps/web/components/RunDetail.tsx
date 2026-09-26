@@ -140,7 +140,7 @@ export function RunDetail({ runId }: { runId: string }) {
           <span className={`badge ${live ? "live" : "fake"}`}>{live ? "LIVE · OPEN GDC" : "FAKE · SYNTHETIC"}</span>
           <span className={`badge status ${run.status.toLowerCase()}`}>{run.status}</span>
         </div>
-        <div className="eyebrow">RESEARCH RUN</div><h1>{run.current_stage ?? (live ? "Bounded open-access sweep" : "Bounded fixture run")}</h1>
+        <div className="eyebrow">RESEARCH RUN</div><h1>{run.current_stage ?? (live ? "Systematic open-access campaign" : "Bounded fixture run")}</h1>
         <p className="mono muted">{run.run_id}</p>
         <p className="muted mono">
           mode {run.mode}
@@ -159,7 +159,7 @@ export function RunDetail({ runId }: { runId: string }) {
           <Metric label="LLM calls" value={run.provider_usage.llm_calls} />
         </div>
       </header>
-       <section className="panel"><div className="eyebrow">PIPELINE</div><div className="pipeline">{run.stage_occurrences.filter((item) => item.type === "STAGE_COMPLETED").map((item) => <span key={`${item.stage}-${item.sequence}`}>{item.stage}{item.candidate_id ? ` · c${item.candidate_id.slice(0, 4)}` : ""}{item.iteration ? ` · i${item.iteration}` : ""}</span>)}{run.current_stage && <span className="active">{run.current_stage} · live</span>}</div><p className="fine">Repeated stages are distinct per-candidate or per-iteration occurrences. Only admitted states become candidates; exclusions and reasons remain in the Jev ranking.</p></section>
+       <section className="panel"><div className="eyebrow">STAGE TIMELINE</div><div className="pipeline">{run.stage_occurrences.filter((item) => item.type === "STAGE_COMPLETED").map((item) => <span key={`${item.stage}-${item.sequence}`}>{item.stage}{item.candidate_id ? ` · c${item.candidate_id.slice(0, 4)}` : ""}{item.iteration ? ` · i${item.iteration}` : ""}</span>)}{run.current_stage && <span className="active">{run.current_stage} · live</span>}</div>{!live && run.stage_occurrences.some((item) => item.stage === "GDC_FAST_SEARCH") && <p className="fine">Fixture demo runs exercise the legacy provider-ranked comparator path end to end; autonomous campaigns run the systematic spine (mutation, expression, CNV shards, union, pre-Wide policy).</p>}<p className="fine">Repeated stages are distinct per-candidate or per-iteration occurrences. Only admitted states become candidates; the persisted pre-Wide selection and the Jev ranking keep every exclusion reason explicit.</p></section>
       <BudgetSummary run={run} />
       {live ? (
         <>
@@ -183,7 +183,7 @@ export function RunDetail({ runId }: { runId: string }) {
                 })}
               </div>
               {detail.evidence.length === 0 && (
-                <p className="fine">Candidates stop at wide admission until an operator names one explicitly; wide admission never dispatches a follow-up on its own.</p>
+                <p className="fine">Autonomous runs continue into the candidate queue under the declared policy; researcher runs still require an explicit selection. Wide admission alone never dispatches a follow-up.</p>
               )}
             </section>
           )}
@@ -232,7 +232,7 @@ export function RunDetail({ runId }: { runId: string }) {
       {live && detail.hypotheses.length > 0 && (
         <section className="panel hypotheses">
           <div className="eyebrow coral">GENERATED HYPOTHESES — NOT EVIDENCE</div>
-          <h2>{detail.hypotheses.length} labelled statement(s) awaiting no execution</h2>
+          <h2>{detail.hypotheses.length} labelled statement(s) recorded with no execution</h2>
           <p className="fine">Each statement is generated text recorded with its generator; its Jev review is an input to the Python next-move policy and never evidence. A generated statement never writes a measured field.</p>
           {detail.hypotheses.map((record) => {
             const hypothesis = record.hypothesis as Record<string, unknown>;

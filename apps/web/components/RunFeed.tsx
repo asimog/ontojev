@@ -38,7 +38,7 @@ export function RunFeed({ compact = false }: { compact?: boolean }) {
     <>
       <StatusBanner error={error} updatedAt={updatedAt} />
       {!data && !error && <div className="panel empty">Connecting to the local research record…</div>}
-      {data && data.items.length === 0 && <div className="panel empty"><h2>No runs yet</h2><p>Start <code>python -m cancerjev run --fixture demo</code> in a separate terminal.</p></div>}
+      {data && data.items.length === 0 && <div className="panel empty"><h2>No runs yet</h2><p>Start <code>python -m cancerjev program</code> for one durable autonomous cycle, or <code>python -m cancerjev run --fixture demo</code> for a synthetic record.</p></div>}
       <div className="run-grid">{items.map((run) => <RunCard key={run.run_id} run={run} />)}</div>
       {moreError && <div className="api-warning">{moreError}</div>}
       {!compact && nextCursor && <div className="row center"><button onClick={loadMore} disabled={loading}>{loading ? "Loading…" : "Load more runs"}</button></div>}

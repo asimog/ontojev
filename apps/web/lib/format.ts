@@ -30,3 +30,7 @@ export function formatCost(value: number | null | undefined): string {
 export function formatLabel(value: string): string {
   return value.replaceAll("_", " ");
 }
+
+export function plural(count: number, singular: string, pluralForm?: string): string {
+  return `${count} ${count === 1 ? singular : pluralForm ?? `${singular}s`}`;
+}

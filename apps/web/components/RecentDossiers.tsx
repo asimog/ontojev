@@ -15,10 +15,11 @@ export function RecentDossiers() {
         {data.items.map((item) => {
           const summary = item.summary as Record<string, unknown>;
           const entity = summary.entity as Record<string, unknown>;
+          const liveDossier = String(summary.mode ?? "FAKE") === "LIVE";
           return (
             <article className="panel mini-card" key={String(item.dossier_id)}>
-              <span className="badge fake">SYNTHETIC DOSSIER</span>
-              <h3>{String(entity?.gene_symbol ?? "Fixture candidate")}</h3>
+              <span className={`badge ${liveDossier ? "live" : "fake"}`}>{liveDossier ? "LIVE DOSSIER" : "SYNTHETIC DOSSIER"}</span>
+              <h3>{String(entity?.gene_symbol ?? (liveDossier ? "Candidate" : "Fixture candidate"))}</h3>
               <Link className="button secondary" href={`/dossiers/${String(item.dossier_id)}`}>Read dossier</Link>
             </article>
           );

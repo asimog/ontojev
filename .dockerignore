@@ -1,0 +1,16 @@
+.git
+.gitignore
+.venv
+.pytest_cache
+.pytest-tmp
+.playwright-mcp
+.kilo
+.upstream
+data
+docs
+tests
+apps/web
+charts
+node_modules
+*.md
+!README.md

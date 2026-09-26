@@ -41,10 +41,11 @@ export function DossierArchive() {
         {items.map((item) => {
           const summary = item.summary as Record<string, unknown>;
           const entity = summary.entity as Record<string, unknown>;
+          const liveDossier = String(summary.mode ?? "FAKE") === "LIVE";
           return (
             <article className="panel" key={String(item.dossier_id)}>
-              <span className="badge fake">SYNTHETIC DOSSIER</span>
-              <h2>{String(entity?.gene_symbol ?? "Fixture candidate")}</h2>
+              <span className={`badge ${liveDossier ? "live" : "fake"}`}>{liveDossier ? "LIVE DOSSIER" : "SYNTHETIC DOSSIER"}</span>
+              <h2>{String(entity?.gene_symbol ?? (liveDossier ? "Candidate" : "Fixture candidate"))}</h2>
               <p className="muted">{String(summary.puzzle ?? "Puzzle section available in the dossier.")}</p>
               <p className="muted mono">created {formatTime(String(item.created_at))} · run {String(item.run_id).slice(0, 8)} · candidate {String(item.candidate_id).slice(0, 8)} · {String(summary.mode ?? "FAKE")}</p>
               <Link className="button" href={`/dossiers/${String(item.dossier_id)}`}>Read dossier</Link>
