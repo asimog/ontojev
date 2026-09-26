@@ -1,9 +1,11 @@
-"""Container entrypoint: bootstrap storage, optionally seed labelled demo data, serve.
+"""Container entrypoint: bootstrap storage, optionally seed demo data, serve.
 
-This is deployment tooling, not science. It never enables the autonomous worker and
-never makes provider calls on its own: seeding runs the offline synthetic fixture,
-which is labelled FAKE throughout the UI and records zero provider usage. Live GDC
-work stays on an explicitly operated worker outside this public demo boundary.
+This is deployment tooling, not science. The API is read-only. When
+``CANCERJEV_RUN_WORKER=1`` the canonical durable worker starts alongside it and
+shares the same data directory: it observes the release once per cycle, records
+PROGRAM_IDLE while no campaign profile is validated for autonomous use, and
+never runs an unpromoted campaign. Seeding runs the offline synthetic fixture,
+which is labelled FAKE throughout the UI and records zero provider usage.
 """
 
 from __future__ import annotations
@@ -30,9 +32,20 @@ def seed_demo_data() -> None:
         handle.write("synthetic demo data seeded\n")
 
 
+def start_worker() -> None:
+    """Start the durable program worker when the deployment declares it."""
+    if os.environ.get("CANCERJEV_RUN_WORKER", "0") != "1":
+        return
+    subprocess.Popen(
+        [sys.executable, "-m", "cancerjev", "worker", "--live"],
+        env={**os.environ, "CANCERJEV_NO_DOTENV": "1"},
+    )
+
+
 def main() -> None:
     os.environ.setdefault("CANCERJEV_FIXTURE_STAGE_DELAY_MS", "0")
     seed_demo_data()
+    start_worker()
     port = os.environ.get("PORT", "8080")
     os.execv(sys.executable, [
         sys.executable, "-m", "uvicorn", "apps.api.main:create_app",

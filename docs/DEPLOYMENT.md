@@ -68,30 +68,37 @@ A green `/health` means the API can read storage. It does not mean an autonomous
 campaign ran or that LUAD is scientifically validated: `LUAD_CAMPAIGN_V1` remains
 `EXPERIMENTAL` until a full live campaign with real Jev completes and is reviewed.
 
-## Managed demo deployment (Railway API + Vercel web)
+## Managed demo deployment (Railway API + worker, Vercel web)
 
-A public demonstration may run as: read-only FastAPI on Railway, production web
-on Vercel, synthetic labelled data only, and **no autonomous worker** (so the
-public host never spends GDC budget, never touches provider keys and cannot run
-campaigns). The same architecture is used; only the process set is reduced.
+A public demonstration runs as: read-only FastAPI on Railway, the canonical
+durable worker alongside it over the same data directory, and the production web
+on Vercel. The same architecture and process set is used; serverless hosting is
+simply not involved.
 
 Railway (from the repository root):
 
 - build: `Dockerfile` + `railway.json` (healthcheck `/health`, one replica);
 - variables: `CANCERJEV_DATA_DIR=/data`, `CANCERJEV_SEED_DEMO=1` (one synthetic
-  fixture run on first boot when not already seeded), `CANCERJEV_WEB_ORIGIN=<web
+  fixture run on first boot when not already seeded), `CANCERJEV_RUN_WORKER=1`
+  (start the durable worker in the same container), `CANCERJEV_WEB_ORIGIN=<web
   origin>`, `CANCERJEV_NO_DOTENV=1`; no provider keys;
-- optional volume mounted at `/data` to keep seeded demo data across restarts;
-  without a volume each boot reseeds once because the marker disappears.
+- the worker is safe by construction here: `LUAD_CAMPAIGN_V1` is `EXPERIMENTAL`,
+  so every cycle records `PROGRAM_IDLE` (with per-profile decision reasons)
+  after one bounded anonymous release observation. It cannot dispatch a campaign
+  until a profile is deliberately promoted;
+- optional volume mounted at `/data` to keep seeded demo data and program state
+  across restarts; without a volume each boot reseeds once because the marker
+  disappears.
 
 Vercel (from `apps/web`): framework preset Next.js, production environment
 variable `NEXT_PUBLIC_CANCERJEV_API_URL=https://<railway-domain>` (required at
 build time), and nothing else. The browser origin must match the API
 `CANCERJEV_WEB_ORIGIN` exactly.
 
-This posture exposes a read-only, synthetic-data API with **no authentication**.
-That is deliberate for a demonstration only: replace it with an authenticated
-boundary before exposing any real research data or enabling provider keys.
+This posture exposes a read-only API plus an idling worker with **no
+authentication**. That is deliberate for a demonstration only: replace it with an
+authenticated boundary before exposing any real research data or enabling
+provider keys and promoting a campaign profile.
 
 ## Backup and restore
 

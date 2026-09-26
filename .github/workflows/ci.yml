@@ -44,6 +44,11 @@ jobs:
 
   browser:
     runs-on: ubuntu-latest
+    env:
+      CANCERJEV_DATA_DIR: ${{ runner.temp }}/cancerjev-data
+      CANCERJEV_WEB_ORIGIN: http://127.0.0.1:3000
+      NEXT_PUBLIC_CANCERJEV_API_URL: http://127.0.0.1:8000
+      CANCERJEV_FIXTURE_STAGE_DELAY_MS: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -56,20 +61,35 @@ jobs:
         run: |
           npm install --no-audit --no-fund
           npx playwright install --with-deps chromium
-      - name: Run browser acceptance against the production-built web server
-        env:
-          CANCERJEV_DATA_DIR: ${{ runner.temp }}/cancerjev-data
-          CANCERJEV_WEB_ORIGIN: http://127.0.0.1:3000
-          NEXT_PUBLIC_CANCERJEV_API_URL: http://127.0.0.1:8000
+      - name: Start the API
         run: |
           uv run --no-sync python -m uvicorn apps.api.main:create_app --factory --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/api.log" 2>&1 &
-          (cd apps/web && npm ci && npm run build > "$RUNNER_TEMP/web-build.log" 2>&1 && npm run start > "$RUNNER_TEMP/web.log" 2>&1 &)
-          for attempt in {1..90}; do
-            curl -fsS http://127.0.0.1:8000/health >/dev/null && curl -fsS http://127.0.0.1:3000/runs >/dev/null && break
-            sleep 1
+      - name: Build and start the production web server
+        run: |
+          cd apps/web
+          npm ci
+          npm run build
+          npm run start > "$RUNNER_TEMP/web.log" 2>&1 &
+      - name: Wait for API and web readiness
+        run: |
+          for attempt in {1..120}; do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null && curl -fsS http://127.0.0.1:3000/runs >/dev/null; then
+              echo "both servers ready"
+              exit 0
+            fi
+            sleep 2
           done
-          cd tests/browser
-          CANCERJEV_WEB_URL=http://127.0.0.1:3000 npx playwright test
+          echo "servers not ready"
+          tail -n 60 "$RUNNER_TEMP/api.log"
+          tail -n 60 "$RUNNER_TEMP/web.log"
+          exit 1
+      - name: Run browser acceptance against the production-built web server
+        working-directory: tests/browser
+        run: |
+          # The spec spawns `python -m cancerjev`; put the synced project venv first.
+          export PATH="$GITHUB_WORKSPACE/.venv/bin:$PATH"
+          python -c "import cancerjev, sys; print('spec python:', sys.executable, cancerjev.__version__)"
+          npx playwright test
 
   live:
     # Bounded opt-in live provider suites: never on push or pull_request, only
