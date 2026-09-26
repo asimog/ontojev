@@ -228,3 +228,34 @@ class _FakeCampaignResult:
 
 def test_program_profiles_seam_defaults_to_the_experimental_luad_profile():
     assert PROGRAM_PROFILES == (LUAD_CAMPAIGN_V1,)
+
+
+def test_release_observation_binds_the_run_emitter(runtime, monkeypatch):
+    """The GDC transport emits three-argument events; the program cycle must bind them."""
+    settings, repository, artifacts = runtime
+    seen: list[str] = []
+
+    class RecordingTransport:
+        def __init__(self, repo, arts, budget, run_id, emit, cache_enabled=False):
+            self._emit = emit
+
+        def request(self, request):
+            self._emit("GDC_REQUEST_STARTED", "test:status", "recorded transport attempt")
+            seen.append("request")
+            return object()
+
+    def fake_observe(transport):
+        transport.request(object())
+        return fake_release_observation()
+
+    monkeypatch.setattr("cancerjev.cli.main.GDCTransport", RecordingTransport)
+    monkeypatch.setattr("cancerjev.research.release_monitor.observe_release", fake_observe)
+
+    _program(settings, repository, artifacts)
+
+    runs = repository.list_runs(5, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS)
+    types = [event["type"] for event in repository.events(runs[0]["run_id"], 0, 200)["items"]]
+    assert seen == ["request"]
+    assert "GDC_REQUEST_STARTED" in types
+    assert "RELEASE_OBSERVED" in types
+    assert "RUN_COMPLETED" in types

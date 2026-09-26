@@ -35,7 +35,8 @@ VALIDATED_TEST_PROFILE = replace(
 )
 
 
-def _execute(runtime, *, max_states=None, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS):
+def _execute(runtime, *, max_states=None, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS,
+             default_transport: bool = False):
     settings, repository, artifacts = runtime
     run_id = repository.create_run(
         "campaign-worker", mode="LIVE", fixture_id=None, fixture_version=None,
@@ -57,7 +58,8 @@ def _execute(runtime, *, max_states=None, ownership=ExecutionOwnership.SYSTEM_AU
         artifacts=artifacts, emit=emit, publish_json=publish_json,
         jev_service=JevService(settings, repository, artifacts,
                                adapter_factory=lambda: StubAdapter()),
-        transport_factory=lambda repo, arts, budget, rid, emitter: transport,
+        transport_factory=(None if default_transport
+                           else lambda repo, arts, budget, rid, emitter: transport),
         max_states=max_states)
     return run_id, transport, events, result
 
@@ -193,3 +195,30 @@ def test_replay_determinism_is_stable(runtime):
 def test_researcher_ownership_is_refused(runtime):
     with pytest.raises(OwnershipError):
         _execute(runtime, ownership=ExecutionOwnership.RESEARCHER_RUN)
+
+
+def test_default_transport_receives_a_bound_run_emitter(runtime, monkeypatch):
+    """The production GDC transport emits three-argument events; the executor must bind it."""
+    _, repository, _ = runtime
+
+    def fake_transport(repo, arts, budget, run_id, emit, cache_enabled=False):
+        shared = ReplayTransport(arts, run_id, repository=repo)
+        original_request = shared.request
+
+        def request(request):
+            emit("GDC_REQUEST_STARTED", f"test:{request.endpoint.name}",
+                 "test transport attempt")
+            return original_request(request)
+
+        shared.request = request  # type: ignore[method-assign]
+        return shared
+
+    monkeypatch.setattr("cancerjev.research.systematic.GDCTransport", fake_transport)
+
+    run_id, _, events, result = _execute(runtime, default_transport=True)
+
+    types = [event["type"] for event in events]
+    assert "GDC_REQUEST_STARTED" in types, "the lane emitter is bound to the run for the transport"
+    assert any(event["message"] == "test transport attempt" for event in events)
+    assert result.state_ids, "the spine still completes with the default transport path"
+    assert repository.get_run(run_id)["purpose"] == "SYSTEMATIC_CAMPAIGN"

@@ -582,8 +582,13 @@ def _program(settings: Settings, repository: Repository, artifacts: ArtifactStor
             """One bounded release observation with its own declared budget."""
             caps = production_caps(per_response_bytes=settings.gdc_per_response_bytes,
                                    timeout_seconds=settings.gdc_timeout_seconds)
-            transport = GDCTransport(repository, artifacts, RunBudget(caps=caps), run_id, emit,
-                                     cache_enabled=False)
+
+            def transport_emit(event_type: str, key: str, message: str,
+                               **kwargs: Any) -> None:
+                emit(run_id, event_type, key, message, **kwargs)
+
+            transport = GDCTransport(repository, artifacts, RunBudget(caps=caps), run_id,
+                                     transport_emit, cache_enabled=False)
             return observe_release(transport)
 
         def run_campaign(profile: Any) -> bool:

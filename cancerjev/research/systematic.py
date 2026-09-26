@@ -132,16 +132,16 @@ def run_systematic_campaign(*, run_id: str, profile: CampaignProfile, spec: Rese
         timeout_seconds=settings.gdc_timeout_seconds,
     )
 
+    def lane_emit(event_type: str, key: str, message: str, **kwargs: Any) -> None:
+        """Lane functions and the GDC transport own one run id: bind it for them."""
+        emit(run_id, event_type, key, message, **kwargs)
+
     def lane_transport() -> Any:
         budget = RunBudget(caps=caps)
         if transport_factory is not None:
-            return transport_factory(repository, artifacts, budget, run_id, emit)
-        return GDCTransport(repository, artifacts, budget, run_id, emit,
+            return transport_factory(repository, artifacts, budget, run_id, lane_emit)
+        return GDCTransport(repository, artifacts, budget, run_id, lane_emit,
                             cache_enabled=settings.gdc_cache_enabled)
-
-    def lane_emit(event_type: str, key: str, message: str, **kwargs: Any) -> None:
-        """Lane functions own one run id, so their emit is already bound."""
-        emit(run_id, event_type, key, message, **kwargs)
 
     mutation = run_stage(
         emit, run_id, "STATE_GENERATION",
