@@ -61,6 +61,7 @@ that describes behavior (see the source-of-truth hierarchy in
     "SUMMARIZE_EXPRESSION_TAIL_V1"
   ],
   "release_comparison_policy": "release-comparison-v1",
+  "release_monitor_version": "release-monitor-v1",
   "research_spec_schema_version": 8,
   "run_event_schema_version": 1,
   "sqlite_schema_version": 6,

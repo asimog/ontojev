@@ -71,6 +71,7 @@ from cancerjev.research.nextmove import DEEP_POLICY_VERSION
 from cancerjev.research.program import PROGRAM_LOOP_VERSION
 from cancerjev.research.ranking import BASELINE_POLICY_VERSION, JEV_POLICY_VERSION
 from cancerjev.research.release_compare import RELEASE_COMPARISON_POLICY_VERSION
+from cancerjev.research.release_monitor import RELEASE_MONITOR_VERSION
 from cancerjev.research.specs import LUAD_DISCOVERY_V1, RESEARCH_SPEC_SCHEMA_VERSION
 from cancerjev.science.actions import ACTION_REGISTRY, ACTION_REGISTRY_VERSION
 from cancerjev.science.methods import (
@@ -119,6 +120,7 @@ def collect_facts() -> dict[str, object]:
         "campaign_selection_policy": CAMPAIGN_SELECTION_POLICY_VERSION,
         "release_comparison_policy": RELEASE_COMPARISON_POLICY_VERSION,
         "program_loop_version": PROGRAM_LOOP_VERSION,
+        "release_monitor_version": RELEASE_MONITOR_VERSION,
         "luad_campaign_readiness": LUAD_CAMPAIGN_V1.readiness.value,
         "functional_sources_record": FUNCTIONAL_SOURCE_DECISION_RECORD_VERSION,
         "functional_source_decision": ("DEFER" if all(
