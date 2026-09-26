@@ -143,7 +143,10 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: StoredS
         and last_evidence.puzzle is not None else None,
     )
     sections["candidate_entity"] = _section(
-        "OBSERVED", narrative=f"Candidate {candidate.get('candidate_id')} examines {symbol}.")
+        "OBSERVED",
+        narrative=(f"Candidate {candidate.get('candidate_id')} examines {symbol}. "
+                   "This is a computational target candidate only; it is not an experimentally "
+                   "or therapeutically validated target."))
     sections["investigation_rationale"] = _section(
         "OBSERVED",
         narrative=(
