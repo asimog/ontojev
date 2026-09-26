@@ -21,6 +21,7 @@ dev = ["httpx>=0.28,<1", "pytest>=8.4,<9", "pytest-timeout>=2.4,<3", "ruff>=0.12
 [tool.mypy]
 python_version = "3.12"
 files = [
+  "cancerjev/__init__.py", "cancerjev/config.py",
   "cancerjev/domain/measurements.py", "cancerjev/domain/scientific.py",
   "cancerjev/domain/evidence.py", "cancerjev/domain/_json.py", "cancerjev/domain/codecs.py",
   "cancerjev/domain/envelopes.py", "cancerjev/domain/hypotheses.py",
@@ -28,7 +29,9 @@ files = [
   "cancerjev/domain/shards.py", "cancerjev/domain/capability.py",
   "cancerjev/domain/maturity.py", "cancerjev/domain/pathway.py",
   "cancerjev/domain/program.py", "cancerjev/domain/functional.py", "cancerjev/domain/runs.py",
+  "cancerjev/domain/events.py", "cancerjev/domain/states.py", "cancerjev/domain/dossier.py",
   "cancerjev/gdc/endpoints.py", "cancerjev/gdc/parsers.py",
+  "cancerjev/gdc/transport.py", "cancerjev/gdc/budget.py", "cancerjev/gdc/capture.py",
   "cancerjev/research/specs.py", "cancerjev/research/acquisition.py",
   "cancerjev/research/discovery.py", "cancerjev/research/expression_discovery.py",
   "cancerjev/research/cnv_discovery.py", "cancerjev/research/cutover.py",
@@ -42,21 +45,36 @@ files = [
   "cancerjev/research/replication.py",
   "cancerjev/research/prospective.py",
   "cancerjev/research/seams.py", "cancerjev/research/ranking.py",
+  "cancerjev/research/wide.py", "cancerjev/research/finalize.py",
   "cancerjev/research/deep.py",
   "cancerjev/research/hypotheses.py", "cancerjev/research/dossier.py",
   "cancerjev/research/investigation.py", "cancerjev/research/fixtures.py",
-  "cancerjev/research/orchestrator.py",
+  "cancerjev/research/orchestrator.py", "cancerjev/research/followup.py",
+  "cancerjev/research/evaluation.py",
   "cancerjev/science/errors.py", "cancerjev/science/mutation.py",
   "cancerjev/science/expression.py", "cancerjev/science/descriptors.py", "cancerjev/science/methods.py",
   "cancerjev/science/actions.py",
   "cancerjev/jev/contracts.py", "cancerjev/jev/projection.py",
-  "cancerjev/jev/posture.py",
-  "cancerjev/storage/readers.py",
-  "apps/api/serializers.py",
+  "cancerjev/jev/posture.py", "cancerjev/jev/service.py",
+  "cancerjev/jev/typesafe_adapter.py", "cancerjev/jev/questions.py",
+  "cancerjev/jev/context.py",
+  "cancerjev/llm/openrouter.py",
+  "cancerjev/dossier/renderer.py",
+  "cancerjev/storage/readers.py", "cancerjev/storage/database.py",
+  "cancerjev/storage/artifacts.py", "cancerjev/storage/repositories.py",
+  "cancerjev/storage/ownership.py", "cancerjev/storage/doctor.py",
+  "cancerjev/observability.py",
+  "cancerjev/cli/console.py", "cancerjev/cli/main.py",
+  "apps/api/serializers.py", "apps/api/routes.py", "apps/api/main.py",
 ]
 strict = true
 follow_imports = "silent"
 cache_dir = ".venv/mypy-cache"
+
+[[tool.mypy.overrides]]
+# Narrow, documented exception: the TypeSafe SDK ships no type information.
+module = ["typesafe_sdk.*"]
+ignore_missing_imports = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["cancerjev", "apps"]

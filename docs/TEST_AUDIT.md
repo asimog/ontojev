@@ -1,5 +1,27 @@
 # Test Audit — discovery report
 
+> **Resolution update (2026-09-26, after the autonomous-pipeline convergence).**
+> The audit below remains the discovery record at `60c638c`; these statements are
+> now superseded by current HEAD behavior:
+>
+> - `compose_discovery_states` **is production-wired**: `research/systematic.py`
+>   is the canonical Campaign executor and reaches the modality union on every
+>   autonomous dispatch; the integration tests cover that spine.
+> - `Repository.list_runs(ownership=…)` now has production callers (program-loop
+>   tests and worker dispatch checks), not only tests.
+> - The legacy `_compose_legacy_survivor_states` / `run_cnv_discovery` branch and
+>   the dead `parse_files_provenance` parser remain test-only historical seams;
+>   they are not part of the canonical path and their deletion is still a
+>   maintainer decision under the retention rules below.
+> - The P12b pathway attach layer (`attach_pathway_evidence` / `pathway_evidence`)
+>   remains unwired and deferred; Arm Jev remains deferred.
+> - New audit-relevant surfaces since `60c638c`: `tests/unit/test_run_lifecycle.py`,
+>   `tests/unit/test_test_hermeticity.py`, `tests/integration/test_systematic_campaign.py`,
+>   `tests/integration/test_autonomous_candidate_queue.py`,
+>   `tests/jev/test_pre_wide_selection.py`, `tests/science/test_program_loop.py`,
+>   `tests/test_schema_migrations.py`, `tests/test_storage_doctor.py`,
+>   `tests/test_observability.py`.
+
 Read-only test-surface audit of OntoJev at `main` SHA `60c638c`, run with the
 openclaw `test-audit` skill (SKILL.md + CAMPAIGN.md, installed for Kilo and
 Codex). Discovery only: no files were edited and no test suite was executed for

@@ -483,9 +483,10 @@ class JevService:
             "routing_policy_version": None,
             **spec.common,
         }
-        persist = dict(purpose=spec.purpose, stage=spec.stage, subject_label=spec.label,
-                       candidate_id=spec.candidate_id, event_type=spec.event_type,
-                       event_prefix=spec.event_prefix)
+        persist: dict[str, Any] = dict(
+            purpose=spec.purpose, stage=spec.stage, subject_label=spec.label,
+            candidate_id=spec.candidate_id, event_type=spec.event_type,
+            event_prefix=spec.event_prefix)
         cache_key = self._cache_key(run_id=run_id, projection_hash_value=p_hash, question_set_hash_value=spec.set_hash,
                                     requested_model=requested_model)
         if cache_key is not None:

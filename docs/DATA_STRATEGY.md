@@ -236,11 +236,18 @@ Reuse verified immutable cached artifacts where useful.
 
 Do not permanently retain dispensable bulk files when deterministic reacquisition is adequate.
 
-Local workspace recovery: a data directory created by an older build is not migrated. When a
-run fails closed with an unsupported-schema error, move or delete the old SQLite database
-(including any `-wal`/`-shm` companions) and start a fresh workspace, or point
-`CANCERJEV_DATA_DIR` at a new directory. Historical evidence is never rewritten into a newer
-schema; superseded runs remain where they are for inspection.
+Local workspace recovery: supported schema upgrades are applied automatically by
+declared sequential DDL migrations (currently v6→v7). Before any migration
+mutation the database is checkpointed and copied to
+`cancerjev.db.backup-v<old>-<timestamp>`; the version row is updated only after
+every step succeeds, and scientific rows are never semantically rewritten. An
+unsupported earlier schema or a newer (future) schema fails closed with an
+explicit error: move or delete the old SQLite database (including any
+`-wal`/`-shm` companions) and start a fresh workspace, or point
+`CANCERJEV_DATA_DIR` at a new directory. Historical evidence is never rewritten
+into a newer schema; superseded runs remain where they are for inspection.
+Run `python -m cancerjev doctor` before and after a restore or upgrade to verify
+registered artifacts, hashes, schema compatibility and ownership state.
 
 ## 12. Workflow provenance
 

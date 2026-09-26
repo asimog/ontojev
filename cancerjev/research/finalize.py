@@ -14,7 +14,7 @@ cannot honestly be computed is recorded `NOT_COMPARABLE` rather than invented.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from cancerjev.domain.codecs import EVIDENCE_SCHEMA_VERSION, STATE_SCHEMA_VERSION
@@ -226,7 +226,7 @@ def _limitations(state: Any, wide: dict[str, Any],
 def derive_stage8(*, run_id: str, candidate: dict[str, Any], investigation_status: str,
                   final_move: str | None, stop_reason: str, error_code: str | None,
                   steps: tuple[dict[str, Any], ...], decisions: tuple[dict[str, Any], ...],
-                  hypothesis: dict[str, Any] | None, stored_state: Any, chain: list[Any],
+                  hypothesis: dict[str, Any] | None, stored_state: Any, chain: Sequence[Any],
                   executions: list[dict[str, Any]], dossier_id: str, promoted_by_policy: bool,
                   rankings: dict[str, dict[str, Any]], mode: str,
                   ) -> tuple[dict[str, Any], dict[str, Any]]:

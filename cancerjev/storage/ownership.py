@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+from types import TracebackType
+from typing import Self
+
 import portalocker
 
 
@@ -8,21 +12,23 @@ class OwnershipError(RuntimeError):
 
 
 class ResearchOwnership:
-    def __init__(self, lock_path):
+    def __init__(self, lock_path: Path) -> None:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = portalocker.Lock(
-            lock_path,
+            str(lock_path),
             mode="a+",
             timeout=0,
             flags=portalocker.LOCK_EX | portalocker.LOCK_NB,
         )
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         try:
             self._handle = self._lock.acquire()
         except portalocker.exceptions.LockException as exc:
-            raise OwnershipError("Another CancerJEV research process owns this data directory.") from exc
+            raise OwnershipError(
+                "Another CancerJEV research process owns this data directory.") from exc
         return self
 
-    def __exit__(self, exc_type, exc, traceback):
+    def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None,
+                 traceback: TracebackType | None) -> None:
         self._lock.release()

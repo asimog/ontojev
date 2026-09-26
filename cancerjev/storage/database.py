@@ -1,12 +1,27 @@
 from __future__ import annotations
 
+import shutil
 import sqlite3
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
+
+# Sequential, DDL-only migrations keyed by the schema version they upgrade from.
+# A migration never rewrites scientific rows: it may only add tables, indexes or
+# columns. The version row is updated only after every step succeeds.
+V7_ARTIFACT_PURPOSE_INDEX = (
+    "CREATE INDEX IF NOT EXISTS idx_artifacts_purpose ON artifacts(purpose, relative_path)"
+)
+
+
+def _migrate_6_to_7(connection: sqlite3.Connection) -> None:
+    connection.execute(V7_ARTIFACT_PURPOSE_INDEX)
+
+
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {6: _migrate_6_to_7}
 
 IMMUTABLE_TABLES = (
     "run_events", "artifacts", "statistical_states", "evidence_states",
@@ -119,7 +134,7 @@ CREATE INDEX IF NOT EXISTS idx_jev_projections_run ON jev_projections(run_id,cre
 CREATE TABLE IF NOT EXISTS jev_cache(
  cache_key TEXT PRIMARY KEY, evaluation_id TEXT NOT NULL, created_at TEXT NOT NULL
 );
-""" + "".join(
+""" + V7_ARTIFACT_PURPOSE_INDEX + ";\n" + "".join(
     f"CREATE TRIGGER IF NOT EXISTS {table}_no_update BEFORE UPDATE ON {table} "
     f"BEGIN SELECT RAISE(ABORT, '{table} is immutable'); END;\n"
     f"CREATE TRIGGER IF NOT EXISTS {table}_no_delete BEFORE DELETE ON {table} "
@@ -159,27 +174,71 @@ class Database:
         connection.execute(f"PRAGMA synchronous={'FULL' if write else 'NORMAL'}")
         return connection
 
+    def _probe_version(self) -> int | None:
+        """Read the persisted schema version read-only; no mutation before refusal."""
+        existing = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            has_schema = existing.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_info'"
+            ).fetchone()
+            if not has_schema:
+                return None
+            versions = existing.execute("SELECT version FROM schema_info").fetchall()
+            if not versions:
+                return None
+            if len(versions) != 1:
+                found = ", ".join(str(row[0]) for row in versions)
+                raise RuntimeError(f"corrupt database schema rows: {found}")
+            return int(versions[0][0])
+        finally:
+            existing.close()
+
+    def _backup(self, connection: sqlite3.Connection, from_version: int) -> Path:
+        """Checkpoint the WAL, then copy the database before any migration step.
+
+        The backup must succeed before the first migration mutation; a failed
+        backup aborts the upgrade rather than risking unrecoverable data.
+        """
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        target = self.path.with_name(f"{self.path.name}.backup-v{from_version}-{stamp}")
+        shutil.copy2(self.path, target)
+        return target
+
     def bootstrap(self) -> None:
-        # Refuse obsolete stores before connect() changes journal mode or SCHEMA
-        # creates tables/triggers. Old development data is never migrated.
+        # Refuse unsupported stores before connect() changes journal mode or SCHEMA
+        # creates tables/triggers. Upgrades run only along declared sequential
+        # migrations; scientific evidence is never semantically rewritten.
+        existing_version: int | None = None
         if self.path.is_file():
-            existing = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)
-            try:
-                has_schema = existing.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_info'"
-                ).fetchone()
-                if has_schema:
-                    versions = existing.execute("SELECT version FROM schema_info").fetchall()
-                    if versions and versions != [(SCHEMA_VERSION,)]:
-                        found = ", ".join(str(row[0]) for row in versions)
-                        raise RuntimeError(
-                            f"unsupported database schema {found}; this build expects schema {SCHEMA_VERSION}. "
-                            "Earlier data is not migrated: use a fresh data directory."
-                        )
-            finally:
-                existing.close()
+            existing_version = self._probe_version()
+        if existing_version is not None and existing_version > SCHEMA_VERSION:
+            raise RuntimeError(
+                f"unsupported database schema {existing_version}; this build expects "
+                f"schema {SCHEMA_VERSION}. A future schema is never downgraded."
+            )
+        if existing_version is not None and existing_version < SCHEMA_VERSION \
+                and existing_version not in MIGRATIONS:
+            raise RuntimeError(
+                f"unsupported database schema {existing_version}; this build expects "
+                f"schema {SCHEMA_VERSION}. Upgrades are supported only from schema "
+                f"{sorted(MIGRATIONS)}: use a fresh data directory."
+            )
         connection = self.connect(write=True)
         try:
+            if existing_version is not None and existing_version < SCHEMA_VERSION:
+                self._backup(connection, existing_version)
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    for source in range(existing_version, SCHEMA_VERSION):
+                        MIGRATIONS[source](connection)
+                    connection.execute(
+                        "UPDATE schema_info SET version=?", (SCHEMA_VERSION,))
+                    connection.commit()
+                except Exception:
+                    if connection.in_transaction:
+                        connection.rollback()
+                    raise
             connection.executescript(SCHEMA)
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute("SELECT version FROM schema_info").fetchone()
@@ -190,8 +249,9 @@ class Database:
                 )
             elif row["version"] != SCHEMA_VERSION:
                 raise RuntimeError(
-                    f"unsupported database schema {row['version']}; this build expects schema {SCHEMA_VERSION}. "
-                    "Earlier-phase data is not migrated: move or delete the existing data directory."
+                    f"unsupported database schema {row['version']}; this build expects "
+                    f"schema {SCHEMA_VERSION}. Earlier-phase data is not migrated: move or "
+                    "delete the existing data directory."
                 )
             connection.commit()
         except Exception:

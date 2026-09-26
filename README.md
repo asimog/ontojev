@@ -6,11 +6,26 @@ It combines harmonized GDC evidence with established NCI/GDAN computational-geno
 
 ## Current implementation
 
-At the inspected HEAD, OntoJev has typed GDC acquisition, bounded descriptive discovery, Wide/Deep Jev, Python policies, immutable candidate evidence revisions, hypothesis critique, and Stage 8 dossiers with no-Jev comparisons. Systematic complete-universe discovery (`GENE_ID_ASC_INDEXED_COMPLETE_V1`, declared defect guard, operational shard ledger, terminal gate) is the canonical path; the older provider-ranked `GDC_FAST_SEARCH` live lane is transitional/compatibility behavior retained as a labelled comparator, not the target architecture. Mutation and expression run over the complete release-bound universe with declared RETAIN/DROP/JEV_REVIEW dispositions and independent nomination; CNV is being moved to an independent case-sharded project scan (P09), and integrated states currently cover mutation survivors only. Historical prefix-universe results remain readable and labelled.
+OntoJev now has one canonical autonomous Campaign spine, implemented, production-wired and offline-verified: typed cohort/profile/capability validation → complete-universe mutation discovery → independent expression discovery → complete CNV case-shard scan and terminal merge → deterministic modality union (`MUTATION_EXPRESSION_CNV_UNION_V1`) → one canonical `StatisticalState` per union member → the `pre-wide-policy-v1` measured-evidence boundary → Wide Jev → Python admission → an autonomous candidate queue that drives every promoted Candidate through Deep Jev, registered deterministic follow-ups, immutable evidence revisions, Stage 8, dossier and the deterministic no-Jev comparison. No operator candidate flag exists on that path.
 
-Independent modality union, scientific readiness gates, selected-file acquisition and continuous multi-Campaign autonomy are planned. The older provider-ranked live mutation path still needs the measurement correction described in P01. The target flow below must not be read as a list of completed features.
+The durable `program-loop-v2` worker observes the GDC release once per cycle, selects an eligible Campaign by the declared `campaign-selection-v2` policy, refuses to redispatch a completed Campaign whose profile/release/method identity is unchanged, applies bounded exponential retry to failures, holds the research lock only around each cycle, and heartbeats the canonical package version. Storage is SQLite schema 7 with sequential DDL migrations and a read-only `doctor`; dependencies are locked in `uv.lock`; strict mypy covers 85 production modules; CI verifies the production-built frontend and browser path.
 
-See the [saved implementation plan](docs/IMPLEMENTATION_PLAN.md) for code evidence, pinned upstream references, execution order and acceptance gates. [Repository facts](docs/REPOSITORY_FACTS.md) owns mutable version/action identities.
+Live-verified to date: the individual mutation, expression, CNV-shard, reconciliation and Jev question-set captures recorded in the implementation plan. **Not yet scientifically validated:** `LUAD_CAMPAIGN_V1` remains `EXPERIMENTAL`; a full live Campaign with real Wide/Deep Jev and dossier review has not completed, and readiness is not implied by green software tests. `GDC_FAST_SEARCH` remains available only as the explicitly labelled researcher/comparator path.
+
+## Running it
+
+```text
+python -m cancerjev probe --live                 # bounded anonymous GDC contract capture
+python -m cancerjev capability                   # typed cohort capability probe
+python -m cancerjev run --live [--jev]           # researcher/comparator bounded sweep
+python -m cancerjev program                      # one durable autonomous program cycle
+python -m cancerjev worker --live                # long-running autonomous worker loop
+python -m cancerjev doctor                       # read-only storage integrity report
+```
+
+Offline verification: `python -m ruff check cancerjev apps tests`, `python -m mypy`, `python -m pytest`.
+Frontend: `cd apps/web && npm ci && npm run typecheck && npm run build`.
+Deployment, health/readiness, backup/restore and the localhost-only API posture are documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Research question
 
@@ -131,7 +146,9 @@ Core scientific code must remain cancer-agnostic. Cross-cancer pooling requires 
 - [`docs/SCIENTIFIC_INVARIANTS.md`](docs/SCIENTIFIC_INVARIANTS.md) — hard scientific and control rules.
 - [`docs/DATA_STRATEGY.md`](docs/DATA_STRATEGY.md) — GDC source, sharding, acquisition and provenance rules.
 - [`docs/JEV_DESIGN.md`](docs/JEV_DESIGN.md) — Arm, Wide, Deep and hypothesis Jev responsibilities.
-- [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) — inspected current state and bounded remaining implementation units.
+- [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) — current status plus the historical bounded implementation units.
+- [`docs/TYPESAFE_DECISIONS.md`](docs/TYPESAFE_DECISIONS.md) — TypeSafe/Jev capability posture, including deferred Arm Jev.
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — supported operation: processes, data directory, health, backup/restore.
 - [`docs/REPOSITORY_FACTS.md`](docs/REPOSITORY_FACTS.md) — generated schema, policy, projection and action identities.
 
 Keep these documents canonical and compact. Git history is the archive.

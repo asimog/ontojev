@@ -45,7 +45,7 @@ class CaptureSink:
         url = request.path
         if request.params:
             url = f"{url}?{urlencode(sorted(request.params))}"
-        meta = {
+        meta: dict[str, Any] = {
             "probe_name": name,
             "method": request.method,
             "endpoint": request.path,
@@ -99,7 +99,10 @@ class CaptureSink:
 
 
 def _json_body(response: GDCResponse) -> dict[str, Any]:
-    return json.loads(response.body.decode("utf-8"))
+    parsed = json.loads(response.body.decode("utf-8"))
+    if not isinstance(parsed, dict):
+        raise ValueError("capture response body must be a JSON object")
+    return parsed
 
 
 def run_contract_probe(

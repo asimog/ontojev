@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from cancerjev.jev.questions import QuestionDefinition, instruction_text
 
@@ -76,15 +76,19 @@ class TypeSafeAdapter:
         for definition in definitions:
             criteria = definition.criteria
             instructions = instruction_text(definition, state)
+            # Provider-boundary cast: our criteria dicts are validated by the
+            # versioned question set (instruction_text and context validation);
+            # the SDK's narrower TypedDicts describe the same wire shape.
+            provider_criteria = cast(Any, criteria)
             if definition.primitive == "NOUL":
                 questions[definition.question_id] = Noul(
                     instructions=instructions,
-                    criteria=criteria,
+                    criteria=provider_criteria,
                 )
             elif definition.primitive == "CHOICE":
                 questions[definition.question_id] = Choice(
                     instructions=instructions,
-                    criteria=criteria,
+                    criteria=provider_criteria,
                 )
             elif definition.primitive == "SCORE":
                 questions[definition.question_id] = Score(

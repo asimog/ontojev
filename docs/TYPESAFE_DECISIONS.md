@@ -30,6 +30,10 @@ must be refreshed with a new SHA before any posture change below is reversed.
   checked against it by `tests/jev/test_arm_posture.py`.
 - `JEV_REVIEW` preservation semantics live in the P10 union (`PENDING_SEMANTIC_REVIEW`
   warning plus typed `nominations`), never in Jev.
+- Admission enforcement: while Arm Jev is deferred, the Wide ranking policy excludes
+  `JEV_REVIEW`-nominated (and `PENDING_SEMANTIC_REVIEW`-warned) states
+  unconditionally, so even maximally favorable answers can never promote them
+  (`tests/jev/test_ranking.py`).
 - Live revalidation evidence: `tests/live/test_live_jev.py` (marker `live_jev`)
   evaluates exactly one typed state with the pinned model; the emit callback must be
   the real event-writing callback so projection/question registrations persist.

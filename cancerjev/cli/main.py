@@ -127,6 +127,12 @@ def parser() -> argparse.ArgumentParser:
                           help="operator-supplied label JSON; never produced by cancerjev")
     evaluate.add_argument("--k", type=int, default=3, help="top-k size (1..3)")
     evaluate.add_argument("--out", default=None, help="report path (defaults to <data>/evaluations/...)")
+    doctor = commands.add_parser(
+        "doctor",
+        help="read-only storage integrity report (never repairs scientific evidence)",
+    )
+    doctor.add_argument("--prune-stale-temp", action="store_true",
+                        help="after reporting, delete only recognized stale temporary files")
     return root
 
 
@@ -191,7 +197,7 @@ def _probe(settings: Settings, repository: Repository, artifacts: ArtifactStore,
         started_message="Contract probe run started.",
     ) as run_id:
 
-        def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+        def emit(event_type: str, key: str, message: str, **kwargs: Any) -> None:
             event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
                                             message=message, **kwargs)
             render_event(event)
@@ -232,7 +238,7 @@ def _capability(settings: Settings, repository: Repository, artifacts: ArtifactS
         started_data={"project_id": target},
     ) as run_id:
 
-        def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+        def emit(event_type: str, key: str, message: str, **kwargs: Any) -> None:
             event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
                                             message=message, **kwargs)
             render_event(event)
@@ -284,7 +290,7 @@ def _discover(settings: Settings, repository: Repository, artifacts: ArtifactSto
             started_data={"research_spec": spec.as_dict()},
         ) as run_id:
 
-            def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+            def emit(event_type: str, key: str, message: str, **kwargs: Any) -> None:
                 event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
                                                 message=message, **kwargs)
                 render_event(event)
@@ -327,7 +333,7 @@ def _discover_expression(
             started_data={"research_spec": spec.as_dict()},
         ) as run_id:
 
-            def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+            def emit(event_type: str, key: str, message: str, **kwargs: Any) -> None:
                 event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
                                                 message=message, **kwargs)
                 render_event(event)
@@ -371,7 +377,7 @@ def _discover_cnv(
                           "research_spec": spec.as_dict()},
         ) as run_id:
 
-            def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+            def emit(event_type: str, key: str, message: str, **kwargs: Any) -> None:
                 event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
                                                 message=message, **kwargs)
                 render_event(event)
@@ -412,7 +418,7 @@ def _cnv_merge(
             started_data={"shards": shards},
         ) as run_id:
 
-            def emit(event_type: str, key: str, message: str, **kwargs) -> None:
+            def emit(event_type: str, key: str, message: str, **kwargs: Any) -> None:
                 event = repository.append_event(run_id, event_type=event_type, idempotency_key=key,
                                                 message=message, **kwargs)
                 render_event(event)
@@ -490,7 +496,8 @@ def _run_campaign_systematic(settings: Settings, repository: Repository, artifac
                    "coverage": result.coverage, **result.summary(),
                    "gdc_attempts": totals["attempts"], "gdc_bytes": totals["bytes"],
                    "gdc_cache_hits": totals["cache_hits"]})
-    return repository.get_run(run_id)["status"] == "COMPLETED"
+    run = repository.get_run(run_id)
+    return run is not None and run["status"] == "COMPLETED"
 
 
 def _dispatch_campaign(settings: Settings, repository: Repository, artifacts: ArtifactStore,
@@ -565,12 +572,13 @@ def _program(settings: Settings, repository: Repository, artifacts: ArtifactStor
         started_message="Autonomous program cycle started.",
     ) as run_id:
 
-        def emit(target_run_id: str, event_type: str, key: str, message: str, **kwargs) -> None:
+        def emit(target_run_id: str, event_type: str, key: str, message: str,
+                 **kwargs: Any) -> None:
             event = repository.append_event(target_run_id, event_type=event_type,
                                             idempotency_key=key, message=message, **kwargs)
             render_event(event)
 
-        def observe():
+        def observe() -> Any:
             """One bounded release observation with its own declared budget."""
             caps = production_caps(per_response_bytes=settings.gdc_per_response_bytes,
                                    timeout_seconds=settings.gdc_timeout_seconds)
@@ -591,8 +599,9 @@ def _program(settings: Settings, repository: Repository, artifacts: ArtifactStor
                      data={"profile_id": profile.profile_id, "reason_code": str(code)})
                 return False
 
-        def publish_json(target_run_id: str, path: str, payload: bytes, purpose: str) -> Any:
-            return artifacts.publish(path, payload, "application/json", purpose)
+        def publish_json(target_run_id: str, path: str, payload: object, purpose: str) -> Any:
+            content = payload if isinstance(payload, bytes) else canonical_json(payload)
+            return artifacts.publish(path, content, "application/json", purpose)
 
         outcome, artifact = run_program_worker(
             run_id=run_id, repository=repository, artifacts=artifacts, emit=emit,
@@ -644,6 +653,17 @@ def main(argv: list[str] | None = None) -> None:
     if args.command in {"discover", "discover-expression", "discover-cnv"} and not live:
         raise SystemExit(f"{args.command} requires --live (systematic discovery is a real bounded open-access GDC task).")
     settings = Settings.from_env()
+    if args.command == "doctor":
+        from cancerjev.storage.doctor import prune_stale_temp_artifacts, run_doctor
+
+        doctor_report = run_doctor(settings)
+        if args.prune_stale_temp:
+            removed = prune_stale_temp_artifacts(settings)
+            print(f"[DOCTOR] pruned {len(removed)} stale temporary file(s)", flush=True)
+        print(json.dumps(doctor_report.payload(), indent=2, sort_keys=True), flush=True)
+        if not doctor_report.ok():
+            raise SystemExit(1)
+        return
     repository, artifacts = _services(settings)
     if args.command == "show":
         run = repository.get_run(args.run_id)
@@ -763,6 +783,7 @@ def main(argv: list[str] | None = None) -> None:
             recovered = repository.recover_interrupted()
             for run_id in recovered:
                 print(f"[RECOVERY] preserved and stopped interrupted run {run_id}", flush=True)
+            orchestrator: LiveOrchestrator | DemoOrchestrator
             if live:
                 jev_service = None
                 if jev_requested:
@@ -794,7 +815,8 @@ def main(argv: list[str] | None = None) -> None:
             else:
                 orchestrator = DemoOrchestrator(settings, repository, artifacts, render_event)
             completed_run_id = orchestrator.run()
-            if repository.get_run(completed_run_id)["status"] != "COMPLETED":
+            completed = repository.get_run(completed_run_id)
+            if completed is None or completed["status"] != "COMPLETED":
                 raise SystemExit(1)
     except OwnershipError as exc:
         raise SystemExit(str(exc)) from exc

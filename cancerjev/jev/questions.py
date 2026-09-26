@@ -58,8 +58,10 @@ def instruction_text(definition: QuestionDefinition, projection: dict[str, Any])
     The template stays cohort-agnostic, so the question-set hash never depends on
     a cancer name; the cohort label is supplied by the typed projection.
     """
-    scope = projection.get("scope") if isinstance(projection.get("scope"), dict) else {}
-    cohort = projection.get("cohort") if isinstance(projection.get("cohort"), dict) else {}
+    scope_value = projection.get("scope")
+    scope: dict[str, Any] = scope_value if isinstance(scope_value, dict) else {}
+    cohort_value = projection.get("cohort")
+    cohort: dict[str, Any] = cohort_value if isinstance(cohort_value, dict) else {}
     label = str(cohort.get("project_id") or scope.get("cohort") or "the examined cohort")
     return definition.instructions.format(cohort=label)
 

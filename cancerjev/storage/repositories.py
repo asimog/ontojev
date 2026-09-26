@@ -3,8 +3,8 @@ from __future__ import annotations
 import base64
 import json
 import sqlite3
-from typing import Any
-from uuid import uuid4
+from typing import Any, cast
+from uuid import UUID, uuid4
 
 from cancerjev import __version__ as PACKAGE_VERSION
 from cancerjev.domain.events import RunEvent, utc_now
@@ -103,14 +103,16 @@ class Repository:
             ).fetchone()
             if existing:
                 connection.commit()
-                return json.loads(existing["event_json"])
+                return cast(dict[str, Any], json.loads(existing["event_json"]))
             run = connection.execute("SELECT * FROM research_runs WHERE run_id=?", (run_id,)).fetchone()
             if run is None:
                 raise KeyError(run_id)
             event = RunEvent(
-                run_id=run_id, sequence=run["last_sequence"] + 1, type=event_type,
+                run_id=UUID(run_id), sequence=run["last_sequence"] + 1, type=event_type,
                 idempotency_key=idempotency_key, message=message, stage=stage,
-                data=data or {}, candidate_id=candidate_id, iteration=iteration, level=level,
+                data=data or {},
+                candidate_id=UUID(candidate_id) if candidate_id is not None else None,
+                iteration=iteration, level=level,
                 artifact_refs=artifact_refs or [],
             )
             event_json = event.checked_json()
@@ -129,7 +131,7 @@ class Repository:
                  projection["usage_json"], projection["scope_json"], run_id),
             )
             connection.commit()
-            return json.loads(event_json)
+            return cast(dict[str, Any], json.loads(event_json))
         except Exception:
             connection.rollback()
             raise
@@ -662,6 +664,11 @@ class Repository:
                 (purpose,),
             ).fetchone()
             return dict(row) if row else None
+
+    def all_artifacts(self) -> list[dict[str, Any]]:
+        """Every registered artifact row; storage maintenance and doctor reads use this."""
+        with self.database.read() as connection:
+            return [dict(row) for row in connection.execute("SELECT * FROM artifacts")]
 
     def heartbeat(self, owner_id: str) -> None:
         with self.database.connect(write=True) as connection:

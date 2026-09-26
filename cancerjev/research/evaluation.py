@@ -50,8 +50,8 @@ class EvaluationReport:
     overlap: tuple[str, ...]
     baseline_hits: tuple[str, ...]
     jev_hits: tuple[str, ...]
-    baseline_ranks: dict[str, int]
-    jev_ranks: dict[str, int]
+    baseline_ranks: dict[str, int | None]
+    jev_ranks: dict[str, int | None]
     limitations: tuple[str, ...]
 
     def as_dict(self) -> dict[str, Any]:

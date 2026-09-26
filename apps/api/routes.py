@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -31,7 +31,7 @@ def services(request: Request) -> tuple[Repository, ArtifactStore]:
 
 
 @router.get("/health")
-def health(request: Request):
+def health(request: Request) -> dict[str, Any]:
     repository, _ = services(request)
     with repository.database.read() as connection:
         connection.execute("SELECT version FROM schema_info").fetchone()
@@ -39,7 +39,7 @@ def health(request: Request):
 
 
 @router.get("/api/system")
-def system(request: Request):
+def system(request: Request) -> dict[str, Any]:
     repository, _ = services(request)
     settings = request.app.state.settings
     with repository.database.read() as connection:
@@ -89,7 +89,7 @@ def system(request: Request):
 
 
 @router.get("/api/runs")
-def runs(request: Request, limit: Annotated[int, Query(ge=1, le=100)] = 20, status: str | None = None, cursor: str | None = None):
+def runs(request: Request, limit: Annotated[int, Query(ge=1, le=100)] = 20, status: str | None = None, cursor: str | None = None) -> dict[str, Any]:
     repository, _ = services(request)
     try:
         return repository.page_runs(limit, cursor, status)
@@ -98,7 +98,7 @@ def runs(request: Request, limit: Annotated[int, Query(ge=1, le=100)] = 20, stat
 
 
 @router.get("/api/runs/{run_id}")
-def run_detail(run_id: UUID, request: Request):
+def run_detail(run_id: UUID, request: Request) -> dict[str, Any]:
     repository, _ = services(request)
     item = repository.get_run(str(run_id))
     if not item:
@@ -108,7 +108,7 @@ def run_detail(run_id: UUID, request: Request):
 
 
 @router.get("/api/runs/{run_id}/events")
-def events(run_id: UUID, request: Request, after_sequence: Annotated[int, Query(ge=0)] = 0, limit: Annotated[int, Query(ge=1, le=500)] = 200):
+def events(run_id: UUID, request: Request, after_sequence: Annotated[int, Query(ge=0)] = 0, limit: Annotated[int, Query(ge=1, le=500)] = 200) -> dict[str, Any]:
     repository, _ = services(request)
     try:
         return repository.events(str(run_id), after_sequence, limit)
@@ -116,7 +116,7 @@ def events(run_id: UUID, request: Request, after_sequence: Annotated[int, Query(
         raise HTTPException(404, detail="run not found") from exc
 
 
-def child_list(table: str, run_id: UUID, request: Request, limit: int, cursor: str | None, filters: dict[str, str | None]):
+def child_list(table: str, run_id: UUID, request: Request, limit: int, cursor: str | None, filters: dict[str, str | None]) -> dict[str, Any]:
     repository, _ = services(request)
     if not repository.get_run(str(run_id)):
         raise HTTPException(404, detail="run not found")
@@ -127,17 +127,17 @@ def child_list(table: str, run_id: UUID, request: Request, limit: int, cursor: s
 
 
 @router.get("/api/runs/{run_id}/candidates")
-def candidates(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None):
+def candidates(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None) -> dict[str, Any]:
     return child_list("candidates", run_id, request, limit, cursor, {})
 
 
 @router.get("/api/runs/{run_id}/states")
-def states(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None, disposition: str | None = None):
+def states(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None, disposition: str | None = None) -> dict[str, Any]:
     return child_list("statistical_states", run_id, request, limit, cursor, {"disposition": disposition})
 
 
 @router.get("/api/states/{state_id}")
-def state_detail(state_id: UUID, request: Request):
+def state_detail(state_id: UUID, request: Request) -> Response:
     repository, artifacts = services(request)
     row = repository.get_state(str(state_id))
     if not row:
@@ -156,12 +156,12 @@ def state_detail(state_id: UUID, request: Request):
 
 
 @router.get("/api/runs/{run_id}/projections")
-def projections(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None):
+def projections(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None) -> dict[str, Any]:
     return child_list("jev_projections", run_id, request, limit, cursor, {})
 
 
 @router.get("/api/runs/{run_id}/rankings")
-def rankings(run_id: UUID, request: Request):
+def rankings(run_id: UUID, request: Request) -> dict[str, object]:
     repository, artifacts = services(request)
     if not repository.get_run(str(run_id)):
         raise HTTPException(404, detail="run not found")
@@ -176,27 +176,27 @@ def rankings(run_id: UUID, request: Request):
 
 
 @router.get("/api/runs/{run_id}/evaluations")
-def evaluations(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None, candidate_id: str | None = None, purpose: str | None = None):
+def evaluations(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None, candidate_id: str | None = None, purpose: str | None = None) -> dict[str, Any]:
     return child_list("jev_evaluations", run_id, request, limit, cursor, {"candidate_id": candidate_id, "purpose": purpose})
 
 
 @router.get("/api/runs/{run_id}/hypotheses")
-def run_hypotheses(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None, candidate_id: str | None = None):
+def run_hypotheses(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None, candidate_id: str | None = None) -> dict[str, Any]:
     return child_list("hypotheses", run_id, request, limit, cursor, {"candidate_id": candidate_id})
 
 
 @router.get("/api/runs/{run_id}/dossiers")
-def run_dossiers(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None):
+def run_dossiers(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None) -> dict[str, Any]:
     return child_list("dossiers", run_id, request, limit, cursor, {})
 
 
 @router.get("/api/runs/{run_id}/evidence")
-def evidence_revisions(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None, candidate_id: str | None = None):
+def evidence_revisions(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None, candidate_id: str | None = None) -> dict[str, Any]:
     return child_list("evidence_states", run_id, request, limit, cursor, {"candidate_id": candidate_id})
 
 
 @router.get("/api/evidence/{evidence_state_id}")
-def evidence_detail(evidence_state_id: UUID, request: Request):
+def evidence_detail(evidence_state_id: UUID, request: Request) -> Response:
     repository, artifacts = services(request)
     row = repository.get_evidence_state(str(evidence_state_id))
     if not row:
@@ -215,13 +215,13 @@ def evidence_detail(evidence_state_id: UUID, request: Request):
 
 
 @router.get("/api/runs/{run_id}/followups")
-def followup_executions(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None, candidate_id: str | None = None, status: str | None = None):
+def followup_executions(run_id: UUID, request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 100, cursor: str | None = None, candidate_id: str | None = None, status: str | None = None) -> dict[str, Any]:
     return child_list("followup_executions", run_id, request, limit, cursor,
                       {"candidate_id": candidate_id, "status": status})
 
 
 @router.get("/api/dossiers")
-def dossiers(request: Request, limit: Annotated[int, Query(ge=1, le=100)] = 20, cursor: str | None = None):
+def dossiers(request: Request, limit: Annotated[int, Query(ge=1, le=100)] = 20, cursor: str | None = None) -> dict[str, Any]:
     repository, _ = services(request)
     try:
         return repository.page_dossiers(limit, cursor)
@@ -230,7 +230,7 @@ def dossiers(request: Request, limit: Annotated[int, Query(ge=1, le=100)] = 20, 
 
 
 @router.get("/api/dossiers/{dossier_id}")
-def dossier(dossier_id: UUID, request: Request, format: Literal["json", "markdown"] = "json"):
+def dossier(dossier_id: UUID, request: Request, format: Literal["json", "markdown"] = "json") -> Response:
     repository, artifacts = services(request)
     row = repository.get_dossier(str(dossier_id))
     if not row:
@@ -252,7 +252,7 @@ def dossier(dossier_id: UUID, request: Request, format: Literal["json", "markdow
 
 
 @router.get("/api/artifacts/{artifact_id}")
-def artifact(artifact_id: UUID, request: Request):
+def artifact(artifact_id: UUID, request: Request) -> Response:
     repository, artifacts = services(request)
     metadata = repository.artifact(str(artifact_id))
     if not metadata:
