@@ -844,15 +844,20 @@ class DispatchResult:
 def dispatch_recorded_move(*, run_id: str, candidate: CandidateEvidence, result: FollowUpResult,
                            decision: dict[str, Any], repository: Repository, emit: Callable[..., Any],
                            publish_json: PublishJson,
-                           read_artifact: Callable[[str], bytes | None], authorized: bool) -> DispatchResult:
-    """Dispatch one recorded FOLLOW_UP, only when an operator authorized it.
+                           read_artifact: Callable[[str], bytes | None], authorized: bool,
+                           authorized_by: str = "OPERATOR_AUTHORIZATION") -> DispatchResult:
+    """Dispatch one recorded FOLLOW_UP, only under an explicit authorization.
 
-    At most one dispatch happens per step, it obeys the existing follow-up and
-    revision caps (every attempt consumes follow-up budget, not only successful
-    ones), and the caller judges the new revision exactly once afterwards. Judging
-    here would double every Jev call and duplicate the recorded decision, so this
-    function decides and executes only. Every refusal reason is recorded rather
-    than silently dropped.
+    The authorization is declared by the caller and recorded in every dispatch
+    decision (`OPERATOR_AUTHORIZATION` for a researcher selection,
+    `AUTONOMOUS_DISPATCH_AUTHORIZATION` for the autonomous candidate queue that
+    Python policy drives). Ambiguity is never resolved by ordering. At most one
+    dispatch happens per step, it obeys the existing follow-up and revision caps
+    (every attempt consumes follow-up budget, not only successful ones), and the
+    caller judges the new revision exactly once afterwards. Judging here would
+    double every Jev call and duplicate the recorded decision, so this function
+    decides and executes only. Every refusal reason is recorded rather than
+    silently dropped.
     """
 
     def refuse(reason_code: str, detail: str) -> DispatchResult:
@@ -863,7 +868,7 @@ def dispatch_recorded_move(*, run_id: str, candidate: CandidateEvidence, result:
             candidate_id=candidate.candidate_id, iteration=result.iteration,
             data={"evidence_state_id": result.evidence_state_id, "move": decision.get("move"),
                   "reason_code": reason_code, "detail": detail, "dispatched": False,
-                  "authorized": authorized},
+                  "authorized": authorized, "authorized_by": authorized_by},
         )
         return DispatchResult(dispatched=False, reason_code=reason_code, action_id=None, result=None)
 
@@ -872,7 +877,7 @@ def dispatch_recorded_move(*, run_id: str, candidate: CandidateEvidence, result:
                       f"the recorded move is {decision.get('move')}, so nothing is dispatched")
     if not authorized:
         return refuse("DISPATCH_NOT_AUTHORIZED",
-                      "dispatching a recorded move requires explicit operator authorization")
+                      "dispatching a recorded move requires an explicit declared authorization")
     if result.revision is None or result.evidence_state_id is None or result.iteration is None:
         return refuse("INPUT_REVISION_MISSING", "no immutable revision is available to continue from")
     # No hidden lexicographic selection: 0 eligible -> refusal, 1 -> dispatch it,
@@ -914,18 +919,19 @@ def dispatch_recorded_move(*, run_id: str, candidate: CandidateEvidence, result:
             stage="FOLLOWUP", level="error", candidate_id=candidate.candidate_id, iteration=iteration,
             data={"evidence_state_id": result.evidence_state_id, "move": decision.get("move"),
                   "reason_code": "DISPATCH_ACTION_FAILED", "detail": followup.error_code,
-                  "action_id": action_id, "dispatched": False, "authorized": True},
+                  "action_id": action_id, "dispatched": False, "authorized": True,
+                  "authorized_by": authorized_by},
         )
         return DispatchResult(dispatched=False, reason_code="DISPATCH_ACTION_FAILED", action_id=action_id,
                               result=followup)
     emit(
         run_id, "NEXT_MOVE_DISPATCHED", f"dispatch:{result.evidence_state_id}:{action_id}",
-        f"Recorded FOLLOW_UP dispatched as {action_id} on the operator's authorization.",
+        f"Recorded FOLLOW_UP dispatched as {action_id} under {authorized_by}.",
         stage="FOLLOWUP", candidate_id=candidate.candidate_id, iteration=iteration,
         data={"evidence_state_id": result.evidence_state_id, "move": decision.get("move"),
               "reason_code": "DISPATCHED", "action_id": action_id, "execution_id": execution_id,
               "output_evidence_state_id": evidence_state_id, "output_iteration": iteration,
-              "dispatched": True, "authorized": True,
+              "dispatched": True, "authorized": True, "authorized_by": authorized_by,
               "note": "the new revision is judged once by the caller"},
     )
     return DispatchResult(dispatched=True, reason_code="DISPATCHED", action_id=action_id, result=followup)

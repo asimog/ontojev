@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any, cast
 
+from cancerjev.domain.events import utc_now
+from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.jev.service import JevService
 from cancerjev.research.acquisition import AcquisitionTransport
 from cancerjev.research.deep import (
@@ -43,6 +45,8 @@ from cancerjev.research.seams import HypothesisGenerator, PublishJson, StageRunn
 from cancerjev.science.actions import eligible_actions
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
+
+AUTONOMOUS_DISPATCH_AUTHORIZATION = "autonomous-policy-v1"
 
 
 @dataclass(frozen=True)
@@ -122,7 +126,8 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
                                 authorize_iteration: bool = False, hypotheses_requested: bool = False,
                                 llm_generator: HypothesisGenerator | None = None,
                                 transport: AcquisitionTransport | None = None,
-                                mode: str = "LIVE") -> CandidateInvestigation:
+                                mode: str = "LIVE",
+                                authorized_by: str = "OPERATOR_AUTHORIZATION") -> CandidateInvestigation:
     """Run the bounded arc for one explicitly selected candidate, then Stage 8."""
     plan = stage("DEEP_ANALYSIS", lambda: plan_deep_slice(
         run_id=run_id, candidate=candidate, repository=repository, artifacts=artifacts,
@@ -190,6 +195,7 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
             dispatch_recorded_move, run_id=run_id, candidate=plan.candidate, result=current,
             decision=decision, repository=repository, emit=emit, publish_json=publish_json,
             read_artifact=read_artifact, authorized=authorize_iteration,
+            authorized_by=authorized_by,
         ))
         steps[-1]["dispatch"] = dispatch.summary()
         if not dispatch.dispatched:
@@ -236,3 +242,126 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
                       hypothesis=hypothesis, finalization={
                           "candidate_id": candidate["candidate_id"], "selection": selection,
                           **finalization})
+
+
+@dataclass(frozen=True)
+class AutonomousCandidateQueue:
+    """Every promoted candidate processed to a terminal state by Python policy."""
+
+    candidates: tuple[dict[str, Any], ...]
+    failures: tuple[dict[str, str], ...]
+
+    @property
+    def completed_count(self) -> int:
+        return sum(1 for summary in self.candidates
+                   if summary.get("candidate_status") == "CANDIDATE_COMPLETE")
+
+    @property
+    def candidate_queue_exhausted(self) -> bool:
+        return bool(self.candidates) and self.completed_count == len(self.candidates)
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "candidate_count": len(self.candidates),
+            "completed_count": self.completed_count,
+            "failures": [dict(failure) for failure in self.failures],
+            "candidate_queue_exhausted": self.candidate_queue_exhausted,
+            "authorized_by": AUTONOMOUS_DISPATCH_AUTHORIZATION,
+            "run_scope": ("CANDIDATE_QUEUE_EXHAUSTED" if self.candidate_queue_exhausted
+                          else "CANDIDATES_INCOMPLETE"),
+            "candidates_completed": [
+                {"candidate_id": summary.get("candidate_id"),
+                 "final_result_id": (summary.get("final_result") or {}).get("final_result_id"),
+                 "dossier_id": (summary.get("dossier") or {}).get("dossier_id"),
+                 "candidate_status": summary.get("candidate_status"),
+                 "comparison_status": (summary.get("final_result") or {}).get("comparison_status")}
+                for summary in self.candidates
+            ],
+        }
+
+
+def _read_artifact(repository: Repository,
+                   artifacts: ArtifactStore) -> Callable[[str], bytes | None]:
+    def read(artifact_id: str) -> bytes | None:
+        metadata = repository.artifact(artifact_id)
+        if metadata is None:
+            return None
+        return artifacts.read(metadata["relative_path"])
+    return read
+
+
+def _record_terminal_failure(run_id: str, candidate_id: str, reason_code: str, detail: str,
+                             emit: Callable[..., Any], repository: Repository) -> None:
+    current = next((row for row in repository.list_table("candidates", run_id)
+                    if row["candidate_id"] == candidate_id), None)
+    if current is not None and current.get("status") == "CANDIDATE_COMPLETE":
+        return
+    emit(
+        run_id, "CANDIDATE_NOT_COMPLETED", f"queue:{candidate_id}:terminal-failure",
+        f"Autonomous candidate {candidate_id} is terminal without a completed dossier: {reason_code}.",
+        stage="FINALIZATION", level="error", candidate_id=candidate_id,
+        data={"candidate_id": candidate_id, "reason_code": reason_code, "detail": detail,
+              "terminal_state": "FAILED", "authorized_by": AUTONOMOUS_DISPATCH_AUTHORIZATION},
+        registrations=[repository.candidate_status_registration(
+            candidate_id=candidate_id, status="FAILED", current_stage=None, updated_at=utc_now())],
+    )
+
+
+def run_autonomous_candidate_queue(*, run_id: str, repository: Repository,
+                                   artifacts: ArtifactStore, emit: Callable[..., Any],
+                                   publish_json: PublishJson, stage: StageRunner,
+                                   jev_service: JevService | None,
+                                   transport: AcquisitionTransport | None = None,
+                                   mode: str = "LIVE") -> AutonomousCandidateQueue:
+    """Process every policy-promoted Candidate to a terminal state; no operator input.
+
+    Ordering is the deterministic ``promotion_slot`` of the persisted candidates.
+    Follow-ups are dispatched under Python's declared autonomous authorization and
+    still obey every existing cap and refusal. One candidate's failure is recorded
+    with an explicit typed reason and a terminal status; it never aborts or
+    corrupts another candidate. Researcher-run ownership is refused: this queue is
+    only reachable on a SYSTEM_AUTONOMOUS run, and researcher overrides remain on
+    the separate operator path.
+    """
+    repository.require_run_ownership(run_id, ExecutionOwnership.SYSTEM_AUTONOMOUS)
+    rows = {row["candidate_id"]: row for row in repository.list_table("candidates", run_id)}
+    promoted = sorted(
+        (row for row in rows.values()
+         if row.get("status") == "WIDE_EVALUATED" and row.get("source_state_id")),
+        key=lambda row: (int(row.get("promotion_slot") or 0), str(row["candidate_id"])),
+    )
+    summaries: list[dict[str, Any]] = []
+    failures: list[dict[str, str]] = []
+    read_artifact = _read_artifact(repository, artifacts)
+    for row in promoted:
+        candidate_id = str(row["candidate_id"])
+        selection = f"slot:{row.get('promotion_slot')}"
+        try:
+            investigation = run_candidate_investigation(
+                run_id=run_id, candidate={**row, "entity": row.get("entity") or {}},
+                selection=selection, repository=repository, artifacts=artifacts, emit=emit,
+                publish_json=publish_json, read_artifact=read_artifact, stage=stage,
+                jev_service=jev_service, authorize_iteration=True, hypotheses_requested=False,
+                llm_generator=None, transport=transport, mode=mode,
+                authorized_by=AUTONOMOUS_DISPATCH_AUTHORIZATION,
+            )
+            summaries.append(investigation.summary())
+            if investigation.candidate_status != "CANDIDATE_COMPLETE":
+                reason = investigation.error_code or investigation.stop_reason
+                failures.append({"candidate_id": candidate_id, "reason_code": reason,
+                                 "terminal_state": investigation.candidate_status})
+                _record_terminal_failure(run_id, candidate_id, reason, investigation.stop_reason,
+                                         emit, repository)
+        except Exception as exc:  # noqa: BLE001 - one candidate must not abort the queue
+            reason = str(getattr(exc, "code", type(exc).__name__))
+            summaries.append({
+                "selection": selection, "candidate_id": candidate_id, "status": "FAILED",
+                "investigation_status": "FAILED", "candidate_status": "FAILED",
+                "final_move": None, "stop_reason": reason, "error_code": reason,
+                "first_step": {}, "steps": [], "decisions": [], "hypothesis": None,
+                "dossier": None, "final_result": None,
+            })
+            failures.append({"candidate_id": candidate_id, "reason_code": reason,
+                             "terminal_state": "FAILED"})
+            _record_terminal_failure(run_id, candidate_id, reason, str(exc), emit, repository)
+    return AutonomousCandidateQueue(tuple(summaries), tuple(failures))

@@ -39,6 +39,7 @@ from cancerjev.research.cnv_discovery import (
 from cancerjev.research.cutover import UNION_SELECTION_RULE_ID, compose_discovery_states
 from cancerjev.research.discovery import run_mutation_discovery
 from cancerjev.research.expression_discovery import run_expression_discovery
+from cancerjev.research.investigation import run_autonomous_candidate_queue
 from cancerjev.research.seams import PublishJson, run_stage
 from cancerjev.research.specs import ResearchSpec
 from cancerjev.research.state_store import persist_state
@@ -76,6 +77,7 @@ class SystematicCampaignResult:
     coverage: str
     pre_wide: PreWideSelection
     wide: dict[str, Any] | None
+    candidate_queue: dict[str, Any] | None = None
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -94,6 +96,7 @@ class SystematicCampaignResult:
                 "admission_decision": (self.wide["jev"]["admission"]["decision"]
                                        if self.wide else None),
             } if self.wide is not None else None,
+            "candidate_queue": self.candidate_queue,
         }
 
 
@@ -190,6 +193,13 @@ def run_systematic_campaign(*, run_id: str, profile: CampaignProfile, spec: Rese
             repository=repository, jev_service=jev_service, emit=emit,
             publish_json=publish_json, max_states=None),
     )
+    queue = None
+    if wide_result["promoted"]:
+        queue = run_autonomous_candidate_queue(
+            run_id=run_id, repository=repository, artifacts=artifacts, emit=emit,
+            publish_json=publish_json,
+            stage=lambda name, function: run_stage(emit, run_id, name, function),
+            jev_service=jev_service, transport=None, mode="LIVE").summary()
     return SystematicCampaignResult(
         run_id=run_id, profile_id=profile.profile_id, spec_id=spec.spec_id,
         mutation_survivors=tuple(mutation.survivor_ids),
@@ -197,5 +207,5 @@ def run_systematic_campaign(*, run_id: str, profile: CampaignProfile, spec: Rese
         cnv_calls=len(cnv.calls),
         state_ids=tuple(record.state_id for record in records),
         union_selection_rule=UNION_SELECTION_RULE_ID, coverage=coverage,
-        pre_wide=selection, wide=wide_result,
+        pre_wide=selection, wide=wide_result, candidate_queue=queue,
     )

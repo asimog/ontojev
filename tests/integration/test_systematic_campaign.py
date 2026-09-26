@@ -147,8 +147,11 @@ def test_pre_wide_boundary_cuts_by_measured_evidence_and_never_truncates(runtime
     assert data["policy_version"] == "pre-wide-policy-v1"
     assert data["considered"] == cut_result.pre_wide.considered
     assert data["selected"] == 1 and data["excluded"] == len(excluded)
-    assert len(repository.list_table("jev_evaluations", cut_run)) == 1, \
-        "only the selected population reaches Jev"
+    evaluations = repository.list_table("jev_evaluations", cut_run)
+    selected_state_id = cut_result.pre_wide.states[0].state_id
+    assert [row for row in evaluations if row["input_ref_id"] == selected_state_id]
+    assert not [row for row in evaluations if row["input_ref_id"] in excluded], \
+        "only the selected population reaches Wide Jev"
     assert "JEV_WIDE_STARTED" in [event["type"] for event in events]
 
 
