@@ -100,7 +100,7 @@ def test_offline_demo_runs_the_shared_engine_end_to_end(runtime):
     assert counts["states_selected"] == 0
     assert counts["candidates_promoted"] == 2
     assert counts["hypotheses_created"] == 2
-    assert counts["evidence_revisions"] == 2
+    assert counts["evidence_revisions"] == 2, "no evidence-producing test exists for the revision"
     assert counts["dossiers_created"] == 1
     assert counts["followups_started"] == counts["followups_completed"] == 1
     assert counts["followups_failed"] == counts["candidates_failed"] == 0
@@ -231,6 +231,18 @@ def test_demo_evidence_revisions_are_immutable_and_judged_once(runtime):
     assert len(deep_evaluations) == 1
     assert deep_evaluations[0]["vector"]["question_set_version"] == "deep-v1"
     assert deep_evaluations[0]["vector"]["evidence_state_id"] == chain[1].evidence_state_id
+
+    policy = next(event for event in repository.events(run_id, 0, 2000)["items"]
+                  if event["type"] == "HYPOTHESIS_POLICY_RECORDED")
+    assert policy["data"]["move"] == "KEEP_HYPOTHESIS"
+    assert policy["data"]["reason_code"] == "NO_EVIDENCE_PRODUCING_TEST", \
+        "an integrity check is not a discriminating hypothesis test"
+    assert policy["data"]["action_id"] is None
+    assert policy["data"]["dispatchable_action_ids"] == ["CHECK_REVISION_FAITHFULNESS_V1"]
+    dispatch = [event for event in repository.events(run_id, 0, 2000)["items"]
+                if event["type"] == "NEXT_MOVE_DISPATCHED"
+                and event["data"].get("decision_reason_code") == "HYPOTHESIS_TEST_REQUESTED"]
+    assert dispatch == [], "no pseudo-test is dispatched without a registered evidence-producing action"
 
     baseline = json.loads(chain[0].artifact.content)
     assert baseline["kind"] == "EVIDENCE_STATE" and baseline["schema_version"] == 4

@@ -4,10 +4,17 @@ from cancerjev.domain.states import RunStatus
 
 
 class ExecutionOwnership(StrEnum):
-    """Who owns the run's writable scientific scope."""
+    """Who owns the run's writable scientific scope.
+
+    VALIDATION_RUN is the explicit operator route that executes the identical
+    canonical science pipeline for a profile below autonomous readiness. It can
+    never be selected by the Program, never changes readiness, and exists to
+    produce the reviewed live evidence an explicit promotion requires.
+    """
 
     SYSTEM_AUTONOMOUS = "SYSTEM_AUTONOMOUS"
     RESEARCHER_RUN = "RESEARCHER_RUN"
+    VALIDATION_RUN = "VALIDATION_RUN"
 
 RUN_TRANSITIONS = {
     RunStatus.PENDING: {RunStatus.RUNNING, RunStatus.STOPPED, RunStatus.FAILED},

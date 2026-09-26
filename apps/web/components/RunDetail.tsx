@@ -144,6 +144,7 @@ export function RunDetail({ runId }: { runId: string }) {
           <span className={`badge ${live ? "live" : "fake"}`}>{live ? "LIVE · OPEN GDC" : "FAKE · SYNTHETIC"}</span>
           <span className={`badge status ${run.status.toLowerCase()}`}>{run.status}</span>
           {run.execution_ownership === "RESEARCHER_RUN" && <span className="badge amber">RESEARCHER-RUN</span>}
+          {run.execution_ownership === "VALIDATION_RUN" && <span className="badge violet">VALIDATION-RUN</span>}
           {legacySweep && <span className="badge violet">COMPARATOR PATH</span>}
         </div>
         <div className="eyebrow">RESEARCH RUN</div><h1>{title}</h1>

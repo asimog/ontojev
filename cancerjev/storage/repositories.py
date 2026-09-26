@@ -8,8 +8,12 @@ from uuid import UUID, uuid4
 
 from cancerjev import __version__ as PACKAGE_VERSION
 from cancerjev.domain.events import RunEvent, utc_now
-from cancerjev.domain.measurements import require
+from cancerjev.domain.measurements import ContractError, require
 from cancerjev.domain.runs import ExecutionOwnership, validate_run_transition
+from cancerjev.domain.states import (
+    RECOVERY_DEFERRABLE_CANDIDATE_STATUSES,
+    validate_candidate_transition,
+)
 from cancerjev.storage.artifacts import PublishedArtifact
 from cancerjev.storage.database import Database
 from cancerjev.storage.ownership import OwnershipError
@@ -380,9 +384,27 @@ class Repository:
              entity_json, summary_json, created_at, updated_at),
         )
 
+    def _validate_candidate_target(self, candidate_id: str, status: str) -> None:
+        """Fail closed on an illegal lifecycle move before the update is registered.
+
+        The read happens before ``append_event``'s write transaction; the research
+        lock plus SQLite's single writer serialize candidate mutation, so the current
+        status cannot change between this check and the update it guards.
+        """
+        candidate = self.get_candidate(candidate_id)
+        if candidate is None:
+            raise ContractError(f"candidate {candidate_id} does not exist",
+                                code="CANDIDATE_NOT_FOUND")
+        try:
+            validate_candidate_transition(str(candidate["status"]), status)
+        except ValueError as exc:
+            raise ContractError(
+                f"candidate {candidate_id}: {exc}", code="ILLEGAL_CANDIDATE_TRANSITION") from exc
+
     def candidate_status_registration(self, *, candidate_id: str, status: str, current_stage: str | None,
                                       updated_at: str, latest_evidence_state_id: str | None = None,
                                       dossier_id: str | None = None) -> tuple[str, tuple[Any, ...]]:
+        self._validate_candidate_target(candidate_id, status)
         assignments = ["status=?", "current_stage=?", "updated_at=?"]
         values: list[Any] = [status, current_stage, updated_at]
         if latest_evidence_state_id is not None:
@@ -399,6 +421,7 @@ class Repository:
 
     def candidate_deferred_registration(self, *, candidate_id: str, reason: str,
                                         updated_at: str) -> tuple[str, tuple[Any, ...]]:
+        self._validate_candidate_target(candidate_id, "DEFERRED")
         return (
             "UPDATE candidates SET status='DEFERRED',current_stage=NULL,updated_at=?,summary_json=json_set(summary_json,'$.terminal_reason',?) WHERE candidate_id=?",
             (updated_at, reason, candidate_id),
@@ -495,9 +518,11 @@ class Repository:
             ids = [row["run_id"] for row in connection.execute("SELECT run_id FROM research_runs WHERE status IN ('PENDING','RUNNING')")]
         for run_id in ids:
             with self.database.read() as connection:
+                placeholders = ",".join("?" for _ in RECOVERY_DEFERRABLE_CANDIDATE_STATUSES)
                 candidates = connection.execute(
-                    "SELECT candidate_id FROM candidates WHERE run_id=? AND status NOT IN ('DOSSIER_READY','TERMINATED','DEFERRED','FAILED')",
-                    (run_id,),
+                    f"SELECT candidate_id FROM candidates WHERE run_id=? AND status IN ({placeholders})",
+                    (run_id,
+                     *sorted(status.value for status in RECOVERY_DEFERRABLE_CANDIDATE_STATUSES)),
                 ).fetchall()
             for candidate in candidates:
                 candidate_id = candidate["candidate_id"]

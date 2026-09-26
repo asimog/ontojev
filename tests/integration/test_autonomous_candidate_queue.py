@@ -117,6 +117,26 @@ def test_one_failing_candidate_is_explicit_and_isolated(runtime, monkeypatch):
     assert not_completed[0]["data"]["terminal_state"] == "FAILED"
 
 
+def test_autonomous_followup_produces_measured_evidence(runtime):
+    """The Campaign-owned transport must turn a candidate follow-up into real evidence."""
+    _, repository, artifacts = runtime
+    run_id, _, _, _ = _execute(runtime)
+
+    executed = []
+    for row in _candidate_rows(repository, run_id).values():
+        executed.extend((row["candidate_id"], execution)
+                        for execution in repository.followup_executions_for(row["candidate_id"]))
+
+    assert executed, "the autonomous queue dispatches at least one candidate follow-up"
+    assert {execution["action_id"] for _, execution in executed} == {"OCCURRENCE_DETAIL_EVIDENCE_V1"}
+    assert any(execution["status"] == "COMPLETED" for _, execution in executed), \
+        "the follow-up acquired occurrence detail rather than reporting transport unavailable"
+    for candidate_id, _ in executed:
+        chain = read_revision_chain(repository, artifacts, candidate_id)
+        assert chain[-1].evidence.measured_observations, \
+            "the occurrence-detail follow-up records real measured observations"
+
+
 def test_queue_refuses_researcher_owned_runs(runtime):
     settings, repository, artifacts = runtime
     run_id = repository.create_run(

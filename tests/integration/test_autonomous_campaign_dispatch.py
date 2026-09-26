@@ -6,7 +6,11 @@ from dataclasses import replace
 
 import pytest
 
-from cancerjev.cli.main import _dispatch_campaign, _run_campaign_systematic
+from cancerjev.cli.main import (
+    _dispatch_campaign,
+    _run_campaign_systematic,
+    _run_campaign_validation,
+)
 from cancerjev.domain.capability import ScientificReadiness
 from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.jev.service import JevService
@@ -101,3 +105,40 @@ def test_capability_preflight_failure_is_recorded_and_raised(runtime):
     events = repository.events(runs[0]["run_id"], 0, 100)["items"]
     assert [event["type"] for event in events] == ["RUN_STARTED", "RUN_FAILED"]
     assert events[-1]["data"]["reason_code"] == "PROJECT_NOT_FOUND"
+
+
+class _FakeCampaignResult:
+    state_ids = ("state-1",)
+    coverage = "COMPLETE_FOR_SCOPE"
+
+    def summary(self) -> dict:
+        return {"execution": "SYSTEMATIC_MODALITY_UNION", "activation": "VALIDATION",
+                "readiness_effect": "NONE", "states": 1}
+
+
+def test_validation_route_dispatches_the_canonical_spine_under_validation_ownership(runtime, monkeypatch):
+    settings, repository, artifacts = runtime
+    monkeypatch.setenv("TYPESAFE_API_KEY", "offline-test-key")
+    monkeypatch.setattr("cancerjev.cli.main._preflight_capability",
+                        lambda *args, **kwargs: canned_capability())
+    calls: list[dict] = []
+
+    def fake_systematic_campaign(**kwargs):
+        calls.append(kwargs)
+        return _FakeCampaignResult()
+
+    monkeypatch.setattr("cancerjev.research.systematic.run_systematic_campaign",
+                        fake_systematic_campaign)
+
+    dispatched = _run_campaign_validation(settings, repository, artifacts)
+
+    assert dispatched is True
+    assert calls[0]["activation"] == "VALIDATION"
+    assert calls[0]["profile"].profile_id == "LUAD_CAMPAIGN_V1"
+    runs = repository.list_runs(5, ownership=ExecutionOwnership.VALIDATION_RUN)
+    assert len(runs) == 1, "a validation campaign is a VALIDATION_RUN-owned run"
+    assert runs[0]["status"] == "COMPLETED"
+    assert runs[0]["activation"] == "VALIDATION"
+    assert runs[0]["readiness_effect"] == "NONE"
+    assert LUAD_CAMPAIGN_V1.readiness is ScientificReadiness.EXPERIMENTAL, \
+        "the experimental profile stays experimental after a validation run"

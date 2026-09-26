@@ -71,10 +71,12 @@ def test_expression_discovery_replay_is_complete_hash_bound_and_model_free(runti
         assert len(entry.outcome.coverage.missing[0].ids) == 2
         assert entry.tail.availability is MetricAvailability.OBSERVED
         assert entry.tail.valid_n == 23
-        assert entry.disposition is not None
-    assert result.retained_ids == tuple(GENES)
+        # Measurement is observed for every gene; nomination requires a declared
+        # tail case, and this fixture contains none.
+        assert entry.disposition_reason == "NO_TAIL_CASE_OBSERVED"
+    assert result.retained_ids == ()
     assert result.jev_review_ids == ()
-    assert all(entry.disposition.value == "RETAIN" for entry in result.entries)
+    assert all(entry.disposition.value == "DROP" for entry in result.entries)
     assert any("matched tumor aliquots" in limitation for limitation in result.limitations)
 
     plan_events = [event for event in events if event["type"] == "EXPRESSION_RUN_PLANNED"]

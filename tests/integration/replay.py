@@ -292,12 +292,17 @@ def cnv_occurrence_shard_body(project_id: str, case_ids_requested: list[str], *,
 
 
 def values_body(case_ids_requested: list[str], gene_ids: list[str], *, drop_columns: int = 0,
-                constant_value: float | None = None) -> bytes:
+                constant_value: float | None = None, outlier_case: bool = False) -> bytes:
     returned = case_ids_requested[: len(case_ids_requested) - drop_columns] if drop_columns else case_ids_requested
     lines = ["gene_id\t" + "\t".join(returned)]
     for gene_index, gene_id in enumerate(gene_ids):
         cells = [f"{(constant_value if constant_value is not None else 3.0 + gene_index + (index % 7) * 0.5):.4f}"
                  for index in range(len(returned))]
+        if outlier_case and cells:
+            # One declared outlying case per gene: a real upper tail case, so expression
+            # nomination semantics can be exercised instead of measurement-only DROP.
+            outlier = float(cells[0]) + 8.0
+            cells[0] = f"{outlier:.4f}"
         lines.append(gene_id + "\t" + "\t".join(cells))
     return ("\n".join(lines) + "\n").encode()
 
@@ -313,6 +318,7 @@ class ReplayTransport:
                   inconsistent_case_total_after_first: bool = False,
                   inconsistent_case_offset_after_first: bool = False,
                   constant_expression_value: float | None = None,
+                  expression_outlier_case: bool = False,
                   truncate_occurrence_page: bool = False,
                   duplicate_occurrence_across_pages: bool = False,
                   expression_only_gene: str | None = None) -> None:
@@ -327,6 +333,7 @@ class ReplayTransport:
         self.inconsistent_case_total_after_first = inconsistent_case_total_after_first
         self.inconsistent_case_offset_after_first = inconsistent_case_offset_after_first
         self.constant_expression_value = constant_expression_value
+        self.expression_outlier_case = expression_outlier_case
         self.truncate_occurrence_page = truncate_occurrence_page
         self.duplicate_occurrence_across_pages = duplicate_occurrence_across_pages
         self.expression_only_gene = expression_only_gene
@@ -414,7 +421,8 @@ class ReplayTransport:
             assert project not in self.empty_expression_projects, "guard failed: values requested without values"
             body = values_body(request.body["case_ids"], request.body["gene_ids"],
                                drop_columns=self.drop_value_columns,
-                               constant_value=self.constant_expression_value)
+                               constant_value=self.constant_expression_value,
+                               outlier_case=self.expression_outlier_case)
         else:  # pragma: no cover - guards against silent fixture drift
             raise AssertionError(f"replay transport has no fixture for {name}")
         media = "text/tab-separated-values" if request.accept != "application/json" else "application/json"

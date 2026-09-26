@@ -57,7 +57,8 @@ def _lanes(runtime, spec=LUAD_RESEARCH_V1):
     run_id = repository.create_run("modality-union", mode="LIVE", fixture_id=None,
                                    fixture_version=None, scope={"purpose": "UNION"})
     _, emit = _emit_box(repository, run_id)
-    transport = ReplayTransport(artifacts, run_id, repository=repository)
+    transport = ReplayTransport(artifacts, run_id, repository=repository,
+                                expression_outlier_case=True)
     mutation = run_mutation_discovery(run_id, transport, repository, artifacts, emit, spec)
     expression = run_expression_discovery(run_id, transport, repository, artifacts, emit, spec)
     return mutation, expression
@@ -184,7 +185,8 @@ def test_union_includes_an_expression_only_member(runtime):
                                    fixture_version=None, scope={"purpose": "UNION"})
     _, emit = _emit_box(repository, run_id)
     transport = ReplayTransport(artifacts, run_id, repository=repository,
-                                expression_only_gene=EXPRESSION_ONLY_GENE)
+                                expression_only_gene=EXPRESSION_ONLY_GENE,
+                                expression_outlier_case=True)
     mutation = run_mutation_discovery(run_id, transport, repository, artifacts, emit, LUAD_RESEARCH_V1)
     expression = run_expression_discovery(run_id, transport, repository, artifacts, emit, LUAD_RESEARCH_V1)
     cnv = _cnv_result(mutation, ())

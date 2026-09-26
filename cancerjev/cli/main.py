@@ -81,6 +81,14 @@ def parser() -> argparse.ArgumentParser:
         "program",
         help="one autonomous program step: select an eligible campaign by the declared policy",
     )
+    campaign = commands.add_parser(
+        "campaign",
+        help="canonical Campaign spine for the declared profile under validation activation",
+    )
+    campaign.add_argument(
+        "--validation", action="store_true",
+        help="explicit operator validation run: identical science, no autonomy, no readiness effect",
+    )
     discover = commands.add_parser(
         "discover",
         help="bounded Stage 4 systematic mutation discovery over the complete protein-coding gene universe",
@@ -450,29 +458,35 @@ def _autonomous_jev_service(settings: Settings, repository: Repository,
     return JevService(settings, repository, artifacts)
 
 
-def _run_campaign_systematic(settings: Settings, repository: Repository, artifacts: ArtifactStore,
-                             profile: Any, spec: Any, capability: Any, *,
-                             transport_factory: Any = None, jev_service: Any = None) -> bool:
-    """Canonical systematic Campaign execution on one SYSTEM_AUTONOMOUS run.
-
-    This is the only autonomous Campaign executor: the transitional provider-ranked
-    sweep remains reachable only through the explicitly labelled researcher/comparator
-    command path and can never produce canonical Campaign results.
-    """
+def _campaign_run(settings: Settings, repository: Repository, artifacts: ArtifactStore, *,
+                  profile: Any, spec: Any, capability: Any, activation: Any, ownership: Any,
+                  worker_id: str, transport_factory: Any = None, jev_service: Any = None,
+                  llm_generator: Any = None) -> bool:
+    """One canonical Campaign run under a declared activation and ownership."""
     from cancerjev.research.systematic import run_systematic_campaign
 
     service = (jev_service if jev_service is not None
                else _autonomous_jev_service(settings, repository, artifacts))
+    if llm_generator is None and settings.llm_model and os.getenv("OPENROUTER_API_KEY"):
+        from cancerjev.llm.openrouter import OpenRouterGenerator
+
+        # Optional bounded semantic component: absence or failure leaves the
+        # hypothesis stage unavailable/abstaining without failing the Campaign.
+        llm_generator = OpenRouterGenerator(model=settings.llm_model,
+                                            timeout=settings.llm_timeout_seconds)
     with _started_run(
-        repository, worker_id="campaign-worker",
+        repository, worker_id=worker_id,
         scope={"budget_policy": policy_payload(), "purpose": "SYSTEMATIC_CAMPAIGN",
                "profile_id": profile.profile_id, "spec_id": spec.spec_id,
                "project_id": profile.project_id, "research_spec": spec.as_dict(),
-               "execution": "SYSTEMATIC_MODALITY_UNION",
+               "execution": "SYSTEMATIC_MODALITY_UNION", "activation": activation,
+               "readiness_effect": "NONE",
                "enabled_modalities": [modality.value for modality in profile.enabled_modalities]},
-        started_message="Canonical systematic campaign run started.",
+        started_message=f"Canonical {activation.lower()} campaign run started.",
         started_data={"profile_id": profile.profile_id, "spec_id": spec.spec_id,
-                      "execution": "SYSTEMATIC_MODALITY_UNION"},
+                      "execution": "SYSTEMATIC_MODALITY_UNION", "activation": activation,
+                      "readiness_effect": "NONE"},
+        ownership=ownership,
     ) as run_id:
 
         def emit(target_run_id: str, event_type: str, key: str, message: str,
@@ -488,16 +502,106 @@ def _run_campaign_systematic(settings: Settings, repository: Repository, artifac
             run_id=run_id, profile=profile, spec=spec, capability=capability, settings=settings,
             repository=repository, artifacts=artifacts, emit=emit, publish_json=publish_json,
             jev_service=service, transport_factory=transport_factory,
-            max_states=settings.jev_max_states)
+            max_states=settings.jev_max_states, activation=activation,
+            llm_generator=llm_generator)
         totals = repository.gdc_run_totals(run_id)
         emit(run_id, "RUN_COMPLETED", "run:completed",
-             f"Systematic campaign completed with {len(result.state_ids)} union state(s).",
+             f"Systematic {activation.lower()} campaign completed with "
+             f"{len(result.state_ids)} union state(s).",
              data={"status": "COMPLETED", "reason_code": "SYSTEMATIC_CAMPAIGN_COMPLETE",
                    "coverage": result.coverage, **result.summary(),
                    "gdc_attempts": totals["attempts"], "gdc_bytes": totals["bytes"],
                    "gdc_cache_hits": totals["cache_hits"]})
     run = repository.get_run(run_id)
     return run is not None and run["status"] == "COMPLETED"
+
+
+def _run_campaign_systematic(settings: Settings, repository: Repository, artifacts: ArtifactStore,
+                             profile: Any, spec: Any, capability: Any, *,
+                             transport_factory: Any = None, jev_service: Any = None) -> bool:
+    """Canonical systematic Campaign execution on one SYSTEM_AUTONOMOUS run.
+
+    This is the only autonomous Campaign executor: the transitional provider-ranked
+    sweep remains reachable only through the explicitly labelled researcher/comparator
+    command path and can never produce canonical Campaign results.
+    """
+    from cancerjev.research.systematic import AUTONOMOUS_ACTIVATION
+
+    return _campaign_run(
+        settings, repository, artifacts, profile=profile, spec=spec, capability=capability,
+        activation=AUTONOMOUS_ACTIVATION, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS,
+        worker_id="campaign-worker", transport_factory=transport_factory,
+        jev_service=jev_service)
+
+
+def _run_campaign_validation(settings: Settings, repository: Repository, artifacts: ArtifactStore, *,
+                             transport_factory: Any = None, jev_service: Any = None,
+                             llm_generator: Any = None, capability: Any = None) -> bool:
+    """Explicit operator validation run: identical canonical science, no autonomy.
+
+    The profile stays EXPERIMENTAL; the run is VALIDATION_RUN-owned, it can never be
+    dispatched by the Program, it reports readiness_effect NONE, and its dossier is
+    the live evidence a later explicit promotion decision reviews.
+    """
+    from cancerjev.research.campaign import LUAD_CAMPAIGN_V1, require_validation_activation
+    from cancerjev.research.specs import research_spec_by_id
+    from cancerjev.research.systematic import VALIDATION_ACTIVATION
+
+    profile = LUAD_CAMPAIGN_V1
+    spec = research_spec_by_id(profile.spec_id)
+    if spec is None:
+        raise LiveRunError("UNKNOWN_RESEARCH_SPEC",
+                           f"{profile.profile_id} declares unknown spec {profile.spec_id}")
+    require_validation_activation(profile)
+    if capability is None:
+        capability = _preflight_capability(settings, repository, artifacts, profile,
+                                           transport_factory)
+    return _campaign_run(
+        settings, repository, artifacts, profile=profile, spec=spec, capability=capability,
+        activation=VALIDATION_ACTIVATION, ownership=ExecutionOwnership.VALIDATION_RUN,
+        worker_id="campaign-validation-worker", transport_factory=transport_factory,
+        jev_service=jev_service, llm_generator=llm_generator)
+
+
+def _preflight_capability(settings: Settings, repository: Repository, artifacts: ArtifactStore,
+                          profile: Any, transport_factory: Any = None) -> Any:
+    """Bounded capability preflight (status, one project, one open-file facet aggregate).
+
+    Runs inside a SYSTEM_AUTONOMOUS capability run and feeds the same activation gate
+    for both the autonomous dispatch path and the explicit validation route.
+    """
+    from cancerjev.research.capability import discover_cohort_capability
+
+    caps = production_caps(per_response_bytes=settings.gdc_per_response_bytes,
+                           timeout_seconds=settings.gdc_timeout_seconds)
+    factory = transport_factory if transport_factory is not None else (
+        lambda repo, arts, budget, run_id, emit: GDCTransport(
+            repo, arts, budget, run_id, emit, cache_enabled=settings.gdc_cache_enabled))
+    with _started_run(
+        repository, worker_id="campaign-preflight",
+        scope={"budget_policy": policy_payload(), "purpose": "CAMPAIGN_CAPABILITY_PREFLIGHT",
+               "profile_id": profile.profile_id, "project_id": profile.project_id},
+        started_message=f"Campaign capability preflight started for {profile.project_id}.",
+        started_data={"project_id": profile.project_id},
+    ) as preflight_run:
+
+        def preflight_emit(event_type: str, key: str, message: str, **kwargs: Any) -> None:
+            render_event(repository.append_event(preflight_run, event_type=event_type,
+                                                 idempotency_key=key, message=message, **kwargs))
+
+        transport = factory(repository, artifacts, RunBudget(caps=caps), preflight_run,
+                            preflight_emit)
+        capability = discover_cohort_capability(transport, project_id=profile.project_id)
+        totals = repository.gdc_run_totals(preflight_run)
+        preflight_emit("RUN_COMPLETED", "run:completed",
+                       f"Campaign capability preflight completed for {profile.project_id}.",
+                       data={"status": "COMPLETED",
+                             "reason_code": "CAMPAIGN_CAPABILITY_PREFLIGHT_COMPLETE",
+                             "coverage": "COMPLETE_FOR_SCOPE", "project_id": profile.project_id,
+                             "available_modalities": [modality.value
+                                                      for modality in capability.available_modalities()],
+                             "bytes": totals["bytes"], "gdc_attempts": totals["attempts"]})
+    return capability
 
 
 def _dispatch_campaign(settings: Settings, repository: Repository, artifacts: ArtifactStore,
@@ -511,7 +615,6 @@ def _dispatch_campaign(settings: Settings, repository: Repository, artifacts: Ar
     first inside a SYSTEM_AUTONOMOUS run and its result feeds the same gate.
     """
     from cancerjev.research.campaign import CampaignActivationError, require_autonomous_activation
-    from cancerjev.research.capability import discover_cohort_capability
     from cancerjev.research.program import dispatch_validated_campaign
     from cancerjev.research.specs import research_spec_by_id
 
@@ -521,35 +624,8 @@ def _dispatch_campaign(settings: Settings, repository: Repository, artifacts: Ar
                                       f"{profile.profile_id} declares unknown spec {profile.spec_id}")
     require_autonomous_activation(profile)
     if capability is None:
-        caps = production_caps(per_response_bytes=settings.gdc_per_response_bytes,
-                               timeout_seconds=settings.gdc_timeout_seconds)
-        factory = transport_factory if transport_factory is not None else (
-            lambda repo, arts, budget, run_id, emit: GDCTransport(
-                repo, arts, budget, run_id, emit, cache_enabled=settings.gdc_cache_enabled))
-        with _started_run(
-            repository, worker_id="campaign-preflight",
-            scope={"budget_policy": policy_payload(), "purpose": "CAMPAIGN_CAPABILITY_PREFLIGHT",
-                   "profile_id": profile.profile_id, "project_id": profile.project_id},
-            started_message=f"Campaign capability preflight started for {profile.project_id}.",
-            started_data={"project_id": profile.project_id},
-        ) as preflight_run:
-
-            def preflight_emit(event_type: str, key: str, message: str, **kwargs: Any) -> None:
-                render_event(repository.append_event(preflight_run, event_type=event_type,
-                                                     idempotency_key=key, message=message, **kwargs))
-
-            transport = factory(repository, artifacts, RunBudget(caps=caps), preflight_run,
-                                preflight_emit)
-            capability = discover_cohort_capability(transport, project_id=profile.project_id)
-            totals = repository.gdc_run_totals(preflight_run)
-            preflight_emit("RUN_COMPLETED", "run:completed",
-                           f"Campaign capability preflight completed for {profile.project_id}.",
-                           data={"status": "COMPLETED",
-                                 "reason_code": "CAMPAIGN_CAPABILITY_PREFLIGHT_COMPLETE",
-                                 "coverage": "COMPLETE_FOR_SCOPE", "project_id": profile.project_id,
-                                 "available_modalities": [modality.value
-                                                          for modality in capability.available_modalities()],
-                                 "bytes": totals["bytes"], "gdc_attempts": totals["attempts"]})
+        capability = _preflight_capability(settings, repository, artifacts, profile,
+                                           transport_factory)
     return dispatch_validated_campaign(
         profile=profile, capability=capability,
         run_campaign=lambda selected: _run_campaign_systematic(
@@ -653,6 +729,14 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit("operator deep flags require --researcher (autonomous runs reject operator overrides).")
     if args.command == "worker" and not live:
         raise SystemExit("worker runs the autonomous program loop against real open-access GDC; pass --live.")
+    if args.command == "campaign":
+        if not getattr(args, "validation", False):
+            raise SystemExit(
+                "campaign runs the canonical validation spine; pass --validation "
+                "(autonomous dispatch happens through program/worker).")
+        if not os.getenv("TYPESAFE_API_KEY"):
+            raise SystemExit(
+                "campaign requires the TYPESAFE_API_KEY environment variable (server-side only).")
     if args.command == "run" and not live and getattr(args, "fixture", None) != "demo":
         raise SystemExit("Choose --fixture demo for the offline demonstration or --live for a real open-access GDC sweep.")
     if args.command in {"discover", "discover-expression", "discover-cnv"} and not live:
@@ -723,6 +807,16 @@ def main(argv: list[str] | None = None) -> None:
             with ResearchOwnership(settings.lock_path):
                 repository.recover_interrupted()
                 _program(settings, repository, artifacts)
+        except OwnershipError as exc:
+            raise SystemExit(str(exc)) from exc
+        return
+    if args.command == "campaign":
+        try:
+            with ResearchOwnership(settings.lock_path):
+                for run_id in repository.recover_interrupted():
+                    print(f"[RECOVERY] preserved and stopped interrupted run {run_id}", flush=True)
+                if not _run_campaign_validation(settings, repository, artifacts):
+                    raise SystemExit(1)
         except OwnershipError as exc:
             raise SystemExit(str(exc)) from exc
         return

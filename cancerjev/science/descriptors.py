@@ -14,6 +14,7 @@ from cancerjev.domain.discovery import (
     CNV_SUMMARY_METHOD_ID,
     CNV_SUMMARY_VERSION,
     EXPRESSION_DROP_INSUFFICIENT_REASON,
+    EXPRESSION_DROP_MEASUREMENT_ONLY_REASON,
     EXPRESSION_DROP_OBSERVED_REASON,
     EXPRESSION_JEV_REVIEW_ASYMMETRY_RATIO,
     EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER,
@@ -121,8 +122,12 @@ def expression_lane_disposition(
 ) -> tuple[ExpressionDisposition, str, str | None]:
     """Declared expression-lane disposition; descriptive-only and deterministic.
 
-    RETAIN = an observed tail eligible at the declared minimum; DROP = no observed
-    values or an ineligible tail; JEV_REVIEW = the declared extreme-tail asymmetry
+    Measurement and nomination are separate contracts: an observed, computable
+    tail is measurement evidence for every gene, but nomination requires an
+    actual declared pattern. RETAIN therefore requires at least one observed
+    tail case beyond a fence; a gene with valid values and zero tail cases is
+    DROP with ``NO_TAIL_CASE_OBSERVED`` while its measurement still populates
+    the StatisticalState. JEV_REVIEW is the declared extreme-tail asymmetry
     trigger (both tails present and the larger at least
     ``EXPRESSION_JEV_REVIEW_ASYMMETRY_RATIO`` times the smaller).
     """
@@ -132,6 +137,8 @@ def expression_lane_disposition(
         return ExpressionDisposition.DROP, EXPRESSION_DROP_INSUFFICIENT_REASON, None
     lower = len(tail.lower_case_ids)
     upper = len(tail.upper_case_ids)
+    if lower == 0 and upper == 0:
+        return ExpressionDisposition.DROP, EXPRESSION_DROP_MEASUREMENT_ONLY_REASON, None
     if (lower and upper
             and max(lower, upper) >= EXPRESSION_JEV_REVIEW_ASYMMETRY_RATIO * min(lower, upper)):
         return (ExpressionDisposition.JEV_REVIEW, EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER,

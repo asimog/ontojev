@@ -20,7 +20,8 @@
 >   `tests/integration/test_autonomous_candidate_queue.py`,
 >   `tests/jev/test_pre_wide_selection.py`, `tests/science/test_program_loop.py`,
 >   `tests/test_schema_migrations.py`, `tests/test_storage_doctor.py`,
->   `tests/test_observability.py`.
+>   `tests/test_observability.py`, `tests/test_candidate_state_machine.py`,
+>   `tests/science/test_hypothesis_policy.py`.
 
 Read-only test-surface audit of OntoJev at `main` SHA `60c638c`, run with the
 openclaw `test-audit` skill (SKILL.md + CAMPAIGN.md, installed for Kilo and

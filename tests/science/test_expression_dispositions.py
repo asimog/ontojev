@@ -88,6 +88,24 @@ def test_balanced_tails_retain_without_a_trigger():
     assert trigger is None
 
 
+def test_measurement_without_a_tail_case_is_not_a_nomination():
+    """A computable distribution is measurement, not a discovery nomination."""
+    (disposition, reason, trigger), tail = _disposition(
+        {f"case-{index:03d}": 3.0 + (index % 7) * 0.5 for index in range(100)})
+
+    assert tail.availability is MetricAvailability.OBSERVED, \
+        "the measurement is still observed and populates the state"
+    assert tail.lower_case_ids == () and tail.upper_case_ids == ()
+    assert disposition is ExpressionDisposition.DROP
+    assert reason == "NO_TAIL_CASE_OBSERVED"
+    assert trigger is None
+
+    outcome = _summary({f"case-{index:03d}": 3.0 + (index % 7) * 0.5 for index in range(100)})
+    entry = ExpressionDiscoveryEntry(EntityRef(GENE_ID, "TP53", RELEASE), outcome, tail,
+                                     disposition, reason, trigger)
+    assert entry.disposition is ExpressionDisposition.DROP
+
+
 def test_extreme_tail_asymmetry_goes_to_jev_review():
     (disposition, reason, trigger), tail = _disposition(
         {f"case-{index:03d}": (0.0 if index < 8 else 63.0 if index == 99 else 3.0

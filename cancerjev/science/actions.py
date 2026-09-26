@@ -53,6 +53,12 @@ CHECK_NOT_OBSERVED: IntegrityOutcome = "NOT_OBSERVED"
 
 OUTCOME_COMPLETED = "COMPLETED"
 
+# The only registered actions that may carry measured observations into a new
+# evidence revision. A hypothesis can only be tested by an action in this set:
+# integrity and summary actions describe or verify existing evidence and cannot
+# discriminate between competing explanations.
+EVIDENCE_PRODUCING_ACTION_IDS = frozenset({"OCCURRENCE_DETAIL_EVIDENCE_V1"})
+
 
 class ActionError(Exception):
     def __init__(self, code: str, detail: str) -> None:
@@ -250,7 +256,7 @@ class ActionOutcome:
         if type(self.observations) is not tuple \
                 or not all(isinstance(o, MeasuredObservation) for o in self.observations):
             raise ActionError("INVALID_OBSERVATIONS", "observations must be typed measured records")
-        if self.observations and self.action_id != "OCCURRENCE_DETAIL_EVIDENCE_V1":
+        if self.observations and self.action_id not in EVIDENCE_PRODUCING_ACTION_IDS:
             raise ActionError("UNEXPECTED_OBSERVATIONS",
                               f"{self.action_id} is not a measured-evidence-producing action")
 
@@ -977,6 +983,7 @@ __all__ = [
     "CHECK_CONTRADICTED",
     "CHECK_NOT_OBSERVED",
     "CHECK_VERIFIED",
+    "EVIDENCE_PRODUCING_ACTION_IDS",
     "OUTCOME_COMPLETED",
     "ActionDefinition",
     "ActionEligibility",

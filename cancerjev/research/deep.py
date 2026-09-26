@@ -529,7 +529,7 @@ def plan_deep_slice(*, run_id: str, candidate: dict[str, Any], repository: Repos
                     created_at=utc_now(),
                 ),
                 repository.candidate_status_registration(
-                    candidate_id=candidate["candidate_id"], status="DEEP_ANALYSIS",
+                    candidate_id=candidate["candidate_id"], status="DEEP_ANALYZED",
                     current_stage="DEEP_ANALYSIS", updated_at=utc_now(),
                     latest_evidence_state_id=baseline_id,
                 ),
@@ -868,6 +868,7 @@ def dispatch_recorded_move(*, run_id: str, candidate: CandidateEvidence, result:
             candidate_id=candidate.candidate_id, iteration=result.iteration,
             data={"evidence_state_id": result.evidence_state_id, "move": decision.get("move"),
                   "reason_code": reason_code, "detail": detail, "dispatched": False,
+                  "decision_reason_code": decision.get("reason_code"),
                   "authorized": authorized, "authorized_by": authorized_by},
         )
         return DispatchResult(dispatched=False, reason_code=reason_code, action_id=None, result=None)
@@ -932,6 +933,7 @@ def dispatch_recorded_move(*, run_id: str, candidate: CandidateEvidence, result:
               "reason_code": "DISPATCHED", "action_id": action_id, "execution_id": execution_id,
               "output_evidence_state_id": evidence_state_id, "output_iteration": iteration,
               "dispatched": True, "authorized": True, "authorized_by": authorized_by,
+              "decision_reason_code": decision.get("reason_code"),
               "note": "the new revision is judged once by the caller"},
     )
     return DispatchResult(dispatched=True, reason_code="DISPATCHED", action_id=action_id, result=followup)

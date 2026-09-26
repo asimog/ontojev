@@ -245,6 +245,35 @@ def test_baseline_replay_mutates_nothing(runtime, monkeypatch):
         "no model call happens in the no-Jev replay"
 
 
+def test_stage8_replay_repairs_an_interrupted_completion(runtime, monkeypatch):
+    """A crash between the dossier and CANDIDATE_COMPLETE must not strand the candidate."""
+    run_id, summary, repository = _completed_slice(runtime, monkeypatch)
+    candidate = repository.get_candidate(summary["candidate_id"])
+    assert candidate["status"] == "CANDIDATE_COMPLETE"
+    with repository.database.connect(write=True) as connection:
+        connection.execute("UPDATE candidates SET status='DOSSIER_READY' WHERE candidate_id=?",
+                           (candidate["candidate_id"],))
+
+    rerun = run_stage8_finalize(
+        run_id=run_id, candidate=candidate, investigation_status="ABSTAINED",
+        final_move="ABSTAIN", stop_reason="NO_FURTHER_REGISTERED_ACTION", error_code=None,
+        steps=(), decisions=(), hypothesis=None, repository=repository,
+        artifacts=runtime[2],
+        emit=lambda rid, event_type, key, message, **kwargs: repository.append_event(
+            rid, event_type=event_type, idempotency_key=key, message=message, **kwargs),
+        publish_json=lambda rid, path, payload, purpose: runtime[2].publish(
+            path, json.dumps(payload, sort_keys=True).encode(), "application/json", purpose),
+    )
+
+    assert rerun["dossier_status"] == "DOSSIER_READY"
+    assert repository.get_candidate(candidate["candidate_id"])["status"] == "CANDIDATE_COMPLETE"
+    repairs = [event for event in _events(repository, run_id)
+               if event["type"] == "CANDIDATE_COMPLETED"
+               and event["data"].get("reason_code") == "FINALIZATION_STATUS_REPAIRED"]
+    assert len(repairs) == 1
+    assert repairs[0]["data"]["dossier_id"]
+
+
 def test_plan_abstention_is_finalized_not_comparable_downstream(runtime, monkeypatch):
     run_id, summary, repository = _completed_slice(
         runtime, monkeypatch, deep_action_id="NOT_A_REGISTERED_ACTION")

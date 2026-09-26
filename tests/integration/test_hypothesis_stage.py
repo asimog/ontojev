@@ -117,7 +117,23 @@ def test_template_generation_is_labelled_bounded_and_judged_once(runtime, monkey
     assert summary["hypothesis"]["requested_reason"] is None
     dispatch = [event for event in _events(repository, run_id)
                 if event["type"] == "NEXT_MOVE_DISPATCHED"]
-    assert not dispatch, "the GENERATE_HYPOTHESES terminal move is never dispatched"
+    assert all(event["data"]["move"] != "GENERATE_HYPOTHESES" for event in dispatch), \
+        "the GENERATE_HYPOTHESES terminal move itself is never dispatched"
+    policy = summary["hypothesis"]["policy"]
+    assert policy["policy_version"] == "hypothesis-policy-v1"
+    policy_events = [event for event in _events(repository, run_id)
+                     if event["type"] == "HYPOTHESIS_POLICY_RECORDED"]
+    assert len(policy_events) == 1
+    assert policy_events[0]["data"]["move"] == policy["move"]
+    if policy["move"] == "TEST_HYPOTHESIS":
+        assert policy["action_id"] in ACTION_REGISTRY
+        assert dispatch, "the requested discriminating test is dispatched through the recorded-move path"
+        assert dispatch[-1]["data"]["decision_reason_code"] == "HYPOTHESIS_TEST_REQUESTED"
+        assert dispatch[-1]["data"]["action_id"] == policy["action_id"]
+    else:
+        assert policy["move"] in {"KEEP_HYPOTHESIS", "ABSTAIN"}
+        assert all(event["data"].get("decision_reason_code") != "HYPOTHESIS_TEST_REQUESTED"
+                   for event in dispatch)
 
     rows = _hypothesis_rows(repository, run_id)
     assert len(rows) == 2
@@ -306,7 +322,6 @@ def test_each_statement_is_judged_once_and_bound_to_its_evidence(runtime, monkey
     run_id, summary, repository = _run(runtime, monkeypatch)
     rows = _hypothesis_rows(repository, run_id)
     candidate = repository.get_candidate(summary["candidate_id"])
-    evidence_state_id = candidate["latest_evidence_state_id"]
     evaluations = _evaluations(repository, run_id, "HYPOTHESIS")
     assert len(evaluations) == 2
     assert {row["input_ref_id"] for row in evaluations} == {row["hypothesis_id"] for row in rows}
@@ -325,7 +340,11 @@ def test_each_statement_is_judged_once_and_bound_to_its_evidence(runtime, monkey
     assert len(evaluated) == 2
     assert {event["data"]["hypothesis_id"] for event in evaluated} == {row["hypothesis_id"] for row in rows}
     assert all(event["data"]["input_ref_kind"] == "HYPOTHESIS" for event in evaluated)
-    assert all(event["data"]["evidence_state_id"] == evidence_state_id for event in evaluated)
+    generation_evidence_ids = {row["evidence_state_id"] for row in rows}
+    assert len(generation_evidence_ids) == 1, "every statement is bound to its generation revision"
+    generation_evidence_id = generation_evidence_ids.pop()
+    assert all(event["data"]["evidence_state_id"] == generation_evidence_id
+               for event in evaluated)
     assert all(event["data"]["generator"] == TEMPLATE_GENERATOR for event in evaluated)
 
     for row in rows:
@@ -333,7 +352,11 @@ def test_each_statement_is_judged_once_and_bound_to_its_evidence(runtime, monkey
                                         candidate_id=candidate["candidate_id"],
                                         allowed_action_ids=frozenset(ACTION_REGISTRY))
         assert stored.draft.statement == row["hypothesis"]["statement"]
-        assert stored.evidence_state_id == evidence_state_id
+        assert stored.evidence_state_id == generation_evidence_id
+
+    if summary["hypothesis"]["policy"]["move"] == "TEST_HYPOTHESIS":
+        assert candidate["latest_evidence_state_id"] != generation_evidence_id, \
+            "the requested discriminating test produced a new immutable revision"
 
     dossier = _dossier(runtime, repository, run_id, summary["candidate_id"])
     versions = dossier["sections"]["jev_model_question_versions"]["narrative"]
@@ -357,7 +380,8 @@ def test_identical_generated_text_reuses_its_review(runtime, monkeypatch):
     assert len(supplied) == 1
     assert cached[0]["vector"]["cache_source_evaluation_id"] == supplied[0]["evaluation_id"]
     assert cached[0]["vector"]["projection_hash"] == supplied[0]["vector"]["projection_hash"]
-    assert adapter.calls == 4, "2 wide + 1 deep + 1 reviewed hypothesis"
+    assert adapter.calls == 4, ("2 wide + 1 deep + 1 reviewed hypothesis; the policy keeps the "
+                                "statements because no evidence-producing test is registered")
 
 
 def test_dossiers_keep_their_reviews_to_their_own_candidate(runtime, monkeypatch):

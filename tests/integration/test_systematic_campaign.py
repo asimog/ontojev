@@ -18,10 +18,14 @@ from cancerjev.domain.capability import ScientificReadiness
 from cancerjev.domain.events import canonical_json
 from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.jev.service import JevService
-from cancerjev.research.campaign import LUAD_CAMPAIGN_V1
+from cancerjev.research.campaign import LUAD_CAMPAIGN_V1, CampaignActivationError
 from cancerjev.research.cutover import UNION_SELECTION_RULE_ID
 from cancerjev.research.specs import LUAD_RESEARCH_V1
-from cancerjev.research.systematic import run_systematic_campaign
+from cancerjev.research.systematic import (
+    AUTONOMOUS_ACTIVATION,
+    VALIDATION_ACTIVATION,
+    run_systematic_campaign,
+)
 from cancerjev.storage.ownership import OwnershipError
 from cancerjev.storage.readers import read_state_record
 from tests.helpers import canned_capability
@@ -36,7 +40,8 @@ VALIDATED_TEST_PROFILE = replace(
 
 
 def _execute(runtime, *, max_states=None, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS,
-             default_transport: bool = False):
+             default_transport: bool = False, budget_sink: list | None = None,
+             profile=None, activation: str = AUTONOMOUS_ACTIVATION):
     settings, repository, artifacts = runtime
     run_id = repository.create_run(
         "campaign-worker", mode="LIVE", fixture_id=None, fixture_version=None,
@@ -52,15 +57,19 @@ def _execute(runtime, *, max_states=None, ownership=ExecutionOwnership.SYSTEM_AU
         content = payload if isinstance(payload, bytes) else canonical_json(payload)
         return artifacts.publish(path, content, "application/json", purpose)
 
+    def factory(repo, arts, budget, rid, emitter):
+        if budget_sink is not None:
+            budget_sink.append(budget)
+        return transport
+
     result = run_systematic_campaign(
-        run_id=run_id, profile=VALIDATED_TEST_PROFILE, spec=LUAD_RESEARCH_V1,
+        run_id=run_id, profile=profile or VALIDATED_TEST_PROFILE, spec=LUAD_RESEARCH_V1,
         capability=canned_capability(), settings=settings, repository=repository,
         artifacts=artifacts, emit=emit, publish_json=publish_json,
         jev_service=JevService(settings, repository, artifacts,
                                adapter_factory=lambda: StubAdapter()),
-        transport_factory=(None if default_transport
-                           else lambda repo, arts, budget, rid, emitter: transport),
-        max_states=max_states)
+        transport_factory=(None if default_transport else factory),
+        max_states=max_states, activation=activation)
     return run_id, transport, events, result
 
 
@@ -190,6 +199,58 @@ def test_replay_determinism_is_stable(runtime):
     second_genes = [record["entity"]["gene_id"]
                     for record in repository.list_table("candidates", second[0])]
     assert first_genes == second_genes
+
+
+def test_campaign_budget_is_global_and_serves_followups(runtime):
+    sink: list = []
+    _, _, _, result = _execute(runtime, budget_sink=sink)
+
+    assert len(sink) >= 4, "mutation, expression, CNV and the follow-up transport"
+    assert len({id(budget) for budget in sink}) == 1, \
+        "every lane and the candidate follow-up share one Campaign budget"
+    caps = sink[0].caps
+    assert caps.max_bytes == 4 * 1024 * 1024 * 1024
+    assert caps.max_shard_bytes == 512 * 1024 * 1024, "per-acquisition-shard allowance retained"
+    assert caps.adaptive is False, "the declared Campaign ceiling is exact"
+    assert result.state_ids
+
+
+def test_validation_activation_runs_an_experimental_profile_without_readiness_effect(runtime):
+    """The explicit validation route closes the bootstrap circle without weakening the gate."""
+    _, repository, _ = runtime
+    assert LUAD_CAMPAIGN_V1.readiness is ScientificReadiness.EXPERIMENTAL
+
+    run_id, _, _, result = _execute(
+        runtime, profile=LUAD_CAMPAIGN_V1, ownership=ExecutionOwnership.VALIDATION_RUN,
+        activation=VALIDATION_ACTIVATION)
+
+    assert result.activation == "VALIDATION"
+    assert result.state_ids, "the identical canonical spine executed"
+    assert LUAD_CAMPAIGN_V1.readiness is ScientificReadiness.EXPERIMENTAL, \
+        "a validation run never changes readiness"
+    run = repository.get_run(run_id)
+    assert run["execution_ownership"] == "VALIDATION_RUN"
+    assert result.summary()["readiness_effect"] == "NONE"
+
+
+def test_autonomous_activation_still_refuses_an_experimental_profile(runtime):
+    with pytest.raises(CampaignActivationError) as failure:
+        _execute(runtime, profile=LUAD_CAMPAIGN_V1, activation=AUTONOMOUS_ACTIVATION)
+    assert failure.value.code == "PROFILE_NOT_VALIDATED_FOR_AUTONOMOUS_USE"
+
+
+def test_validation_activation_refuses_an_autonomous_ready_profile(runtime):
+    with pytest.raises(CampaignActivationError) as failure:
+        _execute(runtime, profile=VALIDATED_TEST_PROFILE,
+                 ownership=ExecutionOwnership.VALIDATION_RUN, activation=VALIDATION_ACTIVATION)
+    assert failure.value.code == "PROFILE_ALREADY_AUTONOMOUS_READY"
+
+
+def test_validation_ownership_mismatch_is_refused(runtime):
+    with pytest.raises(OwnershipError):
+        _execute(runtime, profile=LUAD_CAMPAIGN_V1,
+                 ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS,
+                 activation=VALIDATION_ACTIVATION)
 
 
 def test_researcher_ownership_is_refused(runtime):

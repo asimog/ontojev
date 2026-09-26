@@ -107,6 +107,24 @@ def require_autonomous_activation(profile: CampaignProfile) -> None:
         )
 
 
+def require_validation_activation(profile: CampaignProfile) -> None:
+    """Validation runs apply only to profiles below autonomous readiness.
+
+    The validation route executes the identical canonical spine under
+    VALIDATION_RUN ownership so an EXPERIMENTAL profile can produce the live
+    evidence its promotion requires, without weakening the autonomous gate: the
+    Program still refuses the same profile, and readiness can only change by an
+    explicit code/config edit after review.
+    """
+    if readiness_rank(profile.readiness) >= readiness_rank(
+            ScientificReadiness.VALIDATED_FOR_AUTONOMOUS_USE):
+        raise CampaignActivationError(
+            "PROFILE_ALREADY_AUTONOMOUS_READY",
+            f"{profile.profile_id} readiness is {profile.readiness.value}; validation runs "
+            "apply only below autonomous readiness",
+        )
+
+
 def require_capability(profile: CampaignProfile, capability: CohortCapability) -> None:
     """Refuse activation when an enabled modality is not AVAILABLE for the cohort."""
     if capability.project_id != profile.project_id:

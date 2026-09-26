@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any, cast
 
-from cancerjev.domain.events import utc_now
+from cancerjev.domain.events import canonical_json, utc_now
 from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.jev.service import JevService
 from cancerjev.research.acquisition import AcquisitionTransport
@@ -47,6 +47,7 @@ from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
 
 AUTONOMOUS_DISPATCH_AUTHORIZATION = "autonomous-policy-v1"
+VALIDATION_DISPATCH_AUTHORIZATION = "validation-policy-v1"
 
 
 @dataclass(frozen=True)
@@ -115,6 +116,94 @@ def _finalized(status: str, final_move: str | None, stop_reason: str, error_code
         candidate_status="CANDIDATE_COMPLETE" if complete else "FAILED",
         final_result=finalization.get("final_result"),
     )
+
+
+def _apply_hypothesis_policy(*, run_id: str, candidate: dict[str, Any], plan: Any,
+                             current: FollowUpResult, hypothesis: dict[str, Any],
+                             steps: list[dict[str, Any]], decisions: list[dict[str, Any]],
+                             dispatches: int, repository: Repository,
+                             emit: Callable[..., Any], publish_json: PublishJson,
+                             read_artifact: Callable[[str], bytes | None],
+                             jev_service: JevService | None,
+                             authorize_iteration: bool,
+                             authorized_by: str,
+                             ) -> tuple[FollowUpResult, int, dict[str, Any]]:
+    """Record the hypothesis policy decision and dispatch one requested test.
+
+    The policy consumes the recorded critique; when it requests exactly one
+    registered discriminating action, that action is dispatched through the same
+    recorded-move path (same caps, same revision limits) and the resulting
+    revision is judged once. Otherwise the decision is recorded and nothing is
+    executed. Jev never chooses or executes anything.
+    """
+    from cancerjev.research.hypothesis_policy import decide_hypothesis_test
+    from cancerjev.science.actions import EVIDENCE_PRODUCING_ACTION_IDS
+
+    hypothesis_ids = {str(item) for item in (hypothesis.get("hypothesis_ids") or [])}
+    rows = [row["hypothesis"] for row in repository.list_table("hypotheses", run_id)
+            if row["candidate_id"] == candidate["candidate_id"]
+            and row["hypothesis_id"] in hypothesis_ids]
+    producing_action: str | None = None
+    if current.revision is not None and current.revision.revision.action is not None:
+        producing_action = current.revision.revision.action.action_id
+    eligible_ids = (
+        [item.action_id
+         for item in eligible_actions(current.revision.revision, "EVIDENCE_STATE")
+         if item.eligible]
+        if current.revision is not None else [])
+    dispatchable = [action_id for action_id in eligible_ids if action_id != producing_action]
+    decision = decide_hypothesis_test(
+        hypotheses=rows, evaluations=list(hypothesis.get("evaluations") or []),
+        dispatchable_action_ids=dispatchable,
+        evidence_producing_action_ids=EVIDENCE_PRODUCING_ACTION_IDS)
+    payload: dict[str, Any] = {
+        **decision.payload(), "candidate_id": candidate["candidate_id"],
+        "evidence_state_id": current.evidence_state_id,
+        "dispatchable_action_ids": sorted(dispatchable),
+        "evidence_producing_action_ids": sorted(EVIDENCE_PRODUCING_ACTION_IDS),
+    }
+    artifact = publish_json(
+        run_id, f"runs/{run_id}/hypotheses/policy-{candidate['candidate_id']}"
+                f"-i{current.iteration}.json",
+        canonical_json(payload), "hypothesis-policy")
+    emit(
+        run_id, "HYPOTHESIS_POLICY_RECORDED",
+        f"hypothesis-policy:{candidate['candidate_id']}:{decision.move}",
+        f"Hypothesis policy decided {decision.move}: {decision.reason_code}.",
+        stage="HYPOTHESIS_VERIFICATION", candidate_id=candidate["candidate_id"],
+        data={"candidate_id": candidate["candidate_id"], "move": decision.move,
+              "reason_code": decision.reason_code, "hypothesis_id": decision.hypothesis_id,
+              "action_id": decision.action_id, "policy_version": decision.policy_version,
+              "hypotheses": len(rows), "dispatchable_action_ids": sorted(dispatchable),
+              "evidence_state_id": current.evidence_state_id},
+        artifact_refs=[artifact.ref()],
+        registrations=[repository.artifact_registration(artifact, run_id)],
+    )
+    if (decision.move != "TEST_HYPOTHESIS" or not authorize_iteration
+            or decision.action_id is None or dispatches >= FOLLOWUP_LIMIT):
+        return current, dispatches, payload
+    dispatch = dispatch_recorded_move(
+        run_id=run_id, candidate=plan.candidate, result=current,
+        decision={"move": "FOLLOW_UP", "reason_code": "HYPOTHESIS_TEST_REQUESTED",
+                  "policy_version": decision.policy_version,
+                  "hypothesis_id": decision.hypothesis_id,
+                  "dimensions": {"distinct_eligible_action_ids": [decision.action_id]}},
+        repository=repository, emit=emit, publish_json=publish_json,
+        read_artifact=read_artifact, authorized=True, authorized_by=authorized_by)
+    payload["dispatch"] = dispatch.summary()
+    if not dispatch.dispatched:
+        return current, dispatches, payload
+    new_result = cast(FollowUpResult, dispatch.result)
+    judgement = judge_evidence_revision(
+        run_id=run_id, candidate=plan.candidate, result=new_result,
+        jev_service=jev_service, emit=emit) if jev_service is not None else {
+            "deep_evaluation_id": None, "deep_error_code": "JEV_DISABLED", "next_move": None}
+    steps.append(_step_summary(new_result, judgement))
+    steps[-1]["dispatch"] = dispatch.summary()
+    next_decision = judgement.get("next_move")
+    if isinstance(next_decision, dict):
+        decisions.append(next_decision)
+    return new_result, dispatches + 1, payload
 
 
 def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selection: str,
@@ -231,6 +320,14 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
         hypothesis = dict(hypotheses)
         if hypothesis.get("status") == "GENERATED":
             investigation_status = "HYPOTHESIZED"
+            current, dispatches, policy_payload = _apply_hypothesis_policy(
+                run_id=run_id, candidate=candidate, plan=plan, current=current,
+                hypothesis=hypothesis, steps=steps, decisions=decisions,
+                dispatches=dispatches, repository=repository, emit=emit,
+                publish_json=publish_json, read_artifact=read_artifact,
+                jev_service=jev_service, authorize_iteration=authorize_iteration,
+                authorized_by=authorized_by)
+            hypothesis["policy"] = policy_payload
     finalization = stage("FINALIZATION", lambda: run_stage8_finalize(
         run_id=run_id, candidate=candidate, investigation_status=investigation_status,
         final_move=final_move, stop_reason=stop_reason, error_code=None, steps=tuple(steps),
@@ -250,6 +347,7 @@ class AutonomousCandidateQueue:
 
     candidates: tuple[dict[str, Any], ...]
     failures: tuple[dict[str, str], ...]
+    authorized_by: str = AUTONOMOUS_DISPATCH_AUTHORIZATION
 
     @property
     def completed_count(self) -> int:
@@ -266,7 +364,7 @@ class AutonomousCandidateQueue:
             "completed_count": self.completed_count,
             "failures": [dict(failure) for failure in self.failures],
             "candidate_queue_exhausted": self.candidate_queue_exhausted,
-            "authorized_by": AUTONOMOUS_DISPATCH_AUTHORIZATION,
+            "authorized_by": self.authorized_by,
             "run_scope": ("CANDIDATE_QUEUE_EXHAUSTED" if self.candidate_queue_exhausted
                           else "CANDIDATES_INCOMPLETE"),
             "candidates_completed": [
@@ -291,17 +389,18 @@ def _read_artifact(repository: Repository,
 
 
 def _record_terminal_failure(run_id: str, candidate_id: str, reason_code: str, detail: str,
-                             emit: Callable[..., Any], repository: Repository) -> None:
+                             emit: Callable[..., Any], repository: Repository,
+                             authorized_by: str) -> None:
     current = next((row for row in repository.list_table("candidates", run_id)
                     if row["candidate_id"] == candidate_id), None)
     if current is not None and current.get("status") == "CANDIDATE_COMPLETE":
         return
     emit(
         run_id, "CANDIDATE_NOT_COMPLETED", f"queue:{candidate_id}:terminal-failure",
-        f"Autonomous candidate {candidate_id} is terminal without a completed dossier: {reason_code}.",
+        f"Candidate {candidate_id} is terminal without a completed dossier: {reason_code}.",
         stage="FINALIZATION", level="error", candidate_id=candidate_id,
         data={"candidate_id": candidate_id, "reason_code": reason_code, "detail": detail,
-              "terminal_state": "FAILED", "authorized_by": AUTONOMOUS_DISPATCH_AUTHORIZATION},
+              "terminal_state": "FAILED", "authorized_by": authorized_by},
         registrations=[repository.candidate_status_registration(
             candidate_id=candidate_id, status="FAILED", current_stage=None, updated_at=utc_now())],
     )
@@ -312,18 +411,23 @@ def run_autonomous_candidate_queue(*, run_id: str, repository: Repository,
                                    publish_json: PublishJson, stage: StageRunner,
                                    jev_service: JevService | None,
                                    transport: AcquisitionTransport | None = None,
-                                   mode: str = "LIVE") -> AutonomousCandidateQueue:
+                                   mode: str = "LIVE",
+                                   llm_generator: HypothesisGenerator | None = None,
+                                   ownership: ExecutionOwnership = ExecutionOwnership.SYSTEM_AUTONOMOUS,
+                                   authorized_by: str = AUTONOMOUS_DISPATCH_AUTHORIZATION,
+                                   ) -> AutonomousCandidateQueue:
     """Process every policy-promoted Candidate to a terminal state; no operator input.
 
     Ordering is the deterministic ``promotion_slot`` of the persisted candidates.
-    Follow-ups are dispatched under Python's declared autonomous authorization and
-    still obey every existing cap and refusal. One candidate's failure is recorded
-    with an explicit typed reason and a terminal status; it never aborts or
-    corrupts another candidate. Researcher-run ownership is refused: this queue is
-    only reachable on a SYSTEM_AUTONOMOUS run, and researcher overrides remain on
-    the separate operator path.
+    Follow-ups are dispatched under the declared authorization of the owning
+    activation (``autonomous-policy-v1`` or ``validation-policy-v1``) and still
+    obey every existing cap and refusal. One candidate's failure is recorded with
+    an explicit typed reason and a terminal status; it never aborts or corrupts
+    another candidate. Researcher-run ownership is refused: this queue is
+    reachable only on a SYSTEM_AUTONOMOUS or VALIDATION_RUN run, and researcher
+    overrides remain on the separate operator path.
     """
-    repository.require_run_ownership(run_id, ExecutionOwnership.SYSTEM_AUTONOMOUS)
+    repository.require_run_ownership(run_id, ownership)
     rows = {row["candidate_id"]: row for row in repository.list_table("candidates", run_id)}
     promoted = sorted(
         (row for row in rows.values()
@@ -342,8 +446,8 @@ def run_autonomous_candidate_queue(*, run_id: str, repository: Repository,
                 selection=selection, repository=repository, artifacts=artifacts, emit=emit,
                 publish_json=publish_json, read_artifact=read_artifact, stage=stage,
                 jev_service=jev_service, authorize_iteration=True, hypotheses_requested=False,
-                llm_generator=None, transport=transport, mode=mode,
-                authorized_by=AUTONOMOUS_DISPATCH_AUTHORIZATION,
+                llm_generator=llm_generator, transport=transport, mode=mode,
+                authorized_by=authorized_by,
             )
             summaries.append(investigation.summary())
             if investigation.candidate_status != "CANDIDATE_COMPLETE":
@@ -351,7 +455,7 @@ def run_autonomous_candidate_queue(*, run_id: str, repository: Repository,
                 failures.append({"candidate_id": candidate_id, "reason_code": reason,
                                  "terminal_state": investigation.candidate_status})
                 _record_terminal_failure(run_id, candidate_id, reason, investigation.stop_reason,
-                                         emit, repository)
+                                         emit, repository, authorized_by)
         except Exception as exc:  # noqa: BLE001 - one candidate must not abort the queue
             reason = str(getattr(exc, "code", type(exc).__name__))
             summaries.append({
@@ -363,5 +467,6 @@ def run_autonomous_candidate_queue(*, run_id: str, repository: Repository,
             })
             failures.append({"candidate_id": candidate_id, "reason_code": reason,
                              "terminal_state": "FAILED"})
-            _record_terminal_failure(run_id, candidate_id, reason, str(exc), emit, repository)
-    return AutonomousCandidateQueue(tuple(summaries), tuple(failures))
+            _record_terminal_failure(run_id, candidate_id, reason, str(exc), emit, repository,
+                                     authorized_by)
+    return AutonomousCandidateQueue(tuple(summaries), tuple(failures), authorized_by)

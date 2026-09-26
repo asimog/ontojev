@@ -22,7 +22,7 @@ from cancerjev.domain.capability import CohortCapability, Modality
 from cancerjev.domain.discovery import CNV_CASE_SHARD_SIZE
 from cancerjev.domain.measurements import Acquisition
 from cancerjev.domain.runs import ExecutionOwnership
-from cancerjev.gdc.budget import production_caps
+from cancerjev.gdc.budget import campaign_caps
 from cancerjev.gdc.transport import GDCTransport, RunBudget
 from cancerjev.jev.service import JevService
 from cancerjev.research.acquisition import LiveRunError
@@ -30,6 +30,7 @@ from cancerjev.research.campaign import (
     CampaignProfile,
     require_autonomous_activation,
     require_capability,
+    require_validation_activation,
 )
 from cancerjev.research.cnv_discovery import (
     plan_cnv_case_shards,
@@ -39,8 +40,12 @@ from cancerjev.research.cnv_discovery import (
 from cancerjev.research.cutover import UNION_SELECTION_RULE_ID, compose_discovery_states
 from cancerjev.research.discovery import run_mutation_discovery
 from cancerjev.research.expression_discovery import run_expression_discovery
-from cancerjev.research.investigation import run_autonomous_candidate_queue
-from cancerjev.research.seams import PublishJson, run_stage
+from cancerjev.research.investigation import (
+    AUTONOMOUS_DISPATCH_AUTHORIZATION,
+    VALIDATION_DISPATCH_AUTHORIZATION,
+    run_autonomous_candidate_queue,
+)
+from cancerjev.research.seams import HypothesisGenerator, PublishJson, run_stage
 from cancerjev.research.specs import ResearchSpec
 from cancerjev.research.state_store import persist_state
 from cancerjev.research.wide import (
@@ -59,6 +64,9 @@ REQUIRED_MODALITIES: tuple[Modality, ...] = (
     Modality.EXPRESSION_RNASEQ,
     Modality.MUTATION_WXS,
 )
+AUTONOMOUS_ACTIVATION = "AUTONOMOUS"
+VALIDATION_ACTIVATION = "VALIDATION"
+ACTIVATIONS = (AUTONOMOUS_ACTIVATION, VALIDATION_ACTIVATION)
 
 
 @dataclass(frozen=True)
@@ -78,11 +86,14 @@ class SystematicCampaignResult:
     pre_wide: PreWideSelection
     wide: dict[str, Any] | None
     candidate_queue: dict[str, Any] | None = None
+    activation: str = AUTONOMOUS_ACTIVATION
 
     def summary(self) -> dict[str, Any]:
         return {
             "profile_id": self.profile_id, "spec_id": self.spec_id,
             "execution": "SYSTEMATIC_MODALITY_UNION",
+            "activation": self.activation,
+            "readiness_effect": "NONE",
             "selection_rule": self.union_selection_rule,
             "mutation_survivors": list(self.mutation_survivors),
             "expression_genes": self.expression_genes,
@@ -101,12 +112,25 @@ class SystematicCampaignResult:
 
 
 def validate_campaign_binding(profile: CampaignProfile, spec: ResearchSpec,
-                              capability: CohortCapability) -> None:
-    """The canonical executor refuses anything but the full systematic modality set."""
+                              capability: CohortCapability, *,
+                              activation: str = AUTONOMOUS_ACTIVATION) -> None:
+    """The canonical executor refuses anything but the full systematic modality set.
+
+    AUTONOMOUS activation requires a profile validated for autonomous use and a
+    SYSTEM_AUTONOMOUS run; VALIDATION activation runs the identical spine for the
+    same profile below autonomous readiness under VALIDATION_RUN ownership. Neither
+    path changes readiness, and the Program can only dispatch the autonomous one.
+    """
+    if activation not in ACTIVATIONS:
+        raise LiveRunError("CAMPAIGN_ACTIVATION_UNSUPPORTED",
+                           f"unknown activation {activation!r}")
     if profile.spec_id != spec.spec_id:
         raise LiveRunError("CAMPAIGN_SPEC_MISMATCH",
                            f"{profile.profile_id} binds {profile.spec_id}, not {spec.spec_id}")
-    require_autonomous_activation(profile)
+    if activation == AUTONOMOUS_ACTIVATION:
+        require_autonomous_activation(profile)
+    else:
+        require_validation_activation(profile)
     require_capability(profile, capability)
     if profile.enabled_modalities != REQUIRED_MODALITIES:
         raise LiveRunError(
@@ -123,24 +147,32 @@ def run_systematic_campaign(*, run_id: str, profile: CampaignProfile, spec: Rese
                             emit: Callable[..., Any], publish_json: PublishJson,
                             jev_service: JevService,
                             transport_factory: TransportFactory | None = None,
-                            max_states: int | None = None) -> SystematicCampaignResult:
-    """Execute the canonical Campaign spine on one SYSTEM_AUTONOMOUS run."""
-    repository.require_run_ownership(run_id, ExecutionOwnership.SYSTEM_AUTONOMOUS)
-    validate_campaign_binding(profile, spec, capability)
-    caps = production_caps(
+                            max_states: int | None = None,
+                            activation: str = AUTONOMOUS_ACTIVATION,
+                            llm_generator: HypothesisGenerator | None = None,
+                            ) -> SystematicCampaignResult:
+    """Execute the canonical Campaign spine under one declared activation."""
+    expected_ownership = (
+        ExecutionOwnership.SYSTEM_AUTONOMOUS if activation == AUTONOMOUS_ACTIVATION
+        else ExecutionOwnership.VALIDATION_RUN)
+    repository.require_run_ownership(run_id, expected_ownership)
+    validate_campaign_binding(profile, spec, capability, activation=activation)
+    # One Campaign-global budget: every lane transport and every candidate
+    # follow-up shares this exact RunBudget object, so the declared Campaign
+    # ceiling is total rather than per-lane. Per-acquisition-shard allowances
+    # remain in the caps.
+    campaign_budget = RunBudget(caps=campaign_caps(
         per_response_bytes=settings.gdc_per_response_bytes,
-        timeout_seconds=settings.gdc_timeout_seconds,
-    )
+        timeout_seconds=settings.gdc_timeout_seconds))
 
     def lane_emit(event_type: str, key: str, message: str, **kwargs: Any) -> None:
         """Lane functions and the GDC transport own one run id: bind it for them."""
         emit(run_id, event_type, key, message, **kwargs)
 
     def lane_transport() -> Any:
-        budget = RunBudget(caps=caps)
         if transport_factory is not None:
-            return transport_factory(repository, artifacts, budget, run_id, lane_emit)
-        return GDCTransport(repository, artifacts, budget, run_id, lane_emit,
+            return transport_factory(repository, artifacts, campaign_budget, run_id, lane_emit)
+        return GDCTransport(repository, artifacts, campaign_budget, run_id, lane_emit,
                             cache_enabled=settings.gdc_cache_enabled)
 
     mutation = run_stage(
@@ -195,11 +227,20 @@ def run_systematic_campaign(*, run_id: str, profile: CampaignProfile, spec: Rese
     )
     queue = None
     if wide_result["promoted"]:
+        # Candidate follow-ups acquire real evidence through the same Campaign
+        # budget and run id; a follow-up is never an uncontrolled acquisition.
+        # The pinned LLM generator is an optional bounded semantic component:
+        # its failure leaves the hypothesis stage UNAVAILABLE without failing
+        # the Campaign, and template fallback stays the labelled fixture path.
         queue = run_autonomous_candidate_queue(
             run_id=run_id, repository=repository, artifacts=artifacts, emit=emit,
             publish_json=publish_json,
             stage=lambda name, function: run_stage(emit, run_id, name, function),
-            jev_service=jev_service, transport=None, mode="LIVE").summary()
+            jev_service=jev_service, transport=lane_transport(), mode="LIVE",
+            llm_generator=llm_generator, ownership=expected_ownership,
+            authorized_by=(AUTONOMOUS_DISPATCH_AUTHORIZATION
+                           if activation == AUTONOMOUS_ACTIVATION
+                           else VALIDATION_DISPATCH_AUTHORIZATION)).summary()
     return SystematicCampaignResult(
         run_id=run_id, profile_id=profile.profile_id, spec_id=spec.spec_id,
         mutation_survivors=tuple(mutation.survivor_ids),
@@ -208,4 +249,5 @@ def run_systematic_campaign(*, run_id: str, profile: CampaignProfile, spec: Rese
         state_ids=tuple(record.state_id for record in records),
         union_selection_rule=UNION_SELECTION_RULE_ID, coverage=coverage,
         pre_wide=selection, wide=wide_result, candidate_queue=queue,
+        activation=activation,
     )

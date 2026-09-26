@@ -347,6 +347,31 @@ def derive_stage8(*, run_id: str, candidate: dict[str, Any], investigation_statu
     return final_result, comparison
 
 
+def _repair_completed_candidate_status(*, run_id: str, candidate: dict[str, Any],
+                                       repository: Repository, emit: Callable[..., Any],
+                                       dossier_id: str) -> None:
+    """Re-assert CANDIDATE_COMPLETE when an interrupted finalization left DOSSIER_READY."""
+    current = repository.get_candidate(candidate["candidate_id"])
+    if current is None or str(current["status"]) != "DOSSIER_READY":
+        return
+    revisions = repository.evidence_revisions(candidate["candidate_id"])
+    latest_evidence_state_id = (
+        max(revisions, key=lambda row: int(row["iteration"]))["evidence_state_id"]
+        if revisions else None)
+    emit(
+        run_id, "CANDIDATE_COMPLETED", f"finalize:{candidate['candidate_id']}:status-repair",
+        f"Candidate {candidate['candidate_id']} already owns its dossier; re-asserting completion "
+        "after an interrupted finalization.",
+        stage="FINALIZATION", candidate_id=candidate["candidate_id"], level="warning",
+        data={"candidate_id": candidate["candidate_id"], "dossier_id": dossier_id,
+              "reason_code": "FINALIZATION_STATUS_REPAIRED"},
+        registrations=[repository.candidate_status_registration(
+            candidate_id=candidate["candidate_id"], status="CANDIDATE_COMPLETE",
+            current_stage=None, updated_at=utc_now(), dossier_id=dossier_id,
+            latest_evidence_state_id=latest_evidence_state_id)],
+    )
+
+
 def run_stage8_finalize(*, run_id: str, candidate: dict[str, Any], investigation_status: str,
                         final_move: str | None, stop_reason: str, error_code: str | None,
                         steps: tuple[dict[str, Any], ...],
@@ -363,7 +388,12 @@ def run_stage8_finalize(*, run_id: str, candidate: dict[str, Any], investigation
     final_result_id = stable_id(run_id, f"final-result:{candidate['candidate_id']}")
     existing = repository.get_dossier(dossier_id)
     if existing is not None:
-        # Idempotent: the candidate already completed; replay only restates the record.
+        # Idempotent: the candidate already owns its dossier. A crash between the
+        # dossier and the completion registration must not strand it in
+        # DOSSIER_READY, so the replay re-asserts completion exactly once.
+        _repair_completed_candidate_status(
+            run_id=run_id, candidate=candidate, repository=repository, emit=emit,
+            dossier_id=dossier_id)
         return {
             "dossier_status": "DOSSIER_READY", "error_code": None,
             "candidate_status": "CANDIDATE_COMPLETE",

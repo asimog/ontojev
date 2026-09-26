@@ -293,11 +293,14 @@ def test_dossier_refuses_a_corrupt_authoritative_revision(runtime, monkeypatch):
 
 
 def test_deep_evaluations_are_bound_to_the_candidate_they_judged(runtime, monkeypatch):
-    run_id, repository, _ = _fixture_run(runtime, monkeypatch)
+    run_id, repository, candidate = _fixture_run(runtime, monkeypatch)
+    chain = _chain(runtime, repository, candidate)
     deep = repository.page_child("jev_evaluations", run_id, 20, None,
                                  {"purpose": "DEEP"})["items"]
-    assert len(deep) == 1
+    assert len(deep) == len(chain) - 1, "each post-baseline revision is judged exactly once"
     stored = read_evaluation_record(repository, runtime[2], deep[0]["evaluation_id"])
     assert stored.purpose == "DEEP"
     assert stored.error_code is None
     assert stored.answers is not None
+    assert {row["vector"]["evidence_state_id"] for row in deep} == {
+        stored_revision.evidence_state_id for stored_revision in chain[1:]}

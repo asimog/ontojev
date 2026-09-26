@@ -78,6 +78,7 @@ from cancerjev.research.campaign_selection import CAMPAIGN_SELECTION_POLICY_VERS
 from cancerjev.research.deep import DEEP_ACTION_POLICY_VERSION
 from cancerjev.research.file_admission import FILE_ADMISSION_VERSION
 from cancerjev.research.finalize import FINAL_RESULT_SCHEMA_VERSION, NO_JEV_BASELINE_VERSION
+from cancerjev.research.hypothesis_policy import HYPOTHESIS_POLICY_VERSION
 from cancerjev.research.nextmove import DEEP_POLICY_VERSION
 from cancerjev.research.program import PROGRAM_LOOP_VERSION
 from cancerjev.research.ranking import (
@@ -88,7 +89,11 @@ from cancerjev.research.ranking import (
 from cancerjev.research.release_compare import RELEASE_COMPARISON_POLICY_VERSION
 from cancerjev.research.release_monitor import RELEASE_MONITOR_VERSION
 from cancerjev.research.specs import LUAD_DISCOVERY_V1, RESEARCH_SPEC_SCHEMA_VERSION
-from cancerjev.science.actions import ACTION_REGISTRY, ACTION_REGISTRY_VERSION
+from cancerjev.science.actions import (
+    ACTION_REGISTRY,
+    ACTION_REGISTRY_VERSION,
+    EVIDENCE_PRODUCING_ACTION_IDS,
+)
 from cancerjev.science.methods import (
     MUTATION_INFERENCE_DECISION_ID,
     MUTATION_INFERENCE_DECISION_VERSION,
@@ -107,6 +112,8 @@ def collect_facts() -> dict[str, object]:
         "api_version": _api_version(),
         "action_registry_version": ACTION_REGISTRY_VERSION,
         "registered_action_ids": sorted(ACTION_REGISTRY),
+        "evidence_producing_action_ids": sorted(EVIDENCE_PRODUCING_ACTION_IDS),
+        "hypothesis_policy": HYPOTHESIS_POLICY_VERSION,
         "deep_next_move_policy": DEEP_POLICY_VERSION,
         "deep_question_set": DEEP_QUESTION_SET_VERSION,
         "dossier_schema_version": DOSSIER_SCHEMA_VERSION,

@@ -97,7 +97,16 @@ railway ssh -s <service> "python -m cancerjev doctor"
 railway ssh -s <service> "python -m cancerjev capability"
 railway ssh -s <service> "tmux new-session -d -s cnv0 'python -m cancerjev discover-cnv --live --case-shard 0 > /data/cnv-shard0.log 2>&1'"
 railway ssh -s <service> "tmux new-session -d -s jev0 'python -m cancerjev run --live --jev --researcher --deep-candidate TP53 --deep-followup --deep-hypotheses > /data/live-deep.log 2>&1'"
+railway ssh -s <service> "tmux new-session -d -s validation 'python -m cancerjev campaign --validation > /data/validation-campaign.log 2>&1'"
 ```
+
+The `campaign --validation` route runs the identical canonical spine for the
+EXPERIMENTAL LUAD profile under `VALIDATION_RUN` ownership: it cannot be selected
+by the Program, reports `readiness_effect=NONE`, and produces the live
+Wide/Deep Jev evidence and dossier an explicit promotion decision reviews. It is
+bounded by the declared `gdc-campaign-v1` Campaign budget (25,000 requests /
+4 GiB, shared by every lane and follow-up) and requires the `TYPESAFE_API_KEY`
+variable; a missing key fails closed before any work.
 
 Long runs must be started detached (tmux) with output under `/data`; a bare
 SSH command dies with the client and leaves the run `RUNNING` until crash
