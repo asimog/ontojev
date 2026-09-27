@@ -94,7 +94,6 @@ from cancerjev.research.ranking import (
     JEV_POLICY_VERSION,
     PRE_WIDE_POLICY_VERSION,
 )
-from cancerjev.research.release_compare import RELEASE_COMPARISON_POLICY_VERSION
 from cancerjev.research.release_monitor import RELEASE_MONITOR_VERSION
 from cancerjev.research.specs import LUAD_DISCOVERY_V1, RESEARCH_SPEC_SCHEMA_VERSION
 from cancerjev.science.actions import (
@@ -206,7 +205,6 @@ def collect_facts() -> dict[str, object]:
             ownership.value for ownership in ExecutionOwnership),
         "deep_action_policy": DEEP_ACTION_POLICY_VERSION,
         "campaign_selection_policy": CAMPAIGN_SELECTION_POLICY_VERSION,
-        "release_comparison_policy": RELEASE_COMPARISON_POLICY_VERSION,
         "program_loop_version": PROGRAM_LOOP_VERSION,
         "release_monitor_version": RELEASE_MONITOR_VERSION,
         "luad_campaign_readiness": LUAD_CAMPAIGN_V1.readiness.value,

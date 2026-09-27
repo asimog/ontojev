@@ -52,9 +52,6 @@ from cancerjev.research.acquisition import (
     response_meta,
     response_operational_source,
 )
-from cancerjev.research.acquisition import (
-    _merge_expression_availability as _merge_expression_availability,
-)
 from cancerjev.research.deep import stable_id
 from cancerjev.research.discovery import publish_occurrence_scan
 from cancerjev.research.investigation import (

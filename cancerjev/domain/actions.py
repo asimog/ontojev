@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Literal
 
 from cancerjev.domain._json import decode
-from cancerjev.domain.evidence import CheckOutcome, CheckSummary
 from cancerjev.domain.measurements import ContractError
 
 IntegrityOutcome = Literal["VERIFIED", "CONTRADICTED", "NOT_OBSERVED"]
@@ -34,22 +33,3 @@ class IntegrityCheck:
             raise ContractError("check diagnostics must be immutable boundary bytes")
         decode(self.observed_json)
         decode(self.expected_json)
-
-    @property
-    def outcome_kind(self) -> CheckOutcome:
-        return CheckOutcome(self.outcome)
-
-    def boundary_representation(self) -> dict[str, object]:
-        return {"check_id": self.check_id, "claim": self.claim, "outcome": self.outcome,
-                "observed": decode(self.observed_json), "expected": decode(self.expected_json),
-                "n_effective": self.n_effective, "notes": list(self.notes),
-                "limitations": list(self.limitations)}
-
-
-def summarise(checks: tuple[IntegrityCheck, ...]) -> CheckSummary:
-    return CheckSummary(
-        len(checks),
-        sum(1 for check in checks if check.outcome == "VERIFIED"),
-        sum(1 for check in checks if check.outcome == "CONTRADICTED"),
-        sum(1 for check in checks if check.outcome == "NOT_OBSERVED"),
-    )

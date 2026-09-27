@@ -443,8 +443,6 @@ def test_execution_is_deterministic_and_leaves_the_evidence_untouched(runtime):
     second = execute(ACTION_ID, evidence.state, read_artifact=evidence.blobs.get)
     assert [check.check_id for check in first.checks] == [check.check_id for check in second.checks]
     assert first.checks == second.checks
-    assert json.dumps([check.boundary_representation() for check in first.checks], sort_keys=True) == \
-        json.dumps([check.boundary_representation() for check in second.checks], sort_keys=True)
     assert evidence.state == before, "a deterministic action must never rewrite the evidence it reads"
 
 
@@ -559,8 +557,6 @@ def test_revision_action_is_deterministic_and_leaves_the_revision_untouched(runt
     first = execute(REVISION_ACTION_ID, evidence.revision, read_artifact=evidence.blobs.get)
     second = execute(REVISION_ACTION_ID, evidence.revision, read_artifact=evidence.blobs.get)
     assert first.checks == second.checks
-    assert json.dumps([check.boundary_representation() for check in first.checks], sort_keys=True) == \
-        json.dumps([check.boundary_representation() for check in second.checks], sort_keys=True)
     assert evidence.revision == before
 
 

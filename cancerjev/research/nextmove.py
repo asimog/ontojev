@@ -72,55 +72,6 @@ def _evaluation_choice(evaluation: EvaluationRecord, question_id: str) -> str | 
     return answers.choice(question_id) if answers is not None else None
 
 
-def _boundary_applicable(judgment: dict[str, Any], question_id: str) -> bool:
-    applicability = judgment.get("applicability")
-    if not isinstance(applicability, dict):
-        return False
-    entry = applicability.get(question_id)
-    return isinstance(entry, dict) and entry.get("applicable") is True
-
-
-def _probability(judgment: dict[str, Any], question_id: str) -> float | None:
-    if not _boundary_applicable(judgment, question_id):
-        return None
-    answer = (judgment.get("answers") or {}).get(question_id)
-    if not isinstance(answer, dict) or answer.get("kind") != "noul":
-        return None
-    value = answer.get("probability_yes")
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
-
-
-def _choice(judgment: dict[str, Any], question_id: str) -> str | None:
-    if not _boundary_applicable(judgment, question_id):
-        return None
-    answer = (judgment.get("answers") or {}).get(question_id)
-    if not isinstance(answer, dict) or answer.get("kind") != "choice":
-        return None
-    choice = answer.get("choice")
-    return str(choice) if choice is not None else None
-
-
-def next_move(*, checks: dict[str, Any], judgment: dict[str, Any],
-              eligible_action_ids: list[str]) -> dict[str, Any]:
-    """Historical dictionary boundary; production uses the typed judgment entrypoint.
-
-    The same applicability rule as the typed path applies here until Phase 6 removes
-    this boundary: an answer without a recorded applicable rule is unavailable.
-    """
-    contradicted = int(checks.get("checks_contradicted") or 0)
-    return decide_next_move(
-        checks=CheckSummary(contradicted, 0, contradicted, 0),
-        judgment=DeepJudgment(_probability(judgment, "revision_reliable"),
-                              _probability(judgment, "evidence_sufficient_for_next_step"),
-                              _probability(judgment, "next_step_warranted"),
-                              _probability(judgment, "stopping_more_honest"),
-                              _choice(judgment, "dominant_limitation"),
-                              "LEGACY_JUDGMENT_ERROR" if judgment.get("error") is not None else None,
-                              judgment.get("action_id") or None),
-        eligible_action_ids=eligible_action_ids,
-    )
-
-
 def decide_next_move(*, checks: CheckSummary, judgment: DeepJudgment,
                      eligible_action_ids: list[str]) -> dict[str, Any]:
     """Exact policy over checked summaries and validated answers; no JSON reconstruction."""

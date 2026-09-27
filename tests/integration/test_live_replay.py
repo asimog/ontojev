@@ -25,7 +25,8 @@ from cancerjev.gdc.parsers import ResponseMeta, parse_expression_availability
 from cancerjev.jev.projection import PROJECTION_VERSION
 from cancerjev.jev.service import JevService
 from cancerjev.jev.typesafe_adapter import JevProviderError
-from cancerjev.research.live import LiveOrchestrator, _merge_expression_availability
+from cancerjev.research.acquisition import _merge_expression_availability
+from cancerjev.research.live import LiveOrchestrator
 from cancerjev.research.specs import (
     LUAD_RESEARCH_V1,
     AcquisitionSpec,

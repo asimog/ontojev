@@ -9,10 +9,7 @@ import pytest
 from cancerjev.domain.capability import ScientificReadiness
 from cancerjev.domain.program import (
     CampaignStatus,
-    ComparisonClass,
     ProgramState,
-    ReleaseSnapshot,
-    SnapshotCandidate,
 )
 from cancerjev.research.campaign import (
     LUAD_CAMPAIGN_V1,
@@ -27,11 +24,8 @@ from cancerjev.research.campaign_selection import (
     select_next_campaign,
 )
 from cancerjev.research.program import run_program_once
-from cancerjev.research.release_compare import compare_release_snapshots
 
 VALIDATED = replace(LUAD_CAMPAIGN_V1, readiness=ScientificReadiness.VALIDATED_FOR_AUTONOMOUS_USE)
-TP53 = "ENSG00000141510"
-EGFR = "ENSG00000146648"
 
 
 def test_experimental_campaigns_never_run_autonomously():
@@ -84,60 +78,3 @@ def test_release_order_is_strict_and_only_the_declared_label_is_orderable():
     assert release_successor("Data Release TEST", "Data Release 47.0") is None
     assert release_successor(None, "Data Release 47.0") is None
     assert release_successor("Data Release 47.0", "UNVERIFIED_RELEASE") is None
-
-
-def _snapshot(**overrides) -> ReleaseSnapshot:
-    arguments = {
-        "campaign_id": LUAD_CAMPAIGN_V1.profile_id,
-        "release": "Data Release 46.0",
-        "release_commit": "a" * 40,
-        "methods_hash": "b" * 64,
-        "candidates": (SnapshotCandidate(TP53, 1, ("expression", "mutation"),
-                                         "DESCRIPTIVE_CANDIDATE"),),
-    }
-    arguments.update(overrides)
-    return ReleaseSnapshot(**arguments)
-
-
-def test_release_comparison_uses_the_declared_vocabulary():
-    before = _snapshot()
-    after = _snapshot(
-        release="Data Release 47.0", release_commit="c" * 40,
-        candidates=(
-            SnapshotCandidate(TP53, 2, ("expression", "mutation"), "DESCRIPTIVE_CANDIDATE"),
-            SnapshotCandidate(EGFR, 1, ("cnv",), "DESCRIPTIVE_CANDIDATE"),
-        ))
-
-    rows = compare_release_snapshots(before, after)
-
-    classes = {(row.gene_id, row.classification) for row in rows}
-    assert (None, ComparisonClass.SOURCE_CHANGED) in classes
-    assert (EGFR, ComparisonClass.NEW_CANDIDATE) in classes
-    assert (TP53, ComparisonClass.RANK_CHANGED) in classes
-
-
-def test_release_comparison_separates_evidence_level_and_method_changes():
-    strengthened = _snapshot(candidates=(
-        SnapshotCandidate(TP53, 1, ("expression", "mutation"), "STATISTICALLY_SUPPORTED"),))
-    rows = compare_release_snapshots(_snapshot(), strengthened)
-    assert [(row.gene_id, row.classification) for row in rows] == [
-        (TP53, ComparisonClass.EVIDENCE_STRENGTHENED)]
-
-    lost = _snapshot(release="Data Release 47.0", candidates=())
-    assert compare_release_snapshots(_snapshot(), lost)[-1].classification is (
-        ComparisonClass.LOST_CANDIDATE)
-
-    method_changed = _snapshot(methods_hash="d" * 64)
-    rows = compare_release_snapshots(_snapshot(), method_changed)
-    assert [(row.gene_id, row.classification) for row in rows] == [
-        (None, ComparisonClass.METHOD_CHANGED),
-        (TP53, ComparisonClass.NOT_COMPARABLE)]
-
-
-def test_release_snapshot_inputs_are_immutable_and_reject_other_campaigns():
-    before = _snapshot()
-    compare_release_snapshots(before, _snapshot(release="Data Release 47.0"))
-    assert before.release == "Data Release 46.0"
-
-    with pytest.raises(ValueError):
-        compare_release_snapshots(before, _snapshot(campaign_id="OTHER"))
