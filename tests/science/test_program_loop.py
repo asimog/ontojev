@@ -296,6 +296,57 @@ def test_worker_releases_the_research_lock_while_sleeping(runtime, monkeypatch):
     assert acquired == [True], "the lock is free while the worker sleeps"
 
 
+def test_worker_defers_a_cycle_when_the_research_lock_is_held(runtime, monkeypatch):
+    settings, repository, artifacts = runtime
+    monkeypatch.setenv("CANCERJEV_NO_DOTENV", "1")
+    monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))
+    cycles: list[int] = []
+    monkeypatch.setattr("cancerjev.cli.main._program", lambda *args: cycles.append(1))
+    sleeps: list[float] = []
+
+    def sleeper(seconds: float) -> None:
+        sleeps.append(seconds)
+        if len(sleeps) >= 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr("cancerjev.cli.main.time.sleep", sleeper)
+
+    with ResearchOwnership(settings.lock_path):
+        main(["worker", "--live"])
+
+    assert cycles == [], "a cycle never runs while another owner holds the lock"
+    assert len(sleeps) == 2, "contention defers, then retries; the worker never exits"
+    assert all(seconds > 0 for seconds in sleeps)
+
+
+def test_worker_persists_a_failed_cycle_and_keeps_running(runtime, monkeypatch):
+    settings, repository, artifacts = runtime
+    monkeypatch.setenv("CANCERJEV_NO_DOTENV", "1")
+    monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))
+    monkeypatch.setattr("cancerjev.cli.main.PROGRAM_PROFILES", (VALIDATED,))
+    monkeypatch.setattr("cancerjev.research.release_monitor.observe_release",
+                        lambda transport: fake_release_observation())
+    monkeypatch.setattr("cancerjev.cli.main.GDCTransport", _NoopTransport)
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("synthetic dispatch defect")
+
+    monkeypatch.setattr("cancerjev.cli.main._dispatch_campaign", explode)
+
+    def sleeper(seconds: float) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("cancerjev.cli.main.time.sleep", sleeper)
+    main(["worker", "--live"])
+
+    runs = repository.list_runs(5, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS)
+    assert runs[0]["status"] == "FAILED"
+    events = repository.events(runs[0]["run_id"], 0, 200)["items"]
+    assert events[-1]["type"] == "RUN_FAILED", \
+        "a failed cycle is persisted as an event, never print-only"
+    assert events[-1]["data"]["reason_code"] == "RuntimeError"
+
+
 def test_worker_dispatches_the_canonical_executor(runtime, monkeypatch):
     settings, repository, artifacts = runtime
     monkeypatch.setattr("cancerjev.cli.main.PROGRAM_PROFILES", (VALIDATED,))

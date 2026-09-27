@@ -36,6 +36,7 @@ from cancerjev.storage.repositories import Repository
 # The program's declared campaign set. Production is exactly the LUAD campaign
 # profile until a profile is deliberately promoted; tests may replace this seam.
 PROGRAM_PROFILES: tuple[Any, ...] = (LUAD_CAMPAIGN_V1,)
+WORKER_LOCK_DEFERRAL_SECONDS = 60
 
 
 def parser() -> argparse.ArgumentParser:
@@ -860,22 +861,29 @@ def main(argv: list[str] | None = None) -> None:
         # The long-running loop owns the research lock only around each mutation
         # window; it sleeps outside the lock so researcher commands are never blocked
         # between cycles. A failed cycle is recorded by the cycle run and the loop
-        # keeps its normal interval, so a failing operation is never hammered.
+        # keeps its normal interval, so a failing operation is never hammered. Lock
+        # contention defers one cycle with a bounded retry; the worker never exits.
         try:
             while True:
-                with ResearchOwnership(settings.lock_path):
-                    repository.recover_interrupted()
-                    repository.heartbeat("program-worker")
-                    try:
-                        _program(settings, repository, artifacts)
-                    except Exception as exc:  # noqa: BLE001 - the loop survives a failed cycle
-                        print(f"[WORKER] program cycle failed: {type(exc).__name__}: {exc}",
-                              flush=True)
-                    repository.heartbeat("program-worker")
+                try:
+                    with ResearchOwnership(settings.lock_path):
+                        repository.recover_interrupted()
+                        repository.heartbeat("program-worker")
+                        try:
+                            _program(settings, repository, artifacts)
+                        except Exception as exc:  # noqa: BLE001 - the loop survives a failed cycle
+                            print(f"[WORKER] program cycle failed: {type(exc).__name__}: {exc}",
+                                  flush=True)
+                        repository.heartbeat("program-worker")
+                except OwnershipError:
+                    defer_seconds = min(WORKER_LOCK_DEFERRAL_SECONDS,
+                                        settings.run_interval_minutes * 60)
+                    print(f"[WORKER] research lock is held by another process; "
+                          f"deferring this cycle for {defer_seconds} second(s)", flush=True)
+                    time.sleep(defer_seconds)
+                    continue
                 print(f"[WORKER] sleeping {settings.run_interval_minutes} minute(s)", flush=True)
                 time.sleep(settings.run_interval_minutes * 60)
-        except OwnershipError as exc:
-            raise SystemExit(str(exc)) from exc
         except KeyboardInterrupt:
             print("[WORKER] stopped", flush=True)
         return
