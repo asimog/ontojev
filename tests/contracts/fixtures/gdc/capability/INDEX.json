@@ -67,6 +67,19 @@
       "response_truncated_by_probe_cap": false,
       "retrieved_at": "2026-09-25T20:23:55.535771Z",
       "url": "/files?facets=experimental_strategy%2Canalysis.workflow_type%2Cdata_type&filters=%7B%22content%22%3A%5B%7B%22content%22%3A%7B%22field%22%3A%22access%22%2C%22value%22%3A%5B%22open%22%5D%7D%2C%22op%22%3A%22in%22%7D%2C%7B%22content%22%3A%7B%22field%22%3A%22cases.project.project_id%22%2C%22value%22%3A%5B%22TCGA-LUSC%22%5D%7D%2C%22op%22%3A%22in%22%7D%5D%2C%22op%22%3A%22and%22%7D&size=0"
+    },
+    {
+      "body_bytes_read": 2166,
+      "body_sha256": "2cd839151036858568cfeca6ebfaca11090a991be8e261368481e65bce776e22",
+      "completeness": "COMPLETE",
+      "endpoint": "/files",
+      "error": null,
+      "http_status": 200,
+      "method": "GET",
+      "probe_name": "luad_files_facets_dual_access",
+      "response_truncated_by_probe_cap": false,
+      "retrieved_at": "2026-09-27T08:20:59.000000Z",
+      "url": "/files?facets=access%2Cexperimental_strategy%2Canalysis.workflow_type%2Cdata_type&filters=%7B%22content%22%3A%5B%7B%22content%22%3A%7B%22field%22%3A%22access%22%2C%22value%22%3A%5B%22open%22%5D%7D%2C%22op%22%3A%22in%22%7D%2C%7B%22content%22%3A%7B%22field%22%3A%22cases.project.project_id%22%2C%22value%22%3A%5B%22TCGA-LUAD%22%5D%7D%2C%22op%22%3A%22in%22%7D%5D%2C%22op%22%3A%22and%22%7D&size=0"
     }
   ],
   "probe_count": 5,

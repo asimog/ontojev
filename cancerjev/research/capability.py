@@ -186,13 +186,29 @@ def build_cohort_capability(
             "ACCESS_FACET_MISSING",
             "the open-filtered facet response carried no access counts",
         )
-    controlled = {key: count for key, count in facets.facet("access").items()
+    # GDC computes a facet ignoring the filter on its own field, so the access
+    # facet reports the project's whole per-access population while the response
+    # total counts only the filtered (open) files. The server-side open filter is
+    # proven by the total equalling the open bucket; a provider that silently
+    # included non-open files fails closed instead of being averaged in. When the
+    # total is absent the facet cannot be verified, so any non-open bucket with
+    # files still fails closed.
+    access_counts = facets.facet("access")
+    controlled = {key: count for key, count in access_counts.items()
                   if key != "open" and count > 0}
-    if controlled:
+    if facets.total_open_files is None:
+        if controlled:
+            raise CapabilityError(
+                "CONTROLLED_ACCESS_RETURNED",
+                "the open-filtered facet response reported non-open files without a "
+                "verifiable total: " + ", ".join(sorted(controlled)),
+            )
+    elif facets.total_open_files != access_counts.get("open", 0):
         raise CapabilityError(
             "CONTROLLED_ACCESS_RETURNED",
-            "the open-filtered facet response reported non-open files: "
-            + ", ".join(sorted(controlled)),
+            f"the open-filtered response total {facets.total_open_files} differs from its "
+            f"open-access count {access_counts.get('open', 0)}: the provider may have "
+            "included non-open files",
         )
     strategy_counts = facets.facet("experimental_strategy")
     unknown_strategies = sorted(set(strategy_counts) - set(STRATEGY_MODALITIES))
@@ -216,6 +232,11 @@ def build_cohort_capability(
             category_modalities.add(modality)
 
     state_warnings = list(warnings)
+    if controlled:
+        state_warnings.append(
+            "the project also carries " + str(sum(controlled.values()))
+            + " controlled file(s) excluded by the open-only filter (access levels: "
+            + ", ".join(f"{key}={count}" for key, count in sorted(controlled.items())) + ")")
     for workflow in sorted(unmapped_workflows):
         state_warnings.append(f"provider workflow type outside the declared mapping: {workflow}")
 

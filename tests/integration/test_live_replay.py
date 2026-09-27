@@ -594,13 +594,22 @@ def test_cohort_ceiling_exceeded_fails_closed(runtime, monkeypatch):
     assert repository.list_table("statistical_states", run_id) == []
 
 
-def test_controlled_file_record_fails_closed(runtime, monkeypatch):
-    orchestrator, _, repository = _orchestrator(runtime, monkeypatch, controlled_files=True)
+def test_a_provider_that_ignores_the_open_filter_fails_closed(runtime, monkeypatch):
+    orchestrator, _, repository = _orchestrator(
+        runtime, monkeypatch, controlled_files=True, filter_ignored=True)
     run_id = orchestrator.run()
     assert repository.get_run(run_id)["status"] == "FAILED"
     failed = [event for event in _events(repository, run_id) if event["type"] == "RUN_FAILED"]
     assert failed[-1]["data"]["reason_code"] == "CONTROLLED_RECORD_RETURNED"
     assert repository.list_table("statistical_states", run_id) == []
+
+
+def test_a_controlled_population_never_blocks_open_only_coverage(runtime, monkeypatch):
+    """GDC reports the project's controlled population in the access facet; only open files count."""
+    orchestrator, _, repository = _orchestrator(runtime, monkeypatch, controlled_files=True)
+    run_id = orchestrator.run()
+    assert repository.get_run(run_id)["status"] == "COMPLETED"
+    assert repository.list_table("statistical_states", run_id) != []
 
 
 def test_missing_value_columns_stay_visible_in_state(runtime, monkeypatch):

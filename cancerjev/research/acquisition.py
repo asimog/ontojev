@@ -541,18 +541,36 @@ def _expression_workflow_coverage(
 
     Returns (workflows, workflow_file_counts, strategies, coverage_complete, warnings).
     Coverage is complete only when every open expression file carries a named
-    provider workflow type; otherwise the lane stays PARTIAL. A provider-reported
-    controlled access bucket fails closed even though the request filters to open
-    files, because a controlled file can then never be silently averaged in.
+    provider workflow type; otherwise the lane stays PARTIAL. GDC computes the
+    access facet ignoring the filter on its own field, so the facet reports the
+    project's whole per-access population while the response total counts only the
+    open files: the filter is proven by the total equalling the open bucket. A
+    provider that silently included non-open files fails closed instead of being
+    averaged in; without a verifiable total any non-open bucket with files fails
+    closed.
     """
     warnings: list[str] = []
-    controlled = {key: count for key, count in facets.facet("access").items()
+    access_counts = facets.facet("access")
+    controlled = {key: count for key, count in access_counts.items()
                   if key != "open" and count > 0}
-    if controlled:
+    if facets.total_open_files is None:
+        if controlled:
+            raise LiveRunError(
+                "CONTROLLED_RECORD_RETURNED",
+                f"{project_id}: provider aggregate reports non-open expression files "
+                f"without a verifiable total: {sorted(controlled)}",
+            )
+    elif facets.total_open_files != access_counts.get("open", 0):
         raise LiveRunError(
             "CONTROLLED_RECORD_RETURNED",
-            f"{project_id}: provider aggregate reports non-open expression files: {sorted(controlled)}",
+            f"{project_id}: open filter total {facets.total_open_files} differs from the "
+            f"open-access count {access_counts.get('open', 0)}; the provider may have "
+            "included non-open files",
         )
+    if controlled:
+        warnings.append(
+            f"{project_id}: the project also carries {sum(controlled.values())} controlled "
+            "file(s) excluded by the open-only filter")
     workflows_map = facets.facet("analysis.workflow_type")
     missing_workflow_files = workflows_map.pop(MISSING_FACET_KEY, 0)
     workflow_counts = tuple(sorted((name, count) for name, count in workflows_map.items()

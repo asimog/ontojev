@@ -7,10 +7,15 @@ from these pinned bytes alone, with no cohort-specific branch.
 
 The pinned facet captures predate ``files_capability_request`` listing ``access``
 in ``facets`` (the capture sent only the server-side ``access=open`` filter), so
-the probe re-attaches the bucket the current request contract must observe: a
-single open bucket counted at the response's own pagination total. The pinned
-capture bytes are never rewritten; the reconstruction is declared here, and the
-missing-facet and controlled-bucket probes prove the guard fails closed.
+the probe re-attaches the bucket the current request contract must observe:
+``luad_files_facets`` is reconstructed with a single open bucket counted at the
+response's own pagination total. ``luad_files_facets_dual_access`` is the live
+dual-access shape extracted from the Phase 7 validation-run cache: the access
+facet reports the project's whole per-access population (GDC facets ignore the
+filter on their own field) while the pagination total counts only open files.
+The pinned capture bytes are never rewritten; the missing-facet, dual-access and
+filter-ignoring probes prove the guard fails closed exactly when the filtered
+total cannot be reconciled with the open bucket.
 """
 
 from __future__ import annotations
@@ -47,13 +52,16 @@ def _load(name: str) -> tuple[bytes, ResponseMeta]:
 
 
 def _declare_access_facet(body: bytes,
-                          buckets: tuple[tuple[str, int], ...] | None = None) -> bytes:
+                          buckets: tuple[tuple[str, int], ...] | None = None,
+                          total: int | None = None) -> bytes:
     """The captured facet body plus the access facet the current request asks for."""
     document = json.loads(body)
     if buckets is None:
         buckets = (("open", document["data"]["pagination"]["total"]),)
     document["data"]["aggregations"]["access"] = {
         "buckets": [{"doc_count": count, "key": key} for key, count in buckets]}
+    if total is not None:
+        document["data"]["pagination"]["total"] = total
     return json.dumps(document, sort_keys=True).encode()
 
 
@@ -82,10 +90,11 @@ class _StubTransport:
 
 
 def _probe(runtime, project: str, *,
-           access_buckets: tuple[tuple[str, int], ...] | None = None):
+           access_buckets: tuple[tuple[str, int], ...] | None = None,
+           total: int | None = None):
     artifacts = runtime[2]
     prefix = "luad" if project == "TCGA-LUAD" else "lusc"
-    facet_body = _declare_access_facet(_load(f"{prefix}_files_facets")[0], access_buckets)
+    facet_body = _declare_access_facet(_load(f"{prefix}_files_facets")[0], access_buckets, total)
     transport = _StubTransport(artifacts, {
         "status": _load("status")[0],
         "projects": _load(f"{prefix}_project")[0],
@@ -122,13 +131,39 @@ def test_real_capability_capture_decomposes_into_typed_records(runtime):
     assert facets.facet("access") == {"open": 14053}
 
 
-def test_a_provider_controlled_bucket_fails_closed(runtime):
+def test_a_provider_that_ignores_the_open_filter_fails_closed(runtime):
     with pytest.raises(CapabilityError) as failure:
         _probe(runtime, "TCGA-LUAD",
-               access_buckets=(("open", 14053), ("controlled", 3)))
+               access_buckets=(("open", 14053), ("controlled", 3)), total=14056)
 
     assert failure.value.code == "CONTROLLED_ACCESS_RETURNED"
-    assert "controlled" in failure.value.detail
+    assert "14053" in failure.value.detail and "14056" in failure.value.detail
+
+
+def test_the_captured_dual_access_facet_keeps_only_open_files(runtime):
+    """Live DR46-shaped response: the access facet reports the project population."""
+    dual, meta = _load("luad_files_facets_dual_access")
+    facets = parse_file_facets(dual, meta)
+    assert facets.total_open_files == 14053
+    assert facets.facet("access") == {"open": 14053, "controlled": 22687}
+
+    capability = discover_cohort_capability(
+        _StubTransport(runtime[2], {
+            "status": _load("status")[0],
+            "projects": _load("luad_project")[0],
+            "files": dual,
+        }),
+        project_id="TCGA-LUAD")
+
+    assert all(record.access_level is AccessLevel.OPEN for record in capability.records)
+    assert any("22687 controlled file(s)" in warning for warning in capability.warnings), \
+        "the excluded controlled population is recorded, never silently ignored"
+    assert capability.available_modalities() == (
+        Modality.CNV,
+        Modality.EXPRESSION_RNASEQ,
+        Modality.MUTATION_WGS,
+        Modality.MUTATION_WXS,
+    )
 
 
 def test_a_facet_response_without_the_access_facet_is_rejected(runtime):

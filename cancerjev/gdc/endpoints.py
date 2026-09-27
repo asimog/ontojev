@@ -251,9 +251,11 @@ def files_capability_request(project_id: str, *, data_type: str | None = None) -
 
     The request lists no file: it returns provider aggregate counts only, so a
     cohort capability probe or expression workflow-coverage check stays
-    near-zero-bytes. The access facet is requested in addition to the
-    server-side open filter so a provider returning a controlled bucket fails
-    closed instead of being silently ignored.
+    near-zero-bytes. The access facet describes the project's whole per-access
+    population because GDC computes a facet ignoring the filter on its own field;
+    the probe proves the server-side open filter by requiring the response total
+    to equal the open bucket, so a provider that silently included non-open files
+    fails closed instead of being averaged in.
     """
     if not isinstance(project_id, str) or not project_id or len(project_id) > 128:
         raise EndpointError("capability project_id is invalid")

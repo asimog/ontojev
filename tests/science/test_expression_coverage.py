@@ -57,7 +57,7 @@ def test_mixed_named_workflows_get_no_single_annotation_context():
     assert any("mixed" in note for note in notes)
 
 
-def test_non_open_aggregate_bucket_fails_closed():
+def test_a_total_exceeding_the_open_bucket_fails_closed():
     facets = _facets(total=10, access={"open": 9, "controlled": 1},
                      workflows={"STAR - Counts": 10})
 
@@ -65,6 +65,19 @@ def test_non_open_aggregate_bucket_fails_closed():
         _expression_workflow_coverage("TCGA-LUAD", facets)
 
     assert failure.value.code == "CONTROLLED_RECORD_RETURNED"
+
+
+def test_a_controlled_population_bucket_is_recorded_not_blocked():
+    """GDC reports the access facet for the whole project population, ignoring its own filter."""
+    facets = _facets(total=10, access={"open": 10, "controlled": 9999},
+                     workflows={"STAR - Counts": 10})
+
+    workflows, counts, strategies, complete, warnings = _expression_workflow_coverage(
+        "TCGA-LUAD", facets)
+
+    assert workflows == ("STAR - Counts",) and complete is True
+    assert any("9999 controlled file(s)" in warning for warning in warnings), \
+        "the excluded controlled population is recorded, never silently ignored"
 
 
 def test_missing_strategy_is_recorded_without_blocking_coverage():

@@ -1,0 +1,28 @@
+{
+  "authentication_headers_sent": [],
+  "body_bytes_read": 2166,
+  "body_sha256": "2cd839151036858568cfeca6ebfaca11090a991be8e261368481e65bce776e22",
+  "capture_note": "Extracted from the Phase 7 validation-run response cache (live open-access GDC request, no credential); not produced by the contract probe tool.",
+  "completeness": "COMPLETE",
+  "endpoint": "/files",
+  "error": null,
+  "from_cache": false,
+  "http_status": 200,
+  "method": "GET",
+  "normalized_params": {
+    "facets": "access,experimental_strategy,analysis.workflow_type,data_type",
+    "filters": "{\"content\":[{\"content\":{\"field\":\"access\",\"value\":[\"open\"]},\"op\":\"in\"},{\"content\":{\"field\":\"cases.project.project_id\",\"value\":[\"TCGA-LUAD\"]},\"op\":\"in\"}],\"op\":\"and\"}",
+    "size": "0"
+  },
+  "parser_version": "contract-probe-v1",
+  "per_response_cap": null,
+  "probe_name": "luad_files_facets_dual_access",
+  "request_headers_sent": {
+    "Accept": "application/json",
+    "Accept-Encoding": "identity",
+    "User-Agent": "CancerJEV/0.2 (public open-access research; anonymous)"
+  },
+  "response_truncated_by_probe_cap": false,
+  "retrieved_at": "2026-09-27T08:20:59.000000Z",
+  "url": "/files?facets=access%2Cexperimental_strategy%2Canalysis.workflow_type%2Cdata_type&filters=%7B%22content%22%3A%5B%7B%22content%22%3A%7B%22field%22%3A%22access%22%2C%22value%22%3A%5B%22open%22%5D%7D%2C%22op%22%3A%22in%22%7D%2C%7B%22content%22%3A%7B%22field%22%3A%22cases.project.project_id%22%2C%22value%22%3A%5B%22TCGA-LUAD%22%5D%7D%2C%22op%22%3A%22in%22%7D%5D%2C%22op%22%3A%22and%22%7D&size=0"
+}

@@ -195,14 +195,21 @@ def cases_body(project_id: str, projects: dict[str, int], *, size: int, offset: 
 
 
 def expression_workflow_facets_body(project_id: str, files: int, *,
-                                    controlled: bool = False) -> bytes:
-    """Aggregate open-file facets for the expression workflow-coverage check."""
+                                    controlled: bool = False,
+                                    total: int | None = None) -> bytes:
+    """Aggregate open-file facets for the expression workflow-coverage check.
+
+    ``controlled`` adds the project's controlled population bucket, which GDC
+    reports even under the open filter (a facet ignores its own filter). ``total``
+    overrides the pagination total to simulate a provider that ignored the filter.
+    """
     access = {"open": files}
     if controlled:
         access["controlled"] = 1
     return _json({"data": {
         "hits": [],
-        "pagination": {"total": files, "count": 0, "size": 0, "from": 0, "pages": 0},
+        "pagination": {"total": files if total is None else total, "count": 0, "size": 0,
+                       "from": 0, "pages": 0},
         "aggregations": {
             "access": {"buckets": [{"key": key, "doc_count": count}
                                    for key, count in sorted(access.items())]},
@@ -311,7 +318,7 @@ class ReplayTransport:
     """Network-boundary test double: real artifacts, real shapes, no sockets."""
 
     def __init__(self, artifacts: ArtifactStore, run_id: str, *, repository: Any = None,
-                 controlled_files: bool = False,
+                 controlled_files: bool = False, filter_ignored: bool = False,
                   incomplete_frame: bool = False, empty_expression_projects: set[str] | None = None,
                   drop_value_columns: int = 0, project_case_counts: dict[str, int] | None = None,
                   duplicate_case_across_pages: bool = False,
@@ -325,6 +332,7 @@ class ReplayTransport:
         self.artifacts = artifacts
         self.run_id = run_id
         self.controlled_files = controlled_files
+        self.filter_ignored = filter_ignored
         self.incomplete_frame = incomplete_frame
         self.empty_expression_projects = empty_expression_projects or set()
         self.drop_value_columns = drop_value_columns
@@ -397,9 +405,10 @@ class ReplayTransport:
         elif name == "files":
             if "facets" in dict(request.params):
                 project_id = _filter_project(request)
+                files = self.project_case_counts.get(project_id, 0)
                 body = expression_workflow_facets_body(
-                    project_id, self.project_case_counts.get(project_id, 0),
-                    controlled=self.controlled_files)
+                    project_id, files, controlled=self.controlled_files,
+                    total=(files + 1 if self.filter_ignored else None))
             else:
                 body = files_body(_filter_project(request), controlled=self.controlled_files)
         elif name == "cnv_occurrences":
