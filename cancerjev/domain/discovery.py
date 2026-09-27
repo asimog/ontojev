@@ -114,8 +114,12 @@ COMPARATOR_LIMITATION = (
     "Overlap between systematic survivors and the provider top-mutated baseline is a descriptive "
     "comparator only; it is not validation and never enters survivor selection."
 )
-EXPRESSION_TAIL_METHOD_ID = "EXPRESSION_TUKEY_TAIL_V1"
-EXPRESSION_TAIL_VERSION = "1"
+EXPRESSION_TAIL_METHOD_ID = "EXPRESSION_EXPECTED_TAIL_V2"
+EXPRESSION_TAIL_VERSION = "2"
+EXPRESSION_TAIL_METHOD_ID_V1 = "EXPRESSION_TUKEY_TAIL_V1"
+EXPRESSION_TAIL_VERSION_V1 = "1"
+EXPRESSION_TAIL_NULL_MODEL = "GENOME_WIDE_EMPIRICAL_FENCE_EXCEEDANCE_V1"
+EXPRESSION_TAIL_NULL_EXCESS_SD = 3.0
 EXPRESSION_SELECTION_RULE = "SAME_RELEASE_BOUND_SYSTEMATIC_UNIVERSE"
 EXPRESSION_DISPOSITION_POLICY_VERSION = "expression-dispositions-v2"
 EXPRESSION_JEV_REVIEW_ASYMMETRY_RATIO = 5.0
@@ -130,6 +134,14 @@ EXPRESSION_ALIQUOT_IDENTITY_NOTE = (
     "The harmonized expression endpoints key values by case; no per-value aliquot identity is "
     "exposed, so case-labelled values never support matched cross-modal claims."
 )
+EXPRESSION_LIMITATIONS_V1 = (
+    "Expression values are case-labelled GDC UQFPKM observations summarized as log2(UQFPKM+1); "
+    "they are not raw counts, differential expression, tumor-normal contrasts or causal effects.",
+    "Case identifiers do not establish matched tumor aliquots, so no cross-modal or sample-matched "
+    "claim is made.",
+    "Empirical tails are within-gene descriptive observations selected on this same cohort; they are "
+    "not p-values, diagnoses or confirmatory findings.",
+)
 EXPRESSION_LIMITATIONS = (
     "Expression values are case-labelled GDC UQFPKM observations summarized as log2(UQFPKM+1); "
     "they are not raw counts, differential expression, tumor-normal contrasts or causal effects.",
@@ -137,6 +149,10 @@ EXPRESSION_LIMITATIONS = (
     "claim is made.",
     "Empirical tails are within-gene descriptive observations selected on this same cohort; they are "
     "not p-values, diagnoses or confirmatory findings.",
+    "The declared null is the genome-wide empirical rate at which the same fixed fences select a "
+    "case; each gene's expected tail count is n times that pooled rate, not a per-gene fitted model.",
+    "An excess over the null is a declared screen with no p-value, no multiple-testing correction "
+    "and no false-discovery control; it does not support significance, driver or causal claims.",
 )
 CNV_SUMMARY_METHOD_ID = "CNV_INDEXED_POSITIVE_CASES_V1"
 CNV_SUMMARY_VERSION = "1"
@@ -510,6 +526,10 @@ class ExpressionTailDescriptor:
     upper_case_ids: tuple[str, ...]
     valid_n: int
     method: MethodIdentityRef
+    null_lower_rate: float | None = None
+    null_upper_rate: float | None = None
+    expected_lower_case_count: float | None = None
+    expected_upper_case_count: float | None = None
 
     def __post_init__(self) -> None:
         require(isinstance(self.availability, MetricAvailability), "invalid tail availability")
@@ -522,6 +542,8 @@ class ExpressionTailDescriptor:
                 "tail case IDs must be sorted")
         require(not set(self.lower_case_ids) & set(self.upper_case_ids), "tail case IDs overlap")
         values = (self.q1, self.q3, self.lower_fence, self.upper_fence)
+        nulls = (self.null_lower_rate, self.null_upper_rate,
+                 self.expected_lower_case_count, self.expected_upper_case_count)
         if self.availability is MetricAvailability.OBSERVED:
             require(self.reason is None, "observed tail cannot have an unavailable reason")
             require(all(value is not None for value in values), "observed tail needs all fences")
@@ -534,12 +556,30 @@ class ExpressionTailDescriptor:
             require(self.lower_fence == self.q1 - 1.5 * iqr
                     and self.upper_fence == self.q3 + 1.5 * iqr,
                     "tail fences do not match the fixed Tukey rule")
+            if any(value is None for value in nulls):
+                require(all(value is None for value in nulls),
+                        "tail null expectation must be complete or absent")
+            else:
+                assert self.null_lower_rate is not None and self.null_upper_rate is not None
+                assert self.expected_lower_case_count is not None
+                assert self.expected_upper_case_count is not None
+                for rate in (self.null_lower_rate, self.null_upper_rate):
+                    finite(rate, "tail null rate")
+                    require(0.0 <= rate <= 1.0, "tail null rate must be within [0, 1]")
+                for expected, rate in ((self.expected_lower_case_count, self.null_lower_rate),
+                                       (self.expected_upper_case_count, self.null_upper_rate)):
+                    finite(expected, "tail expected case count")
+                    require(expected >= 0.0, "expected tail count must be non-negative")
+                    require(math.isclose(expected, self.valid_n * rate, rel_tol=1e-9),
+                            "expected tail count must equal valid_n times the null rate")
         else:
             require(self.reason is not None, "unavailable tail needs a reason")
             reason = self.reason
             assert reason is not None
             text(reason, "tail reason")
             require(all(value is None for value in values), "unavailable tail cannot carry fences")
+            require(all(value is None for value in nulls),
+                    "unavailable tail cannot carry a null expectation")
             require(not self.lower_case_ids and not self.upper_case_ids,
                     "unavailable tail cannot carry case IDs")
 
@@ -650,17 +690,25 @@ class ExpressionDiscoveryResult:
                 and all(isinstance(source, OperationalSource) for source in self.sources),
                 "invalid expression sources")
         strings(self.warnings, "expression warnings", unique=False)
-        require(self.limitations == EXPRESSION_LIMITATIONS, "expression limitations changed")
-        expected_method_hash = digest({
+        require(self.limitations in (EXPRESSION_LIMITATIONS, EXPRESSION_LIMITATIONS_V1),
+                "expression limitations changed")
+        base_parameters: dict[str, Any] = {
             "minimum_n": self.expression_discovery.minimum_tail_n,
             "quantile_rule": self.expression_discovery.quantile_rule,
             "iqr_multiplier": self.expression_discovery.iqr_multiplier,
             "input_unit": self.expression_discovery.input_unit,
             "transform": self.expression_discovery.transform,
-        })
-        require(all(entry.tail.method == MethodIdentityRef(
-            EXPRESSION_TAIL_METHOD_ID, EXPRESSION_TAIL_VERSION, expected_method_hash)
-                    for entry in self.entries), "tail method identity mismatch")
+        }
+        accepted_methods = {
+            MethodIdentityRef(EXPRESSION_TAIL_METHOD_ID_V1, EXPRESSION_TAIL_VERSION_V1,
+                              digest(base_parameters)),
+            MethodIdentityRef(EXPRESSION_TAIL_METHOD_ID, EXPRESSION_TAIL_VERSION,
+                              digest({**base_parameters,
+                                      "null_model": EXPRESSION_TAIL_NULL_MODEL,
+                                      "null_excess_sd": EXPRESSION_TAIL_NULL_EXCESS_SD})),
+        }
+        require(all(entry.tail.method in accepted_methods for entry in self.entries),
+                "tail method identity mismatch")
         count(self.request_plan_max, "request_plan_max")
         require(self.request_plan_max <= EXPRESSION_RUN_MAX_REQUESTS,
                 "expression request plan exceeds the declared run budget")

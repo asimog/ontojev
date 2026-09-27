@@ -41,7 +41,11 @@ from cancerjev.research.acquisition import (
 from cancerjev.research.discovery import UNIVERSE_PAGE_SIZE, acquire_gene_universe
 from cancerjev.research.shards import ledger_summary, publish_shard_ledger
 from cancerjev.research.specs import ResearchSpec
-from cancerjev.science.descriptors import expression_lane_disposition, expression_tail_descriptor
+from cancerjev.science.descriptors import (
+    expression_lane_disposition,
+    expression_null_rates,
+    expression_tail_descriptor,
+)
 from cancerjev.science.expression import expression_observation
 from cancerjev.science.methods import ProjectFrame, expression_result
 from cancerjev.storage.artifacts import ArtifactStore
@@ -160,7 +164,7 @@ def run_expression_discovery(
          "Expression gene batches completed for every required shard.",
          data={"shard_ledger": ledger_summary(expression_ledger), "release": release},
          artifact_refs=[ledger_artifact.ref()])
-    entries_by_id: dict[str, ExpressionDiscoveryEntry] = {}
+    built: list[tuple[Any, Any, Any]] = []
     for batch in acquired.batches:
         frame = ProjectFrame(
             project.project_id, project, list(cohort.cases), cohort.frame_hash,
@@ -178,10 +182,21 @@ def run_expression_discovery(
             outcome = expression_result(
                 frame, population, gene, observation, universe.universe.release, batch.sources)
             entity = EntityRef(gene_id, gene.symbol, universe.universe.release)
+            built.append((entity, outcome,
+                          expression_tail_descriptor(outcome, research_spec.expression_discovery)))
+    null_rates = expression_null_rates(tuple(tail for _, _, tail in built))
+    entries_by_id: dict[str, ExpressionDiscoveryEntry] = {}
+    for entity, outcome, _ in built:
+        if null_rates is None:
             tail = expression_tail_descriptor(outcome, research_spec.expression_discovery)
-            disposition, reason, trigger = expression_lane_disposition(outcome, tail)
-            entries_by_id[gene_id] = ExpressionDiscoveryEntry(
-                entity, outcome, tail, disposition, reason, trigger)
+        else:
+            # The pooled genome-wide fence-exceedance rates are observed across the
+            # measured universe, so the same per-gene expectation is reproducible.
+            tail = expression_tail_descriptor(outcome, research_spec.expression_discovery,
+                                              null_rates=null_rates)
+        disposition, reason, trigger = expression_lane_disposition(outcome, tail)
+        entries_by_id[entity.gene_id] = ExpressionDiscoveryEntry(
+            entity, outcome, tail, disposition, reason, trigger)
     entries = tuple(entries_by_id[gene_id] for gene_id in universe.universe.ordered_ids)
     retained_ids = tuple(sorted(entry.entity.gene_id for entry in entries
                                 if entry.disposition is ExpressionDisposition.RETAIN))

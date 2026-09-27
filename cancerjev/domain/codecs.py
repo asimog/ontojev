@@ -112,7 +112,7 @@ from cancerjev.domain.scientific import (
 STATE_SCHEMA_VERSION = 5
 EVIDENCE_SCHEMA_VERSION = 4
 DISCOVERY_SCHEMA_VERSION = 1
-EXPRESSION_DISCOVERY_SCHEMA_VERSION = 1
+EXPRESSION_DISCOVERY_SCHEMA_VERSION = 2
 CNV_DISCOVERY_SCHEMA_VERSION = 1
 CNV_SHARD_EVIDENCE_SCHEMA_VERSION = 2
 CNV_PROJECT_SCAN_SCHEMA_VERSION = 1
@@ -828,23 +828,37 @@ def _expression_discovery_spec(value: object) -> ExpressionDiscoverySpec:
     )
 
 
-def _tail_descriptor(value: object) -> ExpressionTailDescriptor:
-    d = obj(value, "availability reason q1 q3 lower_fence upper_fence lower_case_ids "
-                   "upper_case_ids valid_n method")
+def _tail_descriptor(value: object, *, schema_version: int) -> ExpressionTailDescriptor:
+    legacy_fields = ("availability reason q1 q3 lower_fence upper_fence lower_case_ids "
+                     "upper_case_ids valid_n method")
 
     def optional_number(raw: object) -> float | None:
         return None if raw is None else number(raw)
 
+    if schema_version == 1:
+        d = obj(value, legacy_fields)
+        return ExpressionTailDescriptor(
+            MetricAvailability(string(d["availability"])), optional_string(d["reason"]),
+            optional_number(d["q1"]), optional_number(d["q3"]),
+            optional_number(d["lower_fence"]), optional_number(d["upper_fence"]),
+            string_tuple(d["lower_case_ids"]), string_tuple(d["upper_case_ids"]),
+            integer(d["valid_n"]), _method_identity(d["method"]),
+        )
+    d = obj(value, legacy_fields + " null_lower_rate null_upper_rate "
+                   "expected_lower_case_count expected_upper_case_count")
     return ExpressionTailDescriptor(
         MetricAvailability(string(d["availability"])), optional_string(d["reason"]),
         optional_number(d["q1"]), optional_number(d["q3"]),
         optional_number(d["lower_fence"]), optional_number(d["upper_fence"]),
         string_tuple(d["lower_case_ids"]), string_tuple(d["upper_case_ids"]),
         integer(d["valid_n"]), _method_identity(d["method"]),
+        optional_number(d["null_lower_rate"]), optional_number(d["null_upper_rate"]),
+        optional_number(d["expected_lower_case_count"]),
+        optional_number(d["expected_upper_case_count"]),
     )
 
 
-def _expression_entry(value: object) -> ExpressionDiscoveryEntry:
+def _expression_entry(value: object, *, schema_version: int) -> ExpressionDiscoveryEntry:
     d = obj(value)
     required = {"entity", "outcome", "tail"}
     allowed = required | {"disposition", "disposition_reason", "review_trigger"}
@@ -852,14 +866,18 @@ def _expression_entry(value: object) -> ExpressionDiscoveryEntry:
     require(set(d) >= required, "expression entry is missing required fields")
     disposition = d.get("disposition")
     return ExpressionDiscoveryEntry(
-        _entity(d["entity"]), _expression(d["outcome"]), _tail_descriptor(d["tail"]),
+        _entity(d["entity"]), _expression(d["outcome"]),
+        _tail_descriptor(d["tail"], schema_version=schema_version),
         None if disposition is None else ExpressionDisposition(string(disposition)),
         optional_string(d.get("disposition_reason")),
         optional_string(d.get("review_trigger")),
     )
 
 
-def expression_discovery_identity(result: ExpressionDiscoveryResult) -> str:
+def expression_discovery_identity(
+    result: ExpressionDiscoveryResult, *,
+    schema_version: int = EXPRESSION_DISCOVERY_SCHEMA_VERSION,
+) -> str:
     payload = _jsonable(asdict(result))
     assert isinstance(payload, dict)
     payload.pop("sources")
@@ -875,7 +893,13 @@ def expression_discovery_identity(result: ExpressionDiscoveryResult) -> str:
         if isinstance(entry, dict) and entry.get("disposition") is None:
             for key in ("disposition", "disposition_reason", "review_trigger"):
                 entry.pop(key, None)
-    return digest({"schema_version": EXPRESSION_DISCOVERY_SCHEMA_VERSION,
+        if schema_version == 1 and isinstance(entry, dict):
+            tail = entry.get("tail")
+            if isinstance(tail, dict):
+                for key in ("null_lower_rate", "null_upper_rate",
+                            "expected_lower_case_count", "expected_upper_case_count"):
+                    tail.pop(key, None)
+    return digest({"schema_version": schema_version,
                    "kind": "EXPRESSION_DISCOVERY_RESULT", **payload})
 
 
@@ -892,7 +916,9 @@ def read_expression_discovery(
 ) -> ExpressionDiscoveryResult:
     try:
         d = decode(data)
-        _unsupported(d, EXPRESSION_DISCOVERY_SCHEMA_VERSION, "EXPRESSION_DISCOVERY_RESULT")
+        version = integer(d["schema_version"])
+        if version not in (1, EXPRESSION_DISCOVERY_SCHEMA_VERSION):
+            _unsupported(d, EXPRESSION_DISCOVERY_SCHEMA_VERSION, "EXPRESSION_DISCOVERY_RESULT")
         required = set(
             "schema_version kind spec_id cohort_id project_id release expression_discovery "
             "universe population entries workflows strategies sources warnings limitations "
@@ -905,7 +931,8 @@ def read_expression_discovery(
             string(d["spec_id"]), string(d["cohort_id"]), string(d["project_id"]),
             string(d["release"]), _expression_discovery_spec(d["expression_discovery"]),
             _universe(d["universe"]), _frame(d["population"]),
-            tuple(_expression_entry(item) for item in seq(d["entries"])),
+            tuple(_expression_entry(item, schema_version=int(version))
+                  for item in seq(d["entries"])),
             string_tuple(d["workflows"]), string_tuple(d["strategies"]),
             tuple(_operational_source(item) for item in seq(d["sources"])),
             string_tuple(d["warnings"]), string_tuple(d["limitations"]),
@@ -915,7 +942,8 @@ def read_expression_discovery(
             string_tuple(d["retained_ids"]) if "retained_ids" in d else (),
             string_tuple(d["jev_review_ids"]) if "jev_review_ids" in d else (),
         )
-        _binding(expression_discovery_identity(result), d["expression_discovery_hash"], expected_hash)
+        _binding(expression_discovery_identity(result, schema_version=int(version)),
+                 d["expression_discovery_hash"], expected_hash)
         return result
     except ContractError:
         raise

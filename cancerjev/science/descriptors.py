@@ -20,6 +20,8 @@ from cancerjev.domain.discovery import (
     EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER,
     EXPRESSION_RETAIN_REASON,
     EXPRESSION_TAIL_METHOD_ID,
+    EXPRESSION_TAIL_NULL_EXCESS_SD,
+    EXPRESSION_TAIL_NULL_MODEL,
     EXPRESSION_TAIL_VERSION,
     CnvCategorySummary,
     CnvDisposition,
@@ -49,13 +51,25 @@ def _linear_quantile(sorted_values: list[float], probability: float) -> float:
 def expression_tail_descriptor(
     outcome: ExpressionSummaryResult | UnavailableLane,
     spec: Any,
+    *,
+    null_rates: tuple[float, float] | None = None,
 ) -> ExpressionTailDescriptor:
+    """Held within-gene tail plus, when declared, the pooled null expectation.
+
+    ``null_rates`` are the genome-wide empirical fence-exceedance rates (lower,
+    upper) the pipeline pooled over every observed tail in the same run; each
+    gene's expected tail counts are its valid n times those rates. A tail computed
+    without rates (historical or standalone) carries no null fields and can never
+    be nominated once the disposition rule requires the null.
+    """
     parameters = {
         "minimum_n": spec.minimum_tail_n,
         "quantile_rule": spec.quantile_rule,
         "iqr_multiplier": spec.iqr_multiplier,
         "input_unit": spec.input_unit,
         "transform": spec.transform,
+        "null_model": EXPRESSION_TAIL_NULL_MODEL,
+        "null_excess_sd": EXPRESSION_TAIL_NULL_EXCESS_SD,
     }
     method = MethodIdentityRef(
         EXPRESSION_TAIL_METHOD_ID, EXPRESSION_TAIL_VERSION, digest(parameters))
@@ -84,10 +98,39 @@ def expression_tail_descriptor(
     upper_fence = q3 + spec.iqr_multiplier * iqr
     lower_ids = tuple(sorted(case_id for value, case_id in transformed if value < lower_fence))
     upper_ids = tuple(sorted(case_id for value, case_id in transformed if value > upper_fence))
+    null_lower: float | None = None
+    null_upper: float | None = None
+    expected_lower: float | None = None
+    expected_upper: float | None = None
+    if null_rates is not None:
+        null_lower, null_upper = null_rates
+        expected_lower = len(transformed) * null_lower
+        expected_upper = len(transformed) * null_upper
     return ExpressionTailDescriptor(
         MetricAvailability.OBSERVED, None, q1, q3, lower_fence, upper_fence,
         lower_ids, upper_ids, len(transformed), method,
+        null_lower, null_upper, expected_lower, expected_upper,
     )
+
+
+def expression_null_rates(
+        tails: tuple[ExpressionTailDescriptor, ...],
+) -> tuple[float, float] | None:
+    """Pooled genome-wide fence-exceedance rates over every observed gene tail.
+
+    The denominator is every finite transformed value in the run's observed tails,
+    so the rate states what the declared fences actually select across the measured
+    universe; ``None`` means no observed tail exists and no null can be declared.
+    """
+    total_valid = sum(tail.valid_n for tail in tails
+                      if tail.availability is MetricAvailability.OBSERVED)
+    if total_valid == 0:
+        return None
+    total_lower = sum(len(tail.lower_case_ids) for tail in tails
+                      if tail.availability is MetricAvailability.OBSERVED)
+    total_upper = sum(len(tail.upper_case_ids) for tail in tails
+                      if tail.availability is MetricAvailability.OBSERVED)
+    return (total_lower / total_valid, total_upper / total_valid)
 
 
 def cnv_category_summaries(

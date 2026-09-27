@@ -311,6 +311,29 @@ METHODS: dict[str, MethodDefinition] = {
         limitations=("Within-gene descriptive tail only; not differential expression or a p-value.",),
         provenance_requirements=("expression value sources", "population frame", "fixed parameters"),
     ),
+    "EXPRESSION_EXPECTED_TAIL_V2": MethodDefinition(
+        method_id="EXPRESSION_EXPECTED_TAIL_V2", version="2",
+        purpose="Describe within-gene held expression tails against a declared empirical "
+                "fence-exceedance null.",
+        analysis_unit="case", population_semantics="Finite case-labelled values in the exact held frame.",
+        duplicate_rule="One retained value per case; duplicate columns are parser errors.",
+        eligibility="At least 20 finite values and positive IQR.", minimum_n="n>=20",
+        sampling_rule="All finite retained values; no resampling.",
+        estimator="Q1/Q3 by h=(n-1)p linear interpolation; fences Q1/Q3 +/- 1.5xIQR; expected tail "
+                  "counts are n times the genome-wide empirical fence-exceedance rate for that side.",
+        effect_definition="Declared screen: observed tail count minus expected, measured in binomial "
+                          "null standard deviations (not an effect-size estimate).",
+        interval_method=None,
+        null_hypothesis="Each case exceeds the fixed fence independently at the genome-wide empirical "
+                        "rate for that side; the pooled null rate is observed, not fitted per gene.",
+        correction_family=None,
+        missingness_handling="Missing values are enumerated and never imputed.",
+        unsupported_states=("INSUFFICIENT", "DEGENERATE_REFERENCE", "NOT_OBSERVED"),
+        limitations=("Declared descriptive screen only; no p-value, no multiple-testing correction, "
+                     "no false-discovery control and no differential-expression claim.",),
+        provenance_requirements=("expression value sources", "population frame", "fixed parameters",
+                                 "pooled null rates"),
+    ),
     "CNV_INDEXED_POSITIVE_CASES_V1": MethodDefinition(
         method_id="CNV_INDEXED_POSITIVE_CASES_V1", version="1",
         purpose="Count distinct positive cases per exact provider CNV category.",
@@ -440,7 +463,9 @@ EXPRESSION_SD_METHOD = _method_ref("EXPRESSION_LOG2_SUMMARY_V1", Unit.LOG2_UQFPK
 # bucket-contract and pre-Phase-3 paths still read and re-check, but they are never
 # declared in a new canonical state method environment: no such value exists on the
 # canonical scan path, so declaring it would overstate what the environment measures.
-HISTORICAL_METHOD_IDS = frozenset({"MUTATION_AFFECTED_CASE_COUNT_V1"})
+HISTORICAL_METHOD_IDS = frozenset({
+    "MUTATION_AFFECTED_CASE_COUNT_V1", "EXPRESSION_TUKEY_TAIL_V1",
+})
 
 
 def _state_methods() -> tuple[MethodIdentityRef, ...]:

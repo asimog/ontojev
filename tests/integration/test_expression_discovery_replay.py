@@ -71,6 +71,10 @@ def test_expression_discovery_replay_is_complete_hash_bound_and_model_free(runti
         assert len(entry.outcome.coverage.missing[0].ids) == 2
         assert entry.tail.availability is MetricAvailability.OBSERVED
         assert entry.tail.valid_n == 23
+        assert entry.tail.method.method_id == "EXPRESSION_EXPECTED_TAIL_V2"
+        assert entry.tail.null_upper_rate == 0.0 and entry.tail.null_lower_rate == 0.0, \
+            "the pooled null expectation is persisted for every observed gene"
+        assert entry.tail.expected_upper_case_count == 0.0
         # Measurement is observed for every gene; nomination requires a declared
         # tail case, and this fixture contains none.
         assert entry.disposition_reason == "NO_TAIL_CASE_OBSERVED"

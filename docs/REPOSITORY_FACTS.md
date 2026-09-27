@@ -39,7 +39,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "evidence_state_schema_version": 4,
   "execution_ownership_values": "SYSTEM_AUTONOMOUS,RESEARCHER_RUN,VALIDATION_RUN",
   "expression_aliquot_identity": "NOT_API_DERIVABLE",
-  "expression_discovery_result_schema_version": 1,
+  "expression_discovery_result_schema_version": 2,
   "expression_disposition_policy": "expression-dispositions-v2",
   "final_candidate_result_schema_version": 1,
   "functional_source_decision": "DEFER",

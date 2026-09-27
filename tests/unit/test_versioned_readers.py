@@ -14,6 +14,7 @@ from cancerjev.domain.codecs import (
     evidence_identity,
     read_cnv_discovery,
     read_evidence,
+    read_expression_discovery,
     read_state,
     state_identity,
     write_evidence,
@@ -181,6 +182,25 @@ def minimal_evidence(state):
         provenance=EvidenceProvenance(state.entity.release, state.sources, state.methods,
                                       state.environment_hash, "2",
                                       state.tested_context.examined_genes_hash, ()))
+
+
+def test_retired_v1_expression_discovery_artifact_still_reads():
+    """Schema-1 artifact: V1 tail identity, legacy reasons, no null expectation fields."""
+    raw = (Path(__file__).parent / "fixtures"
+           / "expression_discovery_result_v1.json").read_bytes()
+
+    result = read_expression_discovery(raw)
+
+    assert len(result.entries) == 2
+    for entry in result.entries:
+        assert entry.tail.method.method_id == "EXPRESSION_TUKEY_TAIL_V1"
+        assert entry.tail.method.version == "1"
+        assert entry.tail.null_lower_rate is None and entry.tail.null_upper_rate is None
+        assert entry.tail.expected_lower_case_count is None
+        assert entry.tail.expected_upper_case_count is None
+        assert entry.disposition_reason == "NO_TAIL_CASE_OBSERVED"
+    assert result.retained_ids == () and result.jev_review_ids == ()
+    assert "not p-values, diagnoses or confirmatory findings" in result.limitations[2]
 
 
 def test_retired_survivor_only_cnv_discovery_artifact_still_reads():

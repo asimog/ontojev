@@ -305,10 +305,17 @@ def test_method_registry_declares_typed_contract_fields(method_id):
                   "eligibility", "minimum_n", "sampling_rule", "estimator",
                   "missingness_handling", "provenance_requirements", "limitations"):
         assert getattr(definition, field), field
-    assert definition.effect_definition is None, "no effect size is computed by this phase"
     assert definition.interval_method is None
-    assert definition.null_hypothesis is None
     assert definition.correction_family is None
+    if method_id == "EXPRESSION_EXPECTED_TAIL_V2":
+        assert definition.null_hypothesis is not None \
+            and "empirical rate" in definition.null_hypothesis
+        assert definition.effect_definition is not None \
+            and "screen" in definition.effect_definition, \
+            "the declared excess is a screen, never an effect-size estimate"
+    else:
+        assert definition.effect_definition is None, "no effect size is computed by this phase"
+        assert definition.null_hypothesis is None
     assert definition.unsupported_states
     assert definition.method_id == method_id
 
