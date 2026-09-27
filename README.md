@@ -2,13 +2,13 @@
 
 OntoJev is an autonomous computational cancer target-discovery system.
 
-It combines harmonized GDC evidence with established NCI/GDAN computational-genomics methods, then uses Jev selectively to identify biologically plausible target candidates whose importance may emerge from non-obvious, discordant, multi-modal, or under-ranked genomic patterns.
+It combines harmonized GDC evidence with deterministic, GDC-documented computational methods (preferring established GDAN/TCGA/NCI methods where a primary methodological reference has been adopted), then uses Jev selectively to identify biologically plausible target candidates whose importance may emerge from non-obvious, discordant, multi-modal, or under-ranked genomic patterns.
 
 ## Current implementation
 
 OntoJev now has one canonical autonomous Campaign spine, implemented, production-wired and offline-verified: typed cohort/profile/capability validation → complete-universe mutation discovery → independent expression discovery → complete CNV case-shard scan and terminal merge → deterministic modality union (`MUTATION_EXPRESSION_CNV_UNION_V1`) → one canonical `StatisticalState` per union member → the declared pre-Wide strata boundary (per-stratum quotas, measured ordering) → Wide Jev → Python admission → an autonomous candidate queue that drives every promoted Candidate through Deep Jev, registered deterministic follow-ups, immutable evidence revisions, Stage 8, dossier and the deterministic no-Jev comparison. No operator candidate flag exists on that path.
 
-The durable `program-loop-v2` worker observes the GDC release once per cycle, selects an eligible Campaign by the declared `campaign-selection-v2` policy, refuses to redispatch a completed Campaign whose profile/release/method identity is unchanged, applies bounded exponential retry to failures, holds the research lock only around each cycle, and heartbeats the canonical package version. Storage is SQLite schema 7 with sequential DDL migrations and a read-only `doctor`; dependencies are locked in `uv.lock`; strict mypy covers 85 production modules; CI verifies the production-built frontend and browser path.
+The durable `program-loop-v2` worker observes the GDC release once per cycle, selects an eligible Campaign by the declared `campaign-selection-v2` policy, refuses to redispatch a completed Campaign whose profile/release/method identity is unchanged, applies bounded exponential retry to failures, holds the research lock only around each cycle, and heartbeats the canonical package version. Storage is SQLite schema 7 with sequential DDL migrations and a read-only `doctor`; dependencies are locked in `uv.lock`; strict mypy covers the explicit production file list in `pyproject.toml`, which must be extended for new modules; CI verifies the production-built frontend and browser path.
 
 Live-verified to date: the individual mutation, expression, CNV-shard, reconciliation and Jev question-set captures recorded in the implementation plan. **Not yet scientifically validated:** `LUAD_CAMPAIGN_V1` remains `EXPERIMENTAL`; a full live Campaign with real Wide/Deep Jev and dossier review has not completed, and readiness is not implied by green software tests. `GDC_FAST_SEARCH` remains available only as the explicitly labelled researcher/comparator path.
 
@@ -98,7 +98,7 @@ OntoJev uses:
 - selected open harmonized GDC files via `gdc-client` where file-level data are preferable;
 - current GDC workflow documentation to interpret how measurements were produced;
 - `gdcdatamodel2` as the code-level GDC data-model authority;
-- established GDAN/TCGA/NCI computational methods before ad hoc alternatives.
+- established GDAN/TCGA/NCI methods where a primary methodological reference has been adopted, before ad hoc alternatives.
 
 Raw BAM/FASTQ/WGS acquisition is not the default. Scientific completeness does not require mirroring GDC locally.
 

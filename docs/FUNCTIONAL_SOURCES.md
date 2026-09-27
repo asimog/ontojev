@@ -1,9 +1,10 @@
 # Functional / external source decision record
 
-Status: **DECIDED 2026-09-26 — all candidate sources DEFERRED**. No download, adapter or
-evidence axis is adopted this cycle; only the recorded classification and separation of
-axes are kept. Adoption requires a declared functional question, verified current terms,
-a bounded mapping snapshot and the standard acquisition preflight.
+Status: **DECIDED 2026-09-26 — decision record version `1`; all candidate sources
+DEFERRED**. No download, adapter or evidence axis is adopted this cycle; only the
+recorded classification and separation of axes are kept. Adoption requires a
+declared functional question, verified current terms, a bounded mapping snapshot
+and the standard acquisition preflight.
 
 ## Axes (never collapsed)
 
@@ -24,7 +25,7 @@ efficacy; known-gene status is not proof of a target in this cohort.
 
 ## Consequences in code
 
-- `domain/functional.py` holds the typed posture (`functional-sources-v1`): every candidate
+- `domain/functional.py` holds the typed posture (decision record version `1`, matching `FUNCTIONAL_SOURCE_DECISION_RECORD_VERSION`): every candidate
   decision is `DEFER`, the axis vocabulary is declared, and a test verifies this record
   matches the constants.
 - No functional adapter, action or evidence field is implemented; nothing can produce

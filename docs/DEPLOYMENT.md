@@ -113,7 +113,9 @@ SSH command dies with the client and leaves the run `RUNNING` until crash
 recovery. `tmux` is not baked into the image: `apt-get update` then
 `apt-get install -y tmux` once per container generation.
 
-Observed production costs (Data Release 46.0, 2026-08-10):
+Observed production costs (Data Release 46.0, 2026-08-10; operator-recorded from a
+researcher run on that date, not reproducible from this worktree — the volume, date
+and run ids are not inspectable locally):
 
 | Operation | Requests | Bytes | Jev calls | Notes |
 |---|---|---|---|---|

@@ -17,6 +17,6 @@ RUN pip install --no-cache-dir --upgrade pip \
 RUN mkdir -p /data
 EXPOSE 8080
 
-# Read-only public demo: FastAPI over the persistent data directory. The
-# autonomous worker is deliberately not part of this container.
+# Public API over the persistent data directory. With CANCERJEV_RUN_WORKER=1
+# (set in production) the same process also starts the canonical durable worker.
 CMD ["python", "-m", "deploy.serve"]

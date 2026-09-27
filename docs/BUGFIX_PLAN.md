@@ -1,5 +1,10 @@
 # Review corrections and bounded adaptive acquisition
 
+Historical snapshot: this plan records the review corrections landed before the
+audit-derived program in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md). It is
+kept as the record of that repair batch; the `OPEN: verify` states below are
+historical and all units are landed at current HEAD.
+
 Baseline: `c58e38b80e118ab1cbbabaf3e26fa0d4368eb908`.
 Existing user edits: live page-cap wiring and OpenRouter response-byte allowance; preserve both.
 
@@ -17,17 +22,17 @@ Status after the parallel-agent merge `215d54a`:
 - Unit 5 is landed: `cancerjev/gdc/budget.py` declares `gdc-adaptive-v1`; CLI runs record
   the policy payload in their scope, and the declared initial/ceiling/byte values are
   indexed in `docs/REPOSITORY_FACTS.md`.
-- Units 1, 3 and 6 remain to be verified against `215d54a`; the post-merge test
-  reconciliation and documentation sync are tracked in `docs/IMPLEMENTATION_PLAN.md`.
+- Units 1, 3 and 6 are landed and covered by the current suite; the historical
+  `OPEN: verify` notes below are superseded.
 
 Implementation units:
 
-1. Correct gene-specific detail, cross-page identity checks, and terminal failure handling. (OPEN: verify.)
+1. Correct gene-specific detail, cross-page identity checks, and terminal failure handling. (LANDED.)
 2. Bind CNV shard acquisition/merge to the full cohort, spec, release and owner; preserve repeatable immutable artifacts. (LANDED as noted above.)
-3. Scope GDC caches by fresh release identity and ownership, and Jev caches by ownership/mode. (OPEN: verify.)
+3. Scope GDC caches by fresh release identity and ownership, and Jev caches by ownership/mode. (LANDED.)
 4. Separate per-request Jev context bounds from optional run cost quotas and correct accounting. (LANDED as noted above.)
 5. Centralize adaptive GDC request/page allowances under a fixed sub-GiB run download ceiling. Record policy and every expansion; never reduce scientific scope to fit a budget. (LANDED as noted above.)
-6. Return CLI failure status, add regression tests, update current behavior documentation. (OPEN: verify; documentation sync tracked in `docs/IMPLEMENTATION_PLAN.md`.)
+6. Return CLI failure status, add regression tests, update current behavior documentation. (LANDED; documentation sync tracked in `docs/IMPLEMENTATION_PLAN.md`.)
 
 Validation: targeted fixture/loopback regression checks, Ruff, strict project mypy,
 and the full default offline pytest suite. No live scientific acquisitions or commits required.

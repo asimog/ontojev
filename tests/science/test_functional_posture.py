@@ -24,7 +24,7 @@ def test_decision_record_matches_the_typed_posture():
     record = (ROOT / FUNCTIONAL_SOURCE_DECISION_RECORD_PATH).read_text(encoding="utf-8")
 
     assert FUNCTIONAL_SOURCE_DECISION_RECORD_VERSION == "1"
-    assert "functional-sources-v1" in record
+    assert f"decision record version `{FUNCTIONAL_SOURCE_DECISION_RECORD_VERSION}`" in record
     assert FUNCTIONAL_SOURCE_DECISIONS
     assert all(decision is SourceDecision.DEFER
                for decision in FUNCTIONAL_SOURCE_DECISIONS.values())

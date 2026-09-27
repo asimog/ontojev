@@ -10,8 +10,11 @@ are Campaign-global, while the 512 MiB per-acquisition-shard allowance still
 applies to every shard. The Campaign ceilings are sized from the measured live
 cost of the declared LUAD cohort (one 25-case CNV shard = 817 requests / 107 MB,
 complete mutation scan = ~206 MB, expression plan <= 1,400 requests), so a
-declared full Campaign fits while an exhausted budget still reports
-INCOMPLETE_OR_UNAVAILABLE instead of a smaller complete population.
+declared full Campaign fits. An exhausted budget fails the run with a typed
+REQUEST_BUDGET_EXHAUSTED / PAGE_BUDGET_EXHAUSTED / BYTE_BUDGET_EXHAUSTED /
+SHARD_BYTE_BUDGET_EXHAUSTED TransportError; the declared exhaustion semantics
+recorded below are INCOMPLETE_OR_UNAVAILABLE, never a smaller population labelled
+complete.
 """
 from __future__ import annotations
 

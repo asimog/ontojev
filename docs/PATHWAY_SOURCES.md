@@ -21,7 +21,8 @@ or significance claim is implemented or implied by this decision.
 - Retention: `data/pathways/reactome-ensembl-top-level-homo-sapiens-2026-09-25.txt`
   (untracked data directory; the hash above is the version of record).
 - Identifier fidelity check: the adopted snapshot's TP53 (`ENSG00000141510`) rows
-  (48 memberships, retained as a committed fixture) are compared against the live
+  (47 unique memberships after the strict parser dedupes one repeated row; retained as a
+  committed fixture) are compared against the live
   Reactome Content Service `mapping/ENSEMBL/ENSG00000141510/pathways?species=9606`
   response captured the same day; the contract test requires an exact identifier-set
   match.

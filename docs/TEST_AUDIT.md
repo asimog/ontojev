@@ -7,14 +7,14 @@
 > - `compose_discovery_states` **is production-wired**: `research/systematic.py`
 >   is the canonical Campaign executor and reaches the modality union on every
 >   autonomous dispatch; the integration tests cover that spine.
-> - `Repository.list_runs(ownership=…)` now has production callers (program-loop
->   tests and worker dispatch checks), not only tests.
-> - The legacy `_compose_legacy_survivor_states` / `run_cnv_discovery` branch and
->   the dead `parse_files_provenance` parser remain test-only historical seams;
->   they are not part of the canonical path and their deletion is still a
->   maintainer decision under the retention rules below.
-> - The P12b pathway attach layer (`attach_pathway_evidence` / `pathway_evidence`)
->   remains unwired and deferred; Arm Jev remains deferred.
+> - `Repository.list_runs(ownership=…)` has a production caller: `research/program.py::recover_completed_campaign`
+>   scans recent autonomous runs to adopt a completed Campaign whose state publish was interrupted
+>   (Phase 5); the program-loop tests and worker dispatch checks cover it in addition.
+> - The legacy `_compose_legacy_survivor_states` / `run_cnv_discovery` producers and the dead
+>   `parse_files_provenance` parser were deleted in the audit-derived cleanup (Phase 6); the
+>   versioned readers and their frozen historical fixtures remain for compatibility.
+> - The P12b pathway attach layer (`attach_pathway_evidence`) was deleted; the strict Reactome
+>   reader remains unwired with an explicit "no production caller" banner; Arm Jev remains deferred.
 > - New audit-relevant surfaces since `60c638c`: `tests/unit/test_run_lifecycle.py`,
 >   `tests/unit/test_test_hermeticity.py`, `tests/integration/test_systematic_campaign.py`,
 >   `tests/integration/test_autonomous_candidate_queue.py`,
@@ -180,10 +180,10 @@ Move the assertion to the named owner; no contract lost.
 
 ## Cross-cutting signals
 
-- Test-only seams: `Repository.list_runs(ownership=…)` has no non-test callers
-  (three suites); `compose_discovery_states` has no production caller;
-  `research/nextmove.py::next_move` and the `*_BY_ID` question maps are dead
-  exports.
+- Test-only seams (discovery-era; partly superseded above): `Repository.list_runs(ownership=…)`
+  now has a production caller (`recover_completed_campaign`); `compose_discovery_states` is
+  production-wired; `research/nextmove.py::next_move` was deleted (Phase 6); the `*_BY_ID`
+  question maps remain declared lookups.
 - The lanes recorded retained false positives explicitly, e.g. the
   cancer-agnostic source grep, credential/scan guards, config-default pins,
   fixture digest pins, and legacy duplicate-count parser contracts.

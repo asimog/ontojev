@@ -8,7 +8,7 @@ Current implementation supports bounded typed API acquisition and immutable sour
 
 The existing upstream clones are source references, not installed runtime tools. Exact inspected SHAs are recorded in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md); `.upstream/SOURCES.lock.json` remains the untracked local inventory.
 
-The `/analysis/top_cases_counts_by_genes` bucket is not a distinct released-case measurement. Stage 4 uses a complete `/ssm_occurrences` scan; the older live path still requires correction. Preserve the frozen reconciliation corpus and never reinterpret bucket values as affected cases merely because the endpoint name suggests counts.
+The `/analysis/top_cases_counts_by_genes` bucket is not a distinct released-case measurement. Stage 4 and the live path derive counts from the complete `/ssm_occurrences` scan; the bucket parser survives only as an offline contract tested against the frozen reconciliation corpus. Preserve that corpus and never reinterpret bucket values as affected cases merely because the endpoint name suggests counts.
 
 OntoJev aims for scientifically complete analysis without indiscriminate local mirroring of GDC.
 
