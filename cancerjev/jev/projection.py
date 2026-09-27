@@ -25,11 +25,14 @@ from cancerjev.domain.scientific import (
     CnvOccurrenceResult,
     CnvProjectFinding,
     ExpressionSummaryResult,
+    MutationCountResult,
+    ProjectState,
     StatisticalState,
 )
 from cancerjev.science.actions import ACTION_REGISTRY, eligible_actions
+from cancerjev.science.methods import COVERAGE_IMBALANCE_DEFINITION
 
-PROJECTION_VERSION = "jev-state-projection-v4"
+PROJECTION_VERSION = "jev-state-projection-v5"
 EVIDENCE_PROJECTION_VERSION = "jev-evidence-projection-v2"
 HYPOTHESIS_PROJECTION_VERSION = "jev-hypothesis-projection-v2"
 PROJECTION_BYTE_CAP = 65_536
@@ -82,19 +85,40 @@ class ProjectionError(Exception):
         self.detail = detail
 
 
-def _limitations(completeness: str) -> list[str]:
-    limitations = [
-        "Mutation counts are provider-defined case counts with no matched denominator; a project with no "
-        "observation is not a biological negative.",
-        "Expression summaries are computed locally as log2(UQFPKM+1) on the exact examined case set; "
-        "case-to-sample resolution is not established.",
-        "Provider expression median/stddev estimator conventions are not documented (live evidence suggests a "
-        "population denominator).",
-        "The examined gene set is selected from the provider top-mutated ranking and is not an unbiased "
-        "genome-wide scan.",
-        "CNV rows, when present, are positive provider-labelled occurrences; absence is not a neutral state "
-        "and category case sets may overlap.",
-    ]
+def _mutation_limitations(mutation: MutationCountResult) -> list[str]:
+    affected = mutation.affected_cases
+    if isinstance(affected, ObservedCount):
+        return list(affected.method.limitations)
+    return ["Mutation counts are not observed for this state; the absence of an observation is not a "
+            "biological negative."]
+
+
+def _limitations(state: StatisticalState, project: ProjectState, completeness: str) -> list[str]:
+    """Limitations derived from the state's own selection rule and measurements.
+
+    A projection must never describe a selection path, count method or data source
+    other than the one the state itself records.
+    """
+    limitations = _mutation_limitations(project.mutation)
+    limitations.append(
+        "Gene-set selection under declared rule "
+        f"'{state.tested_context.selection_rule}': {state.tested_context.selection_bias}"
+    )
+    if isinstance(project.expression, ExpressionSummaryResult):
+        limitations.append(
+            "Expression summaries are computed locally as log2(UQFPKM+1) on the exact examined case set; "
+            "case-to-sample resolution is not established."
+        )
+    if project.provider_expression is not None:
+        limitations.append(
+            "Provider expression median/stddev estimator conventions are not documented (live evidence "
+            "suggests a population denominator)."
+        )
+    if isinstance(project.cnv, (CnvOccurrenceResult, CnvProjectFinding)):
+        limitations.append(
+            "CNV fields are contextual provider-labelled positives; no admission criterion or Python "
+            "policy consumes CNV, absence is not a neutral state, and category case sets may overlap."
+        )
     if completeness != "COMPLETE":
         limitations.append("Some provider aggregations were partial; totals may be incomplete.")
     return limitations
@@ -202,12 +226,19 @@ def build_projection(record: StateRecord) -> dict[str, Any]:
             "cnv_conflicting_cases": cnv_conflicting_cases,
             "cnv_categories": cnv_categories,
             "cnv_callers": cnv_callers,
-            "coverage_imbalance": state.cross_project.coverage_imbalance,
+            # The recorded flag is forwarded only when the summary was computed under the declared
+            # rule. A summary that does not apply the rule (the single-cohort union marks it
+            # "not applicable to one project") is NOT ASSESSED: null, never observed-absence false.
+            "coverage_imbalance": (
+                state.cross_project.coverage_imbalance
+                if state.cross_project.coverage_imbalance_definition == COVERAGE_IMBALANCE_DEFINITION
+                else None
+            ),
             "completeness": completeness,
             "scientific_sufficiency": state.quality.sufficiency.value,
         },
         "missingness": missingness,
-        "limitations": _limitations(completeness),
+        "limitations": _limitations(state, project, completeness),
         "eligible_followups": [
             item.action_id for item in eligible_actions(state, "STATISTICAL_STATE") if item.eligible
         ],
