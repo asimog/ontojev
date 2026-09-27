@@ -436,17 +436,27 @@ EXPRESSION_SD_METHOD = _method_ref("EXPRESSION_LOG2_SUMMARY_V1", Unit.LOG2_UQFPK
                                    transform=EXPRESSION_TRANSFORMATION)
 
 
+# Historical method declarations are kept so artifacts written by the retired
+# bucket-contract and pre-Phase-3 paths still read and re-check, but they are never
+# declared in a new canonical state method environment: no such value exists on the
+# canonical scan path, so declaring it would overstate what the environment measures.
+HISTORICAL_METHOD_IDS = frozenset({"MUTATION_AFFECTED_CASE_COUNT_V1"})
+
+
 def _state_methods() -> tuple[MethodIdentityRef, ...]:
     return tuple(
-        MethodIdentityRef(ref["method_id"], ref["version"], ref["parameters_hash"])
-        for ref in (definition.ref() for definition in METHODS.values())
+        MethodIdentityRef(method_id, definition.version, definition.ref()["parameters_hash"])
+        for method_id, definition in METHODS.items()
+        if method_id not in HISTORICAL_METHOD_IDS
     )
 
 
 def _environment_hash() -> str:
     return hashlib.sha256(canonical_json({
         "state_schema_version": STATE_SCHEMA_VERSION,
-        "methods": {method_id: definition.version for method_id, definition in METHODS.items()},
+        "methods": {method_id: definition.version
+                    for method_id, definition in METHODS.items()
+                    if method_id not in HISTORICAL_METHOD_IDS},
         "parser_version": "gdc-parser-v1",
     })).hexdigest()
 

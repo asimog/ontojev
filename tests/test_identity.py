@@ -233,7 +233,7 @@ def test_state_identity_tracks_measured_content_and_scope():
     assert state_identity(measured) != baseline
     assert state_identity(build_state(frames=[frame(cases=7)])) != baseline
     assert state_identity(replace(
-        base, methods=(replace(base.methods[0], version="2"), *base.methods[1:]))) != baseline
+        base, methods=(replace(base.methods[0], version="99"), *base.methods[1:]))) != baseline
     assert state_identity(replace(base, missingness=("a case column was not returned",))) != baseline
     assert state_identity(replace(
         base, universe=replace(base.universe, filter_description="different tested scope"))) != baseline

@@ -221,6 +221,17 @@ def _sample(tmp_path, *, run_id: str = "science-methods", project_ids: tuple[str
 # ------------------------------------------------------------------ pure helpers
 
 
+def test_retired_v1_is_never_declared_in_a_new_state_environment(tmp_path):
+    sample = _sample(tmp_path)
+    declared = {method.method_id for method in sample.state.methods}
+
+    assert "MUTATION_AFFECTED_CASE_COUNT_V1" not in declared, \
+        "no V1 value exists on the canonical scan path; declaring it overstates the environment"
+    assert "MUTATION_AFFECTED_CASE_COUNT_V2" in declared
+    assert "MUTATION_AFFECTED_CASE_COUNT_V1" in METHODS, \
+        "the historical definition stays so artifacts written by the retired path still read"
+
+
 def test_expression_log2_summary_matches_hand_computation():
     summary = expression_log2_summary({"a": 3.0, "b": 15.0, "c": 0.0})
     hand = [math.log2(value + 1.0) for value in (3.0, 15.0, 0.0)]
