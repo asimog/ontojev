@@ -124,7 +124,8 @@ def coverage_body() -> bytes:
 
 
 def genes_body(*, size: int = 10, offset: int = 0,
-               expression_only_gene: str | None = None) -> bytes:
+               expression_only_gene: str | None = None,
+               expression_extra_genes: int = 0) -> bytes:
     hits = [
         {"gene_id": GENES[0], "symbol": "GENEONE", "name": "Gene One", "biotype": "protein_coding",
          "is_cancer_gene_census": True},
@@ -134,11 +135,21 @@ def genes_body(*, size: int = 10, offset: int = 0,
     if expression_only_gene is not None:
         hits.append({"gene_id": expression_only_gene, "symbol": "GENETHREE", "name": "Gene Three",
                      "biotype": "protein_coding", "is_cancer_gene_census": False})
+    for index in range(expression_extra_genes):
+        gene_id = f"ENSG{synthetic_gene_index(index):011d}"
+        hits.append({"gene_id": gene_id, "symbol": f"GENEX{index + 1:02d}",
+                     "name": f"Extra Gene {index + 1}", "biotype": "protein_coding",
+                     "is_cancer_gene_census": False})
     total = len(hits)
     page = hits[offset:offset + size]
     return _json({"data": {"hits": page, "pagination": {
         "count": len(page), "total": total, "size": size, "from": offset,
         "pages": math.ceil(total / size) if size else 0}}})
+
+
+def synthetic_gene_index(index: int) -> int:
+    """Ascending synthetic ids that sort after the declared fixture genes."""
+    return 10 + index
 
 
 def count_records(project_id: str) -> list[dict[str, Any]]:
@@ -299,13 +310,18 @@ def cnv_occurrence_shard_body(project_id: str, case_ids_requested: list[str], *,
 
 
 def values_body(case_ids_requested: list[str], gene_ids: list[str], *, drop_columns: int = 0,
-                constant_value: float | None = None, outlier_case: bool = False) -> bytes:
+                constant_value: float | None = None, outlier_case: bool = False,
+                heavy_tail_cases: dict[str, int] | None = None) -> bytes:
     returned = case_ids_requested[: len(case_ids_requested) - drop_columns] if drop_columns else case_ids_requested
+    tail_counts = heavy_tail_cases or {}
     lines = ["gene_id\t" + "\t".join(returned)]
     for gene_index, gene_id in enumerate(gene_ids):
         cells = [f"{(constant_value if constant_value is not None else 3.0 + gene_index + (index % 7) * 0.5):.4f}"
                  for index in range(len(returned))]
-        if outlier_case and cells:
+        if gene_id in tail_counts:
+            for index in range(min(tail_counts[gene_id], len(cells))):
+                cells[index] = f"{float(cells[index]) + 8.0:.4f}"
+        elif outlier_case and cells:
             # One declared outlying case per gene: a real upper tail case, so expression
             # nomination semantics can be exercised instead of measurement-only DROP.
             outlier = float(cells[0]) + 8.0
@@ -326,6 +342,8 @@ class ReplayTransport:
                   inconsistent_case_offset_after_first: bool = False,
                   constant_expression_value: float | None = None,
                   expression_outlier_case: bool = False,
+                  expression_extra_genes: int = 0,
+                  heavy_tail_cases: dict[str, int] | None = None,
                   truncate_occurrence_page: bool = False,
                   duplicate_occurrence_across_pages: bool = False,
                   expression_only_gene: str | None = None) -> None:
@@ -342,6 +360,8 @@ class ReplayTransport:
         self.inconsistent_case_offset_after_first = inconsistent_case_offset_after_first
         self.constant_expression_value = constant_expression_value
         self.expression_outlier_case = expression_outlier_case
+        self.expression_extra_genes = expression_extra_genes
+        self.heavy_tail_cases = heavy_tail_cases
         self.truncate_occurrence_page = truncate_occurrence_page
         self.duplicate_occurrence_across_pages = duplicate_occurrence_across_pages
         self.expression_only_gene = expression_only_gene
@@ -377,7 +397,8 @@ class ReplayTransport:
         elif name == "genes":
             params = dict(request.params)
             body = genes_body(size=int(params["size"]), offset=int(params.get("from", 0)),
-                              expression_only_gene=self.expression_only_gene)
+                              expression_only_gene=self.expression_only_gene,
+                              expression_extra_genes=self.expression_extra_genes)
         elif name == "cases":
             params = dict(request.params)
             offset = int(params["from"])
@@ -431,7 +452,8 @@ class ReplayTransport:
             body = values_body(request.body["case_ids"], request.body["gene_ids"],
                                drop_columns=self.drop_value_columns,
                                constant_value=self.constant_expression_value,
-                               outlier_case=self.expression_outlier_case)
+                               outlier_case=self.expression_outlier_case,
+                               heavy_tail_cases=self.heavy_tail_cases)
         else:  # pragma: no cover - guards against silent fixture drift
             raise AssertionError(f"replay transport has no fixture for {name}")
         media = "text/tab-separated-values" if request.accept != "application/json" else "application/json"

@@ -121,13 +121,16 @@ EXPRESSION_TAIL_VERSION_V1 = "1"
 EXPRESSION_TAIL_NULL_MODEL = "GENOME_WIDE_EMPIRICAL_FENCE_EXCEEDANCE_V1"
 EXPRESSION_TAIL_NULL_EXCESS_SD = 3.0
 EXPRESSION_SELECTION_RULE = "SAME_RELEASE_BOUND_SYSTEMATIC_UNIVERSE"
-EXPRESSION_DISPOSITION_POLICY_VERSION = "expression-dispositions-v2"
+EXPRESSION_DISPOSITION_POLICY_VERSION = "expression-dispositions-v3"
 EXPRESSION_JEV_REVIEW_ASYMMETRY_RATIO = 5.0
 EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER = "EXTREME_TAIL_ASYMMETRY"
-EXPRESSION_RETAIN_REASON = "OBSERVED_TAIL_CASES_WITH_MINIMUM_VALUES"
+EXPRESSION_RETAIN_REASON = "OBSERVED_EXCESS_OVER_EMPIRICAL_NULL"
+EXPRESSION_LEGACY_RETAIN_REASON = "OBSERVED_TAIL_CASES_WITH_MINIMUM_VALUES"
 EXPRESSION_DROP_OBSERVED_REASON = "EXPRESSION_NOT_OBSERVED"
 EXPRESSION_DROP_INSUFFICIENT_REASON = "INSUFFICIENT_VALID_VALUES"
 EXPRESSION_DROP_MEASUREMENT_ONLY_REASON = "NO_TAIL_CASE_OBSERVED"
+EXPRESSION_DROP_NULL_CONSISTENT_REASON = "TAIL_CASES_WITHIN_NULL_EXPECTATION"
+EXPRESSION_DROP_NULL_UNAVAILABLE_REASON = "NULL_EXPECTATION_UNAVAILABLE"
 EXPRESSION_REQUEST_AVERAGE_BYTES = 200 * 1024
 EXPRESSION_ALIQUOT_IDENTITY_STATUS = "NOT_API_DERIVABLE"
 EXPRESSION_ALIQUOT_IDENTITY_NOTE = (
@@ -629,12 +632,16 @@ class ExpressionDiscoveryEntry:
             require(isinstance(self.outcome, ExpressionSummaryResult)
                     and self.tail.availability is MetricAvailability.OBSERVED,
                     "RETAIN requires an observed expression tail")
-            require(self.disposition_reason == EXPRESSION_RETAIN_REASON, "RETAIN reason mismatch")
+            require(self.disposition_reason in {EXPRESSION_RETAIN_REASON,
+                                                EXPRESSION_LEGACY_RETAIN_REASON},
+                    "RETAIN reason mismatch")
             require(self.review_trigger is None, "RETAIN carries no review trigger")
         elif self.disposition is ExpressionDisposition.DROP:
             require(self.disposition_reason in {EXPRESSION_DROP_OBSERVED_REASON,
                                                 EXPRESSION_DROP_INSUFFICIENT_REASON,
-                                                EXPRESSION_DROP_MEASUREMENT_ONLY_REASON},
+                                                EXPRESSION_DROP_MEASUREMENT_ONLY_REASON,
+                                                EXPRESSION_DROP_NULL_CONSISTENT_REASON,
+                                                EXPRESSION_DROP_NULL_UNAVAILABLE_REASON},
                     "DROP reason mismatch")
             require(self.review_trigger is None, "DROP carries no review trigger")
         else:

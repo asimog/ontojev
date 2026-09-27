@@ -15,6 +15,8 @@ from cancerjev.domain.discovery import (
     CNV_SUMMARY_VERSION,
     EXPRESSION_DROP_INSUFFICIENT_REASON,
     EXPRESSION_DROP_MEASUREMENT_ONLY_REASON,
+    EXPRESSION_DROP_NULL_CONSISTENT_REASON,
+    EXPRESSION_DROP_NULL_UNAVAILABLE_REASON,
     EXPRESSION_DROP_OBSERVED_REASON,
     EXPRESSION_JEV_REVIEW_ASYMMETRY_RATIO,
     EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER,
@@ -166,13 +168,19 @@ def expression_lane_disposition(
     """Declared expression-lane disposition; descriptive-only and deterministic.
 
     Measurement and nomination are separate contracts: an observed, computable
-    tail is measurement evidence for every gene, but nomination requires an
-    actual declared pattern. RETAIN therefore requires at least one observed
-    tail case beyond a fence; a gene with valid values and zero tail cases is
-    DROP with ``NO_TAIL_CASE_OBSERVED`` while its measurement still populates
-    the StatisticalState. JEV_REVIEW is the declared extreme-tail asymmetry
-    trigger (both tails present and the larger at least
-    ``EXPRESSION_JEV_REVIEW_ASYMMETRY_RATIO`` times the smaller).
+    tail is measurement evidence for every gene, but nomination requires a
+    declared pattern beyond what the fences select by chance. The declared null is
+    the pooled genome-wide empirical fence-exceedance rate for each side; a side is
+    nominated only when its observed tail count exceeds ``valid_n x rate`` by at
+    least ``EXPRESSION_TAIL_NULL_EXCESS_SD`` binomial null standard deviations.
+    RETAIN therefore requires a declared excess over that null on at least one
+    side; tail cases within the expectation are DROP with
+    ``TAIL_CASES_WITHIN_NULL_EXPECTATION`` and a missing null is DROP with
+    ``NULL_EXPECTATION_UNAVAILABLE`` (fail closed to non-nomination). JEV_REVIEW
+    remains the declared extreme-tail asymmetry trigger (both tails present and
+    the larger at least ``EXPRESSION_JEV_REVIEW_ASYMMETRY_RATIO`` times the
+    smaller). No p-value, multiple-testing correction or false-discovery control
+    is computed or claimed.
     """
     if not isinstance(outcome, ExpressionSummaryResult):
         return ExpressionDisposition.DROP, EXPRESSION_DROP_OBSERVED_REASON, None
@@ -186,7 +194,16 @@ def expression_lane_disposition(
             and max(lower, upper) >= EXPRESSION_JEV_REVIEW_ASYMMETRY_RATIO * min(lower, upper)):
         return (ExpressionDisposition.JEV_REVIEW, EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER,
                 EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER)
-    return ExpressionDisposition.RETAIN, EXPRESSION_RETAIN_REASON, None
+    if tail.null_lower_rate is None or tail.null_upper_rate is None:
+        return ExpressionDisposition.DROP, EXPRESSION_DROP_NULL_UNAVAILABLE_REASON, None
+    for observed, rate in ((lower, tail.null_lower_rate), (upper, tail.null_upper_rate)):
+        if observed == 0:
+            continue
+        expected = tail.valid_n * rate
+        standard_deviation = math.sqrt(tail.valid_n * rate * (1.0 - rate))
+        if observed - expected >= EXPRESSION_TAIL_NULL_EXCESS_SD * standard_deviation:
+            return ExpressionDisposition.RETAIN, EXPRESSION_RETAIN_REASON, None
+    return ExpressionDisposition.DROP, EXPRESSION_DROP_NULL_CONSISTENT_REASON, None
 
 
 def cnv_lane_disposition(evidence: CnvGeneEvidence) -> tuple[CnvDisposition, str, str | None]:

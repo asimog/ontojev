@@ -37,7 +37,11 @@ from cancerjev.domain.scientific import (
 )
 from cancerjev.research.expression_discovery import _expression_run_plan
 from cancerjev.research.specs import LUAD_RESEARCH_V1
-from cancerjev.science.descriptors import expression_lane_disposition, expression_tail_descriptor
+from cancerjev.science.descriptors import (
+    expression_lane_disposition,
+    expression_null_rates,
+    expression_tail_descriptor,
+)
 
 RELEASE = "Data Release 46.0 - August 10, 2026"
 GENE_ID = "ENSG00000141510"
@@ -69,13 +73,14 @@ def _summary(uqfpkm_by_case: dict[str, float]) -> ExpressionSummaryResult:
     )
 
 
-def _disposition(uqfpkm_by_case: dict[str, float]):
+def _disposition(uqfpkm_by_case: dict[str, float],
+                 null_rates: tuple[float, float] | None = (0.01, 0.01)):
     outcome = _summary(uqfpkm_by_case)
-    tail = expression_tail_descriptor(outcome, ExpressionDiscoverySpec())
+    tail = expression_tail_descriptor(outcome, ExpressionDiscoverySpec(), null_rates=null_rates)
     return expression_lane_disposition(outcome, tail), tail
 
 
-def test_balanced_tails_retain_without_a_trigger():
+def test_balanced_tails_retain_only_with_a_declared_excess_over_the_null():
     (disposition, reason, trigger), tail = _disposition(
         {f"case-{index:03d}": (0.0 if index < 5 else 63.0 if index >= 95 else 3.0
                               if index < 35 else 7.0)
@@ -83,8 +88,35 @@ def test_balanced_tails_retain_without_a_trigger():
 
     assert tail.availability is MetricAvailability.OBSERVED
     assert len(tail.lower_case_ids) == len(tail.upper_case_ids) == 5
+    assert tail.null_upper_rate == 0.01 and tail.expected_upper_case_count == 1.0
     assert disposition is ExpressionDisposition.RETAIN
     assert reason == EXPRESSION_RETAIN_REASON
+    assert trigger is None
+
+
+def test_tail_cases_within_the_null_expectation_are_not_nominated():
+    (disposition, reason, trigger), tail = _disposition(
+        {f"case-{index:03d}": (0.0 if index < 5 else 63.0 if index >= 95 else 3.0
+                              if index < 35 else 7.0)
+         for index in range(100)},
+        null_rates=(0.05, 0.05))
+
+    assert len(tail.upper_case_ids) == 5
+    assert disposition is ExpressionDisposition.DROP
+    assert reason == "TAIL_CASES_WITHIN_NULL_EXPECTATION"
+    assert trigger is None
+
+
+def test_a_tail_without_a_persisted_null_fails_closed_to_non_nomination():
+    (disposition, reason, trigger), tail = _disposition(
+        {f"case-{index:03d}": (0.0 if index < 5 else 63.0 if index >= 95 else 3.0
+                              if index < 35 else 7.0)
+         for index in range(100)},
+        null_rates=None)
+
+    assert tail.null_lower_rate is None and tail.null_upper_rate is None
+    assert disposition is ExpressionDisposition.DROP
+    assert reason == "NULL_EXPECTATION_UNAVAILABLE"
     assert trigger is None
 
 
@@ -139,13 +171,48 @@ def test_jev_review_entry_accepts_an_observed_asymmetric_tail():
         {f"case-{index:03d}": (0.0 if index < 8 else 63.0 if index == 99 else 3.0
                               if index < 34 else 7.0)
          for index in range(100)})
-    tail = expression_tail_descriptor(outcome, ExpressionDiscoverySpec())
+    tail = expression_tail_descriptor(outcome, ExpressionDiscoverySpec(), null_rates=(0.01, 0.01))
     disposition, reason, trigger = expression_lane_disposition(outcome, tail)
     entry = ExpressionDiscoveryEntry(EntityRef(GENE_ID, "TP53", RELEASE), outcome, tail,
                                      disposition, reason, trigger)
 
     assert entry.disposition is ExpressionDisposition.JEV_REVIEW
     assert entry.review_trigger == EXPRESSION_JEV_REVIEW_ASYMMETRY_TRIGGER
+
+
+def test_the_declared_null_makes_the_frozen_fixture_selective():
+    """Before/after on one frozen population: chance tail membership is not nomination.
+
+    Thirty-six genes carry at least one fence case; under the declared pooled null
+    only the gene whose upper tail exceeds the expectation by three binomial null
+    standard deviations is nominated.
+    """
+    def values(upper_tail_cases: int) -> dict[str, float]:
+        data = {f"case-{index:03d}": 3.0 + (index % 7) * 0.5 for index in range(100)}
+        for index in range(upper_tail_cases):
+            data[f"case-tail-{index:03d}"] = 63.0
+        return data
+
+    population = [values(1) for _ in range(35)] + [values(8)] + [values(0) for _ in range(4)]
+    outcomes = [_summary(item) for item in population]
+    spec = ExpressionDiscoverySpec()
+    bare_tails = tuple(expression_tail_descriptor(outcome, spec) for outcome in outcomes)
+    null_rates = expression_null_rates(bare_tails)
+    assert null_rates is not None
+    tails = tuple(expression_tail_descriptor(outcome, spec, null_rates=null_rates)
+                  for outcome in outcomes)
+    dispositions = [expression_lane_disposition(outcome, tail)
+                    for outcome, tail in zip(outcomes, tails, strict=True)]
+
+    before = [disposition is not ExpressionDisposition.DROP
+              or reason != "NO_TAIL_CASE_OBSERVED"
+              for disposition, reason, _ in dispositions]
+    after = [disposition is ExpressionDisposition.RETAIN
+             for disposition, _, _ in dispositions]
+    assert sum(before) == 36, "the pre-null rule nominated every tail-bearing gene"
+    assert sum(after) == 1, "only the declared excess over the pooled null nominates"
+    assert after[-5] is True, "the heavy-tail gene is the single nomination"
+    assert sum(after) < sum(before)
 
 
 def test_run_plan_refuses_a_plan_beyond_the_declared_budget():

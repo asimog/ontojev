@@ -40,14 +40,16 @@ ROOT = Path(__file__).resolve().parents[2]
 RECONCILIATION = ROOT / "tests" / "reconciliation" / "fixtures" / "reconciliation_dr46"
 GENE_ONE, GENE_TWO = "ENSG00000000001", "ENSG00000000002"
 EXPRESSION_ONLY_GENE = "ENSG00000000003"
-# The canonical replay transport options that exercise all three modalities: one
-# declared expression outlier and one gene nominated by expression alone.
+# The canonical replay transport options that exercise all three modalities: a
+# widened expression universe with a declared excess over the pooled null in one
+# mutation survivor and one expression-only gene.
 CANONICAL_TRANSPORT_OPTIONS = {
-    "expression_outlier_case": True, "expression_only_gene": EXPRESSION_ONLY_GENE,
+    "expression_only_gene": EXPRESSION_ONLY_GENE, "expression_extra_genes": 9,
+    "heavy_tail_cases": {GENE_ONE: 5, EXPRESSION_ONLY_GENE: 5},
 }
 EXPECTED_CANONICAL_UNION = {
     GENE_ONE: (("cnv", "RETAIN"), ("expression", "RETAIN"), ("mutation", "RETAINED")),
-    GENE_TWO: (("expression", "RETAIN"), ("mutation", "RETAINED")),
+    GENE_TWO: (("mutation", "RETAINED"),),
     EXPRESSION_ONLY_GENE: (("expression", "RETAIN"),),
 }
 
