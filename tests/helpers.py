@@ -44,6 +44,7 @@ def canned_capability(*, complete: bool = True) -> CohortCapability:
         facets = FileFacets(
             total_open_files=15,
             counts={
+                "access": {"open": 15},
                 "experimental_strategy": {"WXS": 5, "RNA-Seq": 5, "Genotyping Array": 5},
                 "analysis.workflow_type": {
                     "Aliquot Ensemble Somatic Variant Merging and Masking": 5,
@@ -57,6 +58,7 @@ def canned_capability(*, complete: bool = True) -> CohortCapability:
         facets = FileFacets(
             total_open_files=5,
             counts={
+                "access": {"open": 5},
                 "experimental_strategy": {"WXS": 5},
                 "analysis.workflow_type": {"Aliquot Ensemble Somatic Variant Merging and Masking": 5},
                 "data_type": {"Masked Somatic Mutation": 5},

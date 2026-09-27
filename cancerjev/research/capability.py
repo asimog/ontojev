@@ -5,6 +5,9 @@ produce a release-pinned, reason-bearing capability record. Unknown
 experimental strategies fail closed: an unmapped provider strategy is an error,
 never an implicit negative. Data-category, data-type and workflow signals come
 from declared tables, so no capability claim is inferred from a cohort name.
+The facet response must carry the access facet the request asks for, and any
+non-open bucket fails closed: a controlled record can never be silently
+declared open capability.
 """
 
 from __future__ import annotations
@@ -178,6 +181,19 @@ def build_cohort_capability(
     warnings: tuple[str, ...],
 ) -> CohortCapability:
     """Deterministic capability derivation from one project record and one facet body."""
+    if "access" not in facets.counts:
+        raise CapabilityError(
+            "ACCESS_FACET_MISSING",
+            "the open-filtered facet response carried no access counts",
+        )
+    controlled = {key: count for key, count in facets.facet("access").items()
+                  if key != "open" and count > 0}
+    if controlled:
+        raise CapabilityError(
+            "CONTROLLED_ACCESS_RETURNED",
+            "the open-filtered facet response reported non-open files: "
+            + ", ".join(sorted(controlled)),
+        )
     strategy_counts = facets.facet("experimental_strategy")
     unknown_strategies = sorted(set(strategy_counts) - set(STRATEGY_MODALITIES))
     if unknown_strategies:

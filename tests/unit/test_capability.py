@@ -20,10 +20,13 @@ from cancerjev.research.capability import CapabilityError, build_cohort_capabili
 
 
 def _facets(*, strategies: dict[str, int] | None = None, workflows: dict[str, int] | None = None,
-            data_types: dict[str, int] | None = None) -> FileFacets:
+            data_types: dict[str, int] | None = None,
+            access: dict[str, int] | None = None) -> FileFacets:
+    total = sum((strategies or {}).values())
     return FileFacets(
-        total_open_files=sum((strategies or {}).values()),
+        total_open_files=total,
         counts={
+            "access": {"open": total} if access is None else access,
             "experimental_strategy": strategies or {},
             "analysis.workflow_type": workflows or {},
             "data_type": data_types or {},
@@ -32,13 +35,57 @@ def _facets(*, strategies: dict[str, int] | None = None, workflows: dict[str, in
     )
 
 
-def _capability(*, strategies, workflows=None, data_types=None, categories=(), project="TCGA-LUAD"):
+def _capability(*, strategies, workflows=None, data_types=None, categories=(), project="TCGA-LUAD",
+                access=None):
     return build_cohort_capability(
         cohort_id=project, project_id=project, release="Data Release TEST",
         release_commit="0" * 40, data_categories=tuple(categories),
-        facets=_facets(strategies=strategies, workflows=workflows, data_types=data_types),
+        facets=_facets(strategies=strategies, workflows=workflows, data_types=data_types,
+                       access=access),
         sources=(), warnings=(),
     )
+
+
+def test_a_controlled_access_bucket_fails_closed():
+    with pytest.raises(CapabilityError) as failure:
+        _capability(strategies={"WXS": 5, "RNA-Seq": 5, "Genotyping Array": 5},
+                    access={"open": 15, "controlled": 2})
+
+    assert failure.value.code == "CONTROLLED_ACCESS_RETURNED"
+    assert "controlled" in failure.value.detail
+
+
+def test_a_missing_access_facet_fails_closed():
+    facets = FileFacets(
+        total_open_files=5,
+        counts={
+            "experimental_strategy": {"WXS": 5},
+            "analysis.workflow_type": {"Aliquot Ensemble Somatic Variant Merging and Masking": 5},
+            "data_type": {"Masked Somatic Mutation": 5},
+        },
+        warnings=[],
+    )
+    with pytest.raises(CapabilityError) as failure:
+        build_cohort_capability(
+            cohort_id="TCGA-LUAD", project_id="TCGA-LUAD", release="Data Release TEST",
+            release_commit="0" * 40, data_categories=("Clinical",), facets=facets,
+            sources=(), warnings=())
+
+    assert failure.value.code == "ACCESS_FACET_MISSING"
+
+
+def test_a_zero_count_controlled_bucket_stays_open():
+    capability = _capability(
+        strategies={"WXS": 5, "RNA-Seq": 5, "Genotyping Array": 5},
+        workflows={"Aliquot Ensemble Somatic Variant Merging and Masking": 5,
+                   "STAR - Counts": 5, "ASCAT2": 5},
+        data_types={"Masked Somatic Mutation": 5, "Gene Expression Quantification": 5,
+                    "Gene Level Copy Number": 5},
+        access={"open": 15, "controlled": 0},
+    )
+
+    assert capability.record(Modality.EXPRESSION_RNASEQ).availability is \
+        CapabilityAvailability.AVAILABLE
 
 
 def test_unknown_experimental_strategy_fails_closed():

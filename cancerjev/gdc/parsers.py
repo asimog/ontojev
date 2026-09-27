@@ -1107,7 +1107,7 @@ def parse_files_provenance(body: bytes, meta: ResponseMeta) -> FilesProvenance:
                            files_seen=len(hits), non_open_records=non_open, warnings=_warnings(document))
 
 
-FACET_NAMES = ("experimental_strategy", "analysis.workflow_type", "data_type")
+FACET_NAMES = ("access", "experimental_strategy", "analysis.workflow_type", "data_type")
 
 
 @dataclass(frozen=True)
@@ -1126,8 +1126,9 @@ def parse_file_facets(body: bytes, meta: ResponseMeta) -> FileFacets:
     """Strict aggregate parse of a bounded ``/files`` facet response.
 
     Only provider aggregate counts are read; the response is rejected when a
-    requested facet is missing, malformed, duplicated or carries a negative or
-    non-integer count. No file-level record is parsed or retained here.
+    requested facet (including the access facet) is missing, malformed,
+    duplicated or carries a negative or non-integer count. No file-level record
+    is parsed or retained here.
     """
     document = _load_json(body, meta)
     data = document.get("data")
