@@ -52,8 +52,11 @@ PROGRAM_STATE_PATH_PREFIX = "program/state/state-"
 COMPLETED_REASON = "CAMPAIGN_COMPLETED"
 BLOCKED_REASON = "CAMPAIGN_BLOCKED"
 RETRY_REASON = "CAMPAIGN_RETRY_SCHEDULED"
+RECOVERY_REASON = "CAMPAIGN_COMPLETION_RECOVERED"
 RETRY_BASE_SECONDS = 300
 RETRY_MAX_SECONDS = 3600
+RECOVERY_SCAN_LIMIT = 20
+RECOVERY_EVENT_LIMIT = 500
 
 PROGRAM_REASON_CODES = frozenset({
     SELECTED_REASON, IDLE_REASON, COMPLETED_REASON, BLOCKED_REASON, RETRY_REASON,
@@ -152,6 +155,83 @@ def retry_delay_seconds(attempts: int) -> int:
     return delay
 
 
+def recover_completed_campaign(
+        *, repository: Repository, profiles: tuple[CampaignProfile, ...],
+        durable: dict[str, Any] | None, observation: ReleaseObservation | None,
+        method_identity: str | None, current_run_id: str,
+        scan_limit: int = RECOVERY_SCAN_LIMIT) -> dict[str, CampaignRecord]:
+    """Adopt a recorded completion whose program-state registration was interrupted.
+
+    A crash between the campaign's completion event and the durable state publish
+    leaves the stored record behind, so the next cycle would redispatch work that
+    already finished. The event log is the idempotency source: when a recent program
+    cycle recorded a ``CAMPAIGN_COMPLETED`` event whose full identity equals this
+    cycle's identity, that completion is adopted as the durable record instead of
+    running the campaign again. No identity match means no adoption.
+    """
+    records = durable_records(durable, profiles)
+    unresolved = {profile.profile_id for profile in profiles
+                  if records[profile.profile_id].status is not CampaignStatus.CAMPAIGN_COMPLETE}
+    if not unresolved:
+        return {}
+    identities = {
+        profile.profile_id: campaign_identity_components(
+            profile, observation=observation, method_identity=method_identity)
+        for profile in profiles
+    }
+    recovered: dict[str, CampaignRecord] = {}
+    recent = repository.list_runs(scan_limit, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS)
+    for run in recent:
+        if run["run_id"] == current_run_id or run.get("purpose") != "PROGRAM":
+            continue
+        for profile_id, record in _recovered_records(
+                repository=repository, run_id=str(run["run_id"]), profile_ids=unresolved,
+                identities=identities):
+            recovered[profile_id] = record
+            unresolved.discard(profile_id)
+        if not unresolved:
+            break
+    return recovered
+
+
+def _recovered_records(
+        *, repository: Repository, run_id: str, profile_ids: set[str],
+        identities: dict[str, tuple[str | None, str | None, str | None]],
+) -> list[tuple[str, CampaignRecord]]:
+    events = repository.events(run_id, 0, RECOVERY_EVENT_LIMIT)["items"]
+    recorded_profiles: dict[str, str] = {}
+    selected: dict[str, dict[str, Any]] = {}
+    completed: set[str] = set()
+    for event in events:
+        data = event.get("data") or {}
+        profile_id = data.get("profile_id")
+        if event["type"] == "PROGRAM_RUN_STARTED":
+            for entry in data.get("campaigns") or []:
+                if isinstance(entry, dict) and entry.get("profile_id") in profile_ids:
+                    recorded_profiles[str(entry["profile_id"])] = str(digest(entry))
+        elif event["type"] == "CAMPAIGN_SELECTED" and profile_id in profile_ids:
+            selected[str(profile_id)] = data
+        elif event["type"] == "CAMPAIGN_COMPLETED" and profile_id in profile_ids:
+            completed.add(str(profile_id))
+    recovered: list[tuple[str, CampaignRecord]] = []
+    for profile_id in sorted(completed):
+        selection = selected.get(profile_id)
+        if selection is None or recorded_profiles.get(profile_id) != identities[profile_id][0]:
+            continue
+        if (selection.get("release_identity"), selection.get("method_identity")) \
+                != identities[profile_id][1:]:
+            continue
+        recovered.append((profile_id, CampaignRecord(
+            profile_id=profile_id, status=CampaignStatus.CAMPAIGN_COMPLETE,
+            profile_identity=identities[profile_id][0],
+            release_identity=identities[profile_id][1],
+            method_identity=identities[profile_id][2],
+            attempts=0, next_attempt_at=None, reason_code=COMPLETED_REASON,
+            last_cycle_run_id=run_id,
+        )))
+    return recovered
+
+
 def retry_after(now: datetime, attempts: int) -> str:
     return (now + timedelta(seconds=retry_delay_seconds(attempts))) \
         .isoformat().replace("+00:00", "Z")
@@ -160,16 +240,25 @@ def retry_after(now: datetime, attempts: int) -> str:
 def run_program_once(*, profiles: tuple[CampaignProfile, ...],
                      run_campaign: Callable[[CampaignProfile], bool],
                      durable: dict[str, Any] | None = None,
+                     recovered: dict[str, CampaignRecord] | None = None,
                      observation: ReleaseObservation | None = None,
                      method_identity: str | None = None,
                      now: datetime | None = None,
                      cycle_run_id: str | None = None) -> ProgramRunOutcome:
-    """Select and run at most one Campaign; the callback owns the actual run."""
+    """Select and run at most one Campaign; the callback owns the actual run.
+
+    ``recovered`` carries completions whose durable registration was interrupted;
+    they are adopted as complete records and are never redispatched.
+    """
     require(type(profiles) is tuple
             and all(isinstance(profile, CampaignProfile) for profile in profiles),
             "program profiles must be immutable campaign profiles")
     moment = now if now is not None else datetime.now(UTC)
     records = durable_records(durable, profiles)
+    for profile_id, record in (recovered or {}).items():
+        if profile_id in records \
+                and records[profile_id].status is not CampaignStatus.CAMPAIGN_COMPLETE:
+            records[profile_id] = record
     identities = {
         profile.profile_id: campaign_identity_components(
             profile, observation=observation, method_identity=method_identity)
@@ -278,7 +367,8 @@ def run_program_worker(*, run_id: str, repository: Repository, artifacts: Artifa
     The release is observed once per cycle through the injected bounded callback;
     the method identity defaults to the admitted method environment hash. State is
     published append-only, so restarting the process cannot redispatch the same
-    completed campaign for the same identities.
+    completed campaign for the same identities; a completion whose state publish was
+    interrupted is adopted from the recorded events instead of being rerun.
     """
     repository.require_run_ownership(run_id, ExecutionOwnership.SYSTEM_AUTONOMOUS)
     durable = load_program_state(repository=repository, artifacts=artifacts)
@@ -295,9 +385,21 @@ def run_program_worker(*, run_id: str, repository: Repository, artifacts: Artifa
                    "observation_hash": observation_hash(observation),
                    "response_hash": observation.source.response_hash})
     method = method_identity if method_identity is not None else method_environment_hash()
+    recovered = recover_completed_campaign(
+        repository=repository, profiles=profiles, durable=durable, observation=observation,
+        method_identity=method, current_run_id=run_id)
+    for profile_id, record in sorted(recovered.items()):
+        emit(run_id, "CAMPAIGN_COMPLETION_RECOVERED", f"program:{run_id}:recovered:{profile_id}",
+             f"Campaign {profile_id} completed in an interrupted cycle; re-registering the "
+             "recorded completion instead of rerunning it.",
+             stage="PROGRAM", level="warning",
+             data={"profile_id": profile_id, "recovered_run_id": record.last_cycle_run_id,
+                   "reason_code": RECOVERY_REASON,
+                   "release_identity": record.release_identity,
+                   "method_identity": record.method_identity})
     outcome = run_program_once(
-        profiles=profiles, run_campaign=run_campaign, durable=durable, observation=observation,
-        method_identity=method, now=now, cycle_run_id=run_id)
+        profiles=profiles, run_campaign=run_campaign, durable=durable, recovered=recovered,
+        observation=observation, method_identity=method, now=now, cycle_run_id=run_id)
     if outcome.selected_profile_id is None:
         emit(run_id, "PROGRAM_IDLE", f"program:{run_id}:idle",
              "No eligible campaign; the program is idle.", stage="PROGRAM",

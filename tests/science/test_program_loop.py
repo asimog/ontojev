@@ -18,6 +18,7 @@ from cancerjev.research.campaign_selection import (
     RETRY_EXHAUSTED_REASON,
 )
 from cancerjev.research.program import load_program_state, run_program_worker
+from cancerjev.science.errors import ScienceError
 from cancerjev.storage.ownership import ResearchOwnership
 from tests.helpers import canned_capability, fake_release_observation
 
@@ -78,6 +79,49 @@ def test_completed_campaign_is_not_redispatched_after_a_restart(runtime):
     assert campaign["release_identity"] == state["release_identity"]
     assert state["release"] == observation.release
     assert state["method_identity"] == METHOD
+
+
+def test_completed_campaign_is_recovered_when_the_state_publish_was_interrupted(runtime):
+    observation = fake_release_observation()
+    calls: list[str] = []
+    _, repository, artifacts = runtime
+
+    run_id = repository.create_run("program-worker", mode="LIVE", fixture_id=None,
+                                   fixture_version=None, scope={"purpose": "PROGRAM"},
+                                   ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS)
+    events: list[dict] = []
+
+    def emit(target_run_id: str, event_type: str, key: str, message: str, **kwargs) -> None:
+        events.append(repository.append_event(target_run_id, event_type=event_type,
+                                              idempotency_key=key, message=message, **kwargs))
+
+    def crash_before_publish(*args, **kwargs):
+        raise RuntimeError("process died before the program state was published")
+
+    with pytest.raises(RuntimeError):
+        run_program_worker(
+            run_id=run_id, repository=repository, artifacts=artifacts, emit=emit,
+            publish_json=crash_before_publish, profiles=(VALIDATED,),
+            run_campaign=lambda profile: calls.append(profile.profile_id) or True,
+            observe=lambda: observation, method_identity=METHOD, now=NOW)
+
+    assert calls == [VALIDATED.profile_id]
+    assert "CAMPAIGN_COMPLETED" in [event["type"] for event in events], \
+        "the simulated crash happened after completion, before the state publish"
+    assert load_program_state(repository=repository, artifacts=artifacts) is None
+
+    second = _cycle(runtime, profiles=(VALIDATED,),
+                    run_campaign=lambda profile: calls.append(profile.profile_id) or True,
+                    observation=observation)
+
+    assert calls == [VALIDATED.profile_id], "the recorded completion is never rerun"
+    assert "CAMPAIGN_COMPLETION_RECOVERED" in [event["type"] for event in second[1]]
+    state = load_program_state(repository=second[4], artifacts=second[5])
+    assert state is not None
+    campaign = next(item for item in state["campaigns"]
+                    if item["profile_id"] == VALIDATED.profile_id)
+    assert campaign["status"] == "CAMPAIGN_COMPLETE"
+    assert campaign["release_identity"] == state["release_identity"]
 
 
 def test_declared_identity_changes_make_a_completed_campaign_eligible(runtime):
@@ -155,6 +199,32 @@ def test_release_observation_failure_ends_the_cli_cycle_failed(runtime, monkeypa
 
     runs = repository.list_runs(5, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS)
     assert runs[0]["status"] == "FAILED", "the CLI lifecycle marks the cycle terminal"
+
+
+def test_dispatch_science_error_increments_the_attempt_ledger(runtime, monkeypatch):
+    settings, repository, artifacts = runtime
+    monkeypatch.setattr("cancerjev.cli.main.PROGRAM_PROFILES", (VALIDATED,))
+    monkeypatch.setattr("cancerjev.research.release_monitor.observe_release",
+                        lambda transport: fake_release_observation())
+    monkeypatch.setattr("cancerjev.cli.main.GDCTransport", _NoopTransport)
+
+    def explode(*args, **kwargs):
+        raise ScienceError("TEST_SCIENCE_FAILURE", "the science lane refused")
+
+    monkeypatch.setattr("cancerjev.cli.main._dispatch_campaign", explode)
+
+    _program(settings, repository, artifacts)
+
+    state = load_program_state(repository=repository, artifacts=artifacts)
+    assert state is not None
+    campaign = next(item for item in state["campaigns"]
+                    if item["profile_id"] == VALIDATED.profile_id)
+    assert campaign["status"] == "BLOCKED"
+    assert campaign["attempts"] == 1, "a science failure still uses the attempt ledger"
+    runs = repository.list_runs(5, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS)
+    events = repository.events(runs[0]["run_id"], 0, 200)["items"]
+    assert "CAMPAIGN_DISPATCH_FAILED" in [event["type"] for event in events]
+    assert events[-1]["type"] == "RUN_COMPLETED", "the cycle ends terminal, not crashed"
 
 
 def test_worker_releases_the_research_lock_while_sleeping(runtime, monkeypatch):

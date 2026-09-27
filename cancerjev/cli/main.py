@@ -22,10 +22,12 @@ from cancerjev.gdc.budget import policy_payload, production_caps
 from cancerjev.gdc.capture import CaptureSink, run_contract_probe
 from cancerjev.gdc.parsers import ParserError
 from cancerjev.gdc.transport import GDCTransport, RunBudget, TransportError
+from cancerjev.jev.contracts import JevContractError
 from cancerjev.research.acquisition import LiveRunError
 from cancerjev.research.campaign import LUAD_CAMPAIGN_V1
 from cancerjev.research.live import LiveOrchestrator
 from cancerjev.research.orchestrator import DemoOrchestrator
+from cancerjev.science.errors import ScienceError
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.database import Database
 from cancerjev.storage.ownership import OwnershipError, ResearchOwnership
@@ -672,7 +674,7 @@ def _program(settings: Settings, repository: Repository, artifacts: ArtifactStor
             try:
                 return _dispatch_campaign(settings, repository, artifacts, profile)
             except (CampaignActivationError, CapabilityError, TransportError, ParserError,
-                    LiveRunError, ContractError) as exc:
+                    LiveRunError, ContractError, ScienceError, JevContractError) as exc:
                 code = getattr(exc, "code", type(exc).__name__)
                 emit(run_id, "CAMPAIGN_DISPATCH_FAILED",
                      f"program:{run_id}:dispatch-failed:{profile.profile_id}",
