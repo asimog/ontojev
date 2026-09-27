@@ -327,22 +327,23 @@ def run_cnv_shard_scan(
          registrations=[repository.artifact_registration(artifact, run_id)])
     if evict_raw:
         _evict_committed_shard_raw(
-            repository=repository, artifacts=artifacts, emit=emit,
+            artifacts=artifacts, emit=emit,
             shard_index=shard_index, raw_pages=tuple(raw_pages), ledger=ledger)
     return evidence
 
 
 def _evict_committed_shard_raw(
-    *, repository: Repository, artifacts: ArtifactStore, emit: Callable[..., Any],
+    *, artifacts: ArtifactStore, emit: Callable[..., Any],
     shard_index: int, raw_pages: tuple[Any, ...], ledger: ShardLedger,
 ) -> None:
     """Delete a committed shard's raw page payloads; derived evidence stays durable.
 
     Runs only after the terminal page ledger and the shard evidence artifact are
     committed, so an interrupted or failed shard never loses its raw pages. The
-    ledger already carries each page's request/response hash, so provenance is
-    preserved even though the provider bytes are evicted. The merge reads the
-    derived shard evidence, never these raw pages.
+    cache index rows stay immutable; a lookup of an evicted payload reads no file
+    and falls back to a live fetch, and the terminal ledger keeps every page's
+    request/response hash as provenance. The merge reads the derived shard
+    evidence, never these raw pages.
     """
     evicted = 0
     bytes_freed = 0
@@ -351,13 +352,12 @@ def _evict_committed_shard_raw(
         if artifacts.evict(str(getattr(page, "relative_path", ""))):
             evicted += 1
             bytes_freed += size
-    cache_rows = repository.evict_gdc_cache(tuple(
-        record.request_hash for record in ledger.records if record.request_hash))
     emit("CNV_SHARD_RAW_EVICTED", f"cnv-shard:{shard_index}:raw-evicted:{uuid4()}",
          f"Committed CNV shard {shard_index} raw pages evicted; derived evidence retained.",
          stage="STATE_GENERATION", level="warning",
          data={"shard_index": shard_index, "policy_version": CNV_SHARD_RAW_EVICTION_POLICY,
-               "raw_artifacts": evicted, "cache_rows": cache_rows, "bytes": bytes_freed})
+               "raw_artifacts": evicted, "bytes": bytes_freed,
+               "page_records": len(ledger.records)})
 
 
 def run_cnv_shard_merge(
