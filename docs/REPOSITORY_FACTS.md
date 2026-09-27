@@ -26,6 +26,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "campaign_selection_policy": "campaign-selection-v2",
   "cnv_discovery_result_schema_version": 1,
   "cnv_disposition_policy": "cnv-dispositions-v1",
+  "cnv_shard_raw_eviction_policy": "cnv-shard-raw-eviction-v1",
   "deep_action_policy": "deep-action-policy-v1",
   "deep_next_move_policy": "deep-policy-v2",
   "deep_question_set": "deep-v1",

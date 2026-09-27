@@ -83,6 +83,7 @@ from cancerjev.jev.questions import (
 )
 from cancerjev.research.campaign import LUAD_CAMPAIGN_V1
 from cancerjev.research.campaign_selection import CAMPAIGN_SELECTION_POLICY_VERSION
+from cancerjev.research.cnv_discovery import CNV_SHARD_RAW_EVICTION_POLICY
 from cancerjev.research.deep import DEEP_ACTION_POLICY_VERSION
 from cancerjev.research.finalize import FINAL_RESULT_SCHEMA_VERSION, NO_JEV_BASELINE_VERSION
 from cancerjev.research.hypothesis_policy import HYPOTHESIS_POLICY_VERSION
@@ -194,6 +195,7 @@ def collect_facts() -> dict[str, object]:
         "gdc_shard_download_bytes": SHARD_DOWNLOAD_BYTES,
         "jev_context_guard": CONTEXT_GUARD_VERSION,
         "cnv_disposition_policy": CNV_DISPOSITION_POLICY_VERSION,
+        "cnv_shard_raw_eviction_policy": CNV_SHARD_RAW_EVICTION_POLICY,
         "evidence_maturity_policy": EVIDENCE_MATURITY_POLICY_VERSION,
         "pathway_membership_method": (
             f"{REACTOME_MEMBERSHIP_METHOD_ID} v{REACTOME_MEMBERSHIP_VERSION}"),

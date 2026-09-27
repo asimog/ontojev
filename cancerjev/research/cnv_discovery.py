@@ -61,6 +61,7 @@ from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
 
 CNV_SHARD_ARTIFACT_PATH = "runs/{run_id}/cnv-shards/shard-{index:04d}.json"
+CNV_SHARD_RAW_EVICTION_POLICY = "cnv-shard-raw-eviction-v1"
 
 REQUEST_PLAN_MAX = 101
 PAGE_CAP_REASON = "CNV_OCCURRENCE_PAGE_CAP_EXCEEDED"
@@ -176,13 +177,17 @@ def run_cnv_shard_scan(
     *,
     shard_index: int,
     case_shard_size: int = CNV_CASE_SHARD_SIZE,
+    evict_raw: bool = True,
 ) -> CnvShardEvidence:
     """Scan one complete operational case shard of the project's CNV occurrences.
 
     The shard is a partition of the declared cohort frame; thresholds are never
-    evaluated here. Pages are validated strictly, a page-cap breach or a total
-    change fails closed, and the shard evidence is published only under a
-    terminal page ledger.
+    evaluated here. Pages are validated strictly, aggregated page by page while
+    later pages download, and the shard evidence is published only under a terminal
+    page ledger. With ``evict_raw`` (the canonical campaign behavior) the committed
+    shard's raw page payloads and cache rows are then deleted, so the on-disk
+    footprint stays bounded to the derived evidence plus the shard in flight; the
+    terminal ledger keeps every page's request/response hash as provenance.
     """
     if type(case_shard_size) is not int or not 1 <= case_shard_size <= MAX_CNV_CASE_SHARD_SIZE:
         raise LiveRunError("INVALID_CNV_SHARD_SIZE", f"case shard size must be 1..{MAX_CNV_CASE_SHARD_SIZE}")
@@ -220,6 +225,7 @@ def run_cnv_shard_scan(
     missing: dict[str, set[str]] = {}
     rows_by_gene: dict[str, set[str]] = {}
     records: list[ShardRecord] = []
+    raw_pages: list[Any] = []
     total: int | None = None
     offset = 0
     page_count = 0
@@ -232,6 +238,7 @@ def run_cnv_shard_scan(
             response.body, response_meta(response, release),
             expected_project=cohort_spec.project_id, expected_cases=set(shard_cases),
             expected_offset=offset, expected_size=research_spec.cnv_discovery.page_size)
+        raw_pages.append(response.artifact)
         sources.append(response_operational_source(response, release=release))
         warnings.extend(page.warnings)
         page_count += 1
@@ -318,7 +325,39 @@ def run_cnv_shard_scan(
                "artifact_id": artifact.artifact_id, "artifact_sha256": artifact.sha256},
          artifact_refs=[artifact.ref()],
          registrations=[repository.artifact_registration(artifact, run_id)])
+    if evict_raw:
+        _evict_committed_shard_raw(
+            repository=repository, artifacts=artifacts, emit=emit,
+            shard_index=shard_index, raw_pages=tuple(raw_pages), ledger=ledger)
     return evidence
+
+
+def _evict_committed_shard_raw(
+    *, repository: Repository, artifacts: ArtifactStore, emit: Callable[..., Any],
+    shard_index: int, raw_pages: tuple[Any, ...], ledger: ShardLedger,
+) -> None:
+    """Delete a committed shard's raw page payloads; derived evidence stays durable.
+
+    Runs only after the terminal page ledger and the shard evidence artifact are
+    committed, so an interrupted or failed shard never loses its raw pages. The
+    ledger already carries each page's request/response hash, so provenance is
+    preserved even though the provider bytes are evicted. The merge reads the
+    derived shard evidence, never these raw pages.
+    """
+    evicted = 0
+    bytes_freed = 0
+    for page in raw_pages:
+        size = int(getattr(page, "size_bytes", 0) or 0)
+        if artifacts.evict(str(getattr(page, "relative_path", ""))):
+            evicted += 1
+            bytes_freed += size
+    cache_rows = repository.evict_gdc_cache(tuple(
+        record.request_hash for record in ledger.records if record.request_hash))
+    emit("CNV_SHARD_RAW_EVICTED", f"cnv-shard:{shard_index}:raw-evicted:{uuid4()}",
+         f"Committed CNV shard {shard_index} raw pages evicted; derived evidence retained.",
+         stage="STATE_GENERATION", level="warning",
+         data={"shard_index": shard_index, "policy_version": CNV_SHARD_RAW_EVICTION_POLICY,
+               "raw_artifacts": evicted, "cache_rows": cache_rows, "bytes": bytes_freed})
 
 
 def run_cnv_shard_merge(

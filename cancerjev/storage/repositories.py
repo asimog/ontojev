@@ -283,6 +283,18 @@ class Repository:
                  created_at),
             )
 
+    def evict_gdc_cache(self, request_hashes: tuple[str, ...]) -> int:
+        """Drop cache rows for evicted raw payloads; the cache is mutable by design."""
+        if not request_hashes:
+            return 0
+        placeholders = ",".join("?" for _ in request_hashes)
+        with self.database.connect(write=True) as connection:
+            cursor = connection.execute(
+                f"DELETE FROM gdc_cache WHERE request_hash IN ({placeholders})",
+                tuple(request_hashes),
+            )
+            return int(cursor.rowcount or 0)
+
     def gdc_attempts(self, run_id: str) -> list[dict[str, Any]]:
         with self.database.read() as connection:
             rows = connection.execute(

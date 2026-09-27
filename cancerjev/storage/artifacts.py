@@ -81,6 +81,19 @@ class ArtifactStore:
             raise OSError("artifact checksum mismatch")
         return content
 
+    def evict(self, relative_path: str) -> bool:
+        """Delete one raw payload after its derived evidence is durably committed.
+
+        Only payloads written through ``publish`` are reachable; path safety is the
+        same as ``read``. Eviction is idempotent: an already missing payload returns
+        False and is never an error.
+        """
+        target = self._resolve(relative_path)
+        if not target.is_file():
+            return False
+        target.unlink()
+        return True
+
     def _resolve(self, relative_path: str) -> Path:
         raw = Path(relative_path)
         if raw.is_absolute():

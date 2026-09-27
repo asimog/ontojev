@@ -18,6 +18,7 @@ from cancerjev.domain.codecs import (
 )
 from cancerjev.domain.discovery import CnvDisposition
 from cancerjev.gdc.transport import GDCResponse
+from cancerjev.research.acquisition import LiveRunError
 from cancerjev.research.cnv_discovery import run_cnv_shard_merge, run_cnv_shard_scan
 from cancerjev.research.specs import LUAD_RESEARCH_V1
 from tests.integration.replay import cases_body, projects_body, status_body
@@ -80,6 +81,7 @@ class _Transport:
         self.repository = repository
         self.run_id = run_id
         self.requests = []
+        self.published: list[tuple[str, object]] = []
 
     def request(self, request) -> GDCResponse:
         self.requests.append(request)
@@ -113,6 +115,7 @@ class _Transport:
             raise AssertionError(f"unexpected endpoint {name}")
         artifact = self.artifacts.publish(f"cnv-scan-fixture/{uuid4().hex}.body", body,
                                           "application/json", "gdc-response")
+        self.published.append((name, artifact))
         return GDCResponse(
             request_hash=request.request_hash(), endpoint=request.path, method=request.method,
             http_status=200, headers={"content-type": "application/json"}, body=body,
@@ -133,6 +136,56 @@ def _prepare(runtime):
             run_id, event_type=event_type, idempotency_key=key, message=message, **kwargs))
     transport = _Transport(artifacts, repository, run_id)
     return run_id, repository, artifacts, transport, emit, events
+
+
+def _fixture_files(runtime) -> list[str]:
+    root = runtime[0].data_dir / "cnv-scan-fixture"
+    return sorted(path.name for path in root.iterdir()) if root.exists() else []
+
+
+def test_a_committed_shard_evicts_its_raw_pages_while_derived_evidence_survives(runtime):
+    run_id, repository, artifacts, transport, emit, events = _prepare(runtime)
+
+    evidence = run_cnv_shard_scan(run_id, transport, repository, artifacts, emit,
+                                  LUAD_RESEARCH_V1, shard_index=0)
+
+    page_names = [str(artifact.relative_path).rsplit("/", 1)[-1]
+                  for name, artifact in transport.published if name == "cnv_occurrences"]
+    kept_names = sorted(str(artifact.relative_path).rsplit("/", 1)[-1]
+                        for name, artifact in transport.published if name != "cnv_occurrences")
+    assert page_names and _fixture_files(runtime) == kept_names, \
+        "committed shard raw pages are evicted; shared shard-framing responses are cacheable"
+    evicted = [event for event in events if event["type"] == "CNV_SHARD_RAW_EVICTED"]
+    assert len(evicted) == 1
+    assert evicted[0]["data"]["raw_artifacts"] >= 1 and evicted[0]["data"]["bytes"] > 0
+    assert evicted[0]["data"]["policy_version"] == "cnv-shard-raw-eviction-v1"
+    row = repository.artifact_at_path(f"runs/{run_id}/cnv-shards/shard-0000.json")
+    assert row is not None, "the derived shard evidence is never evicted"
+    stored = read_cnv_shard_evidence(artifacts.read(row["relative_path"], row["sha256"]))
+    assert stored.shard_index == evidence.shard_index == 0
+
+
+def test_an_interrupted_shard_never_evicts_its_raw_pages(runtime, monkeypatch):
+    run_id, repository, artifacts, transport, emit, events = _prepare(runtime)
+    monkeypatch.setattr("cancerjev.research.cnv_discovery.CNV_SCAN_MAX_PAGES", 0)
+
+    with pytest.raises(LiveRunError) as failure:
+        run_cnv_shard_scan(run_id, transport, repository, artifacts, emit,
+                           LUAD_RESEARCH_V1, shard_index=0)
+
+    assert failure.value.code == "CNV_SCAN_PAGE_CAP_EXCEEDED"
+    assert _fixture_files(runtime) != [], "a failed shard keeps every raw page"
+    assert not [event for event in events if event["type"] == "CNV_SHARD_RAW_EVICTED"]
+
+
+def test_raw_eviction_can_be_disabled_for_debugging(runtime):
+    run_id, repository, artifacts, transport, emit, events = _prepare(runtime)
+
+    run_cnv_shard_scan(run_id, transport, repository, artifacts, emit, LUAD_RESEARCH_V1,
+                       shard_index=0, evict_raw=False)
+
+    assert _fixture_files(runtime) != [], "the opt-out keeps raw pages"
+    assert not [event for event in events if event["type"] == "CNV_SHARD_RAW_EVICTED"]
 
 
 def test_two_shards_merge_into_project_calls_with_declared_dispositions(runtime):

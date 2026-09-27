@@ -195,7 +195,8 @@ def run_systematic_campaign(*, run_id: str, profile: CampaignProfile, spec: Rese
         def scan_shard(index: int = shard_index) -> Any:
             return run_cnv_shard_scan(
                 run_id, cnv_transport, repository, artifacts, lane_emit, spec,
-                shard_index=index, case_shard_size=CNV_CASE_SHARD_SIZE)
+                shard_index=index, case_shard_size=CNV_CASE_SHARD_SIZE,
+                evict_raw=settings.cnv_raw_eviction)
 
         run_stage(emit, run_id, "STATE_GENERATION", scan_shard)
     cnv = run_stage(
