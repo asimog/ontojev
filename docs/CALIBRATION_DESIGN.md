@@ -118,3 +118,7 @@ Design (frozen once labels exist; `research/prospective.py` is the harness):
 
 The harness is testable today with declared fixtures (see
 `tests/unit/test_prospective.py::test_jev_vs_no_jev_design_is_evaluable_under_the_preregistered_contract`).
+A synthetic design rehearsal is recorded in `docs/JEV_REVIEW_REHEARSAL.md`
+(report in `data/calibration/jev-review-rehearsal.report.json`): it exercises the
+frozen protocols end-to-end, returns `HUMAN_REVIEW_REQUIRED` with a [0.0, 0.0]
+rehearsal interval, and is never incremental-value evidence.
