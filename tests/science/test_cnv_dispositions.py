@@ -76,6 +76,25 @@ def test_recurrence_thresholds_are_declared_case_counts():
     assert cnv_lane_disposition(deep_gain)[0] is CnvDisposition.DROP
 
 
+def test_a_case_is_counted_once_across_raw_category_spellings():
+    """F-02: 'Amplification' and 'amplification' map to one category and one case set."""
+    spelling_variants = _gene(GENE, {
+        "Amplification": (CnvCategory.AMPLIFICATION, ("case-0", "case-1", "case-2")),
+        "amplification": (CnvCategory.AMPLIFICATION, ("case-0", "case-1", "case-2")),
+    })
+
+    disposition, reason, trigger = cnv_lane_disposition(spelling_variants)
+
+    assert disposition is CnvDisposition.DROP and reason == CNV_DROP_REASON, \
+        "three distinct cases never meet the five-case amplification threshold, however spelled"
+    distinct = _gene(GENE, {
+        "Amplification": (CnvCategory.AMPLIFICATION, ("case-0", "case-1", "case-2")),
+        "amplification": (CnvCategory.AMPLIFICATION, ("case-3", "case-4")),
+    })
+    assert cnv_lane_disposition(distinct)[0] is CnvDisposition.RETAIN, \
+        "five distinct cases do meet the declared threshold"
+
+
 def test_conflict_on_a_recurrent_gene_goes_to_jev_review():
     conflicted = _gene(GENE, {"Amplification": (CnvCategory.AMPLIFICATION,
                                                 tuple(f"case-{i}" for i in range(6)))},

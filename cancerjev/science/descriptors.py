@@ -212,13 +212,17 @@ def cnv_lane_disposition(evidence: CnvGeneEvidence) -> tuple[CnvDisposition, str
     RETAIN = recurrent amplification or homozygous deletion at the declared
     category-specific case-count thresholds; JEV_REVIEW = a recurrent gene whose
     cases carry conflicting provider categories (conflicts are never resolved
-    here); DROP = below the declared recurrence thresholds. Absence of an
-    occurrence never reaches this function.
+    here); DROP = below the declared recurrence thresholds. Cases are counted once
+    per declared category even when several raw provider spellings map to it, so a
+    case cannot be double-counted across spellings. Absence of an occurrence never
+    reaches this function.
     """
-    amplification_cases = sum(len(summary.case_ids) for summary in evidence.categories
-                              if summary.category is CnvCategory.AMPLIFICATION)
-    homozygous_deletion_cases = sum(len(summary.case_ids) for summary in evidence.categories
-                                    if summary.category is CnvCategory.HOMOZYGOUS_DELETION)
+    amplification_cases = len({case_id for summary in evidence.categories
+                               if summary.category is CnvCategory.AMPLIFICATION
+                               for case_id in summary.case_ids})
+    homozygous_deletion_cases = len({case_id for summary in evidence.categories
+                                     if summary.category is CnvCategory.HOMOZYGOUS_DELETION
+                                     for case_id in summary.case_ids})
     recurrent = (amplification_cases >= CNV_RETAIN_MIN_AMPLIFICATION_CASES
                  or homozygous_deletion_cases >= CNV_RETAIN_MIN_HOMOZYGOUS_DELETION_CASES)
     if not recurrent:
