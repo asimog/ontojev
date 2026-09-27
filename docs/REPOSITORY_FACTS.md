@@ -51,7 +51,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "gdc_max_requests": 10000,
   "gdc_run_download_bytes": 805306368,
   "gdc_shard_download_bytes": 536870912,
-  "hypothesis_policy": "hypothesis-policy-v1",
+  "hypothesis_policy": "hypothesis-policy-v2",
   "hypothesis_projection_version": "jev-hypothesis-projection-v2",
   "hypothesis_question_set": "hypothesis-v2",
   "jev_context_guard": "jev-context-bytes-v1",

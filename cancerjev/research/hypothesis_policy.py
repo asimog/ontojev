@@ -1,17 +1,23 @@
 """Python policy over hypothesis Jev answers: Jev judges, Python decides.
 
-The hypothesis stage records critique but previously consumed none of it. This
-policy converts the recorded answers into exactly one declared decision:
-dispatch a single registered discriminating action (TEST_HYPOTHESIS), keep the
-recorded statements (KEEP_HYPOTHESIS), or abstain with an explicit reason.
+The hypothesis stage records critique; this policy converts the recorded answers
+into exactly one declared decision: keep the recorded statements
+(``KEEP_HYPOTHESIS``) or abstain with an explicit reason. The answer space is
+exactly what can happen (audit OJ-AUD-P1-09): a hypothesis could only be tested by
+an **evidence-producing** action, and the one registered evidence-producing action
+(``OCCURRENCE_DETAIL_EVIDENCE_V1``) requires a ``STATISTICAL_STATE`` input, so no
+hypothesis test can be dispatched against an ``EvidenceState`` revision. Integrity
+and summary actions verify or describe existing evidence and can never
+discriminate between explanations; with no eligible discriminating test the
+decision is ``KEEP_HYPOTHESIS`` with ``NO_EVIDENCE_PRODUCING_TEST`` rather than a
+pseudo-test. The policy never invents an action, never chooses among proposals by
+ordering, never writes evidence and never dispatches.
 
-A hypothesis can only be tested by an **evidence-producing** action: integrity
-and summary actions verify or describe existing evidence and cannot discriminate
-between competing explanations. When no evidence-producing action is registered
-for the revision, the decision is KEEP_HYPOTHESIS with
-``NO_EVIDENCE_PRODUCING_TEST`` rather than a pseudo-test. The policy never
-invents an action, never chooses among several proposals by ordering, and never
-writes evidence itself: dispatch reuses the existing recorded-move path.
+Registering an ``EVIDENCE_STATE``-input evidence-producing action requires a named
+hypothesis with a declared discriminating measurement and belongs to a future
+science track; the decision, thresholds, per-statement critique and the missing
+requirement are persisted, so the loop closes the moment such an action is
+registered without any policy change.
 """
 
 from __future__ import annotations
@@ -19,15 +25,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-HYPOTHESIS_POLICY_VERSION = "hypothesis-policy-v1"
+HYPOTHESIS_POLICY_VERSION = "hypothesis-policy-v2"
 THRESHOLDS = {
     "testable_min": 0.60,
     "exceeds_recorded_evidence_max": 0.50,
 }
 UNSUPPORTED_ASSUMPTION_NONE = "NONE"
-MOVES = ("TEST_HYPOTHESIS", "KEEP_HYPOTHESIS", "ABSTAIN")
-RESULTS = ("NO_HYPOTHESES", "NO_TESTABLE_HYPOTHESIS", "MULTIPLE_DISCRIMINATING_ACTIONS",
-           "NO_EVIDENCE_PRODUCING_TEST", "SINGLE_DISCRIMINATING_ACTION")
+MOVES = ("KEEP_HYPOTHESIS", "ABSTAIN")
+RESULTS = ("NO_HYPOTHESES", "NO_TESTABLE_HYPOTHESIS", "NO_EVIDENCE_PRODUCING_TEST")
 
 
 @dataclass(frozen=True)
@@ -69,12 +74,15 @@ def _choice(answers: dict[str, Any], question_id: str) -> str | None:
 def decide_hypothesis_test(*, hypotheses: list[dict[str, Any]],
                            evaluations: list[dict[str, Any]],
                            dispatchable_action_ids: list[str],
-                           evidence_producing_action_ids: list[str] | frozenset[str] = frozenset(),
                            ) -> HypothesisDecision:
-    """One declared decision from recorded hypothesis critique and registered actions."""
+    """One declared decision from recorded hypothesis critique and registered actions.
+
+    ``dispatchable_action_ids`` are the actions eligible on the current
+    ``EvidenceState`` revision (except the one that produced it); none of them can
+    be an evidence-producing hypothesis test on this registry.
+    """
     by_id = {str(item.get("hypothesis_id")): item for item in evaluations}
     dispatchable = sorted({str(action_id) for action_id in dispatchable_action_ids})
-    evidence_producing = {str(action_id) for action_id in evidence_producing_action_ids}
     critique: list[dict[str, Any]] = []
     actionable: list[dict[str, Any]] = []
     for hypothesis in hypotheses:
@@ -100,8 +108,6 @@ def decide_hypothesis_test(*, hypotheses: list[dict[str, Any]],
             "exceeds_recorded_evidence": exceeds, "dominant_unsupported_assumption": assumption,
             "within_recorded_evidence": within_recorded_evidence,
             "dispatchable_proposals": proposals,
-            "evidence_producing_proposals": [action for action in proposals
-                                             if action in evidence_producing],
         }
         critique.append(entry)
         if within_recorded_evidence:
@@ -113,18 +119,9 @@ def decide_hypothesis_test(*, hypotheses: list[dict[str, Any]],
     if not actionable:
         return HypothesisDecision(HYPOTHESIS_POLICY_VERSION, "ABSTAIN",
                                   "NO_TESTABLE_HYPOTHESIS", None, None, tuple(critique))
-    for entry in actionable:
-        producing = entry["evidence_producing_proposals"]
-        if len(producing) == 1:
-            return HypothesisDecision(HYPOTHESIS_POLICY_VERSION, "TEST_HYPOTHESIS",
-                                      "SINGLE_DISCRIMINATING_ACTION",
-                                      str(entry["hypothesis_id"]), producing[0],
-                                      tuple(critique))
-        if len(producing) > 1:
-            # No hidden ordering: several of the statement's own tests are dispatchable.
-            return HypothesisDecision(HYPOTHESIS_POLICY_VERSION, "ABSTAIN",
-                                      "MULTIPLE_DISCRIMINATING_ACTIONS",
-                                      str(entry["hypothesis_id"]), None, tuple(critique))
+    # No registered action is eligible on an EvidenceState revision and
+    # evidence-producing, so no discriminating test exists to dispatch: keep the
+    # statement and record the missing requirement instead of a pseudo-test.
     return HypothesisDecision(HYPOTHESIS_POLICY_VERSION, "KEEP_HYPOTHESIS",
                               "NO_EVIDENCE_PRODUCING_TEST", str(actionable[0]["hypothesis_id"]),
                               None, tuple(critique))

@@ -120,26 +120,18 @@ def _finalized(status: str, final_move: str | None, stop_reason: str, error_code
     )
 
 
-def _apply_hypothesis_policy(*, run_id: str, candidate: dict[str, Any], plan: Any,
+def _apply_hypothesis_policy(*, run_id: str, candidate: dict[str, Any],
                              current: FollowUpResult, hypothesis: dict[str, Any],
-                             steps: list[dict[str, Any]], decisions: list[dict[str, Any]],
-                             dispatches: int, repository: Repository,
-                             emit: Callable[..., Any], publish_json: PublishJson,
-                             read_artifact: Callable[[str], bytes | None],
-                             jev_service: JevService | None,
-                             authorize_iteration: bool,
-                             authorized_by: str,
-                             ) -> tuple[FollowUpResult, int, dict[str, Any]]:
-    """Record the hypothesis policy decision and dispatch one requested test.
+                             repository: Repository, emit: Callable[..., Any],
+                             publish_json: PublishJson) -> dict[str, Any]:
+    """Record the hypothesis policy decision; nothing is ever executed.
 
-    The policy consumes the recorded critique; when it requests exactly one
-    registered discriminating action, that action is dispatched through the same
-    recorded-move path (same caps, same revision limits) and the resulting
-    revision is judged once. Otherwise the decision is recorded and nothing is
-    executed. Jev never chooses or executes anything.
+    No registered evidence-producing action is eligible on an ``EvidenceState``
+    revision (audit OJ-AUD-P1-09), so the declared outcome is
+    ``KEEP_HYPOTHESIS``/``NO_EVIDENCE_PRODUCING_TEST`` or an abstention. Jev never
+    chooses or executes anything and the policy never invents a test.
     """
     from cancerjev.research.hypothesis_policy import decide_hypothesis_test
-    from cancerjev.science.actions import EVIDENCE_PRODUCING_ACTION_IDS
 
     hypothesis_ids = {str(item) for item in (hypothesis.get("hypothesis_ids") or [])}
     rows = [row["hypothesis"] for row in repository.list_table("hypotheses", run_id)
@@ -156,13 +148,11 @@ def _apply_hypothesis_policy(*, run_id: str, candidate: dict[str, Any], plan: An
     dispatchable = [action_id for action_id in eligible_ids if action_id != producing_action]
     decision = decide_hypothesis_test(
         hypotheses=rows, evaluations=list(hypothesis.get("evaluations") or []),
-        dispatchable_action_ids=dispatchable,
-        evidence_producing_action_ids=EVIDENCE_PRODUCING_ACTION_IDS)
+        dispatchable_action_ids=dispatchable)
     payload: dict[str, Any] = {
         **decision.payload(), "candidate_id": candidate["candidate_id"],
         "evidence_state_id": current.evidence_state_id,
         "dispatchable_action_ids": sorted(dispatchable),
-        "evidence_producing_action_ids": sorted(EVIDENCE_PRODUCING_ACTION_IDS),
     }
     artifact = publish_json(
         run_id, f"runs/{run_id}/hypotheses/policy-{candidate['candidate_id']}"
@@ -181,31 +171,7 @@ def _apply_hypothesis_policy(*, run_id: str, candidate: dict[str, Any], plan: An
         artifact_refs=[artifact.ref()],
         registrations=[repository.artifact_registration(artifact, run_id)],
     )
-    if (decision.move != "TEST_HYPOTHESIS" or not authorize_iteration
-            or decision.action_id is None or dispatches >= FOLLOWUP_LIMIT):
-        return current, dispatches, payload
-    dispatch = dispatch_recorded_move(
-        run_id=run_id, candidate=plan.candidate, result=current,
-        decision={"move": "FOLLOW_UP", "reason_code": "HYPOTHESIS_TEST_REQUESTED",
-                  "policy_version": decision.policy_version,
-                  "hypothesis_id": decision.hypothesis_id,
-                  "dimensions": {"distinct_eligible_action_ids": [decision.action_id]}},
-        repository=repository, emit=emit, publish_json=publish_json,
-        read_artifact=read_artifact, authorized=True, authorized_by=authorized_by)
-    payload["dispatch"] = dispatch.summary()
-    if not dispatch.dispatched:
-        return current, dispatches, payload
-    new_result = cast(FollowUpResult, dispatch.result)
-    judgement = judge_evidence_revision(
-        run_id=run_id, candidate=plan.candidate, result=new_result,
-        jev_service=jev_service, emit=emit) if jev_service is not None else {
-            "deep_evaluation_id": None, "deep_error_code": "JEV_DISABLED", "next_move": None}
-    steps.append(_step_summary(new_result, judgement))
-    steps[-1]["dispatch"] = dispatch.summary()
-    next_decision = judgement.get("next_move")
-    if isinstance(next_decision, dict):
-        decisions.append(next_decision)
-    return new_result, dispatches + 1, payload
+    return payload
 
 
 def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selection: str,
@@ -322,14 +288,10 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
         hypothesis = dict(hypotheses)
         if hypothesis.get("status") == "GENERATED":
             investigation_status = "HYPOTHESIZED"
-            current, dispatches, policy_payload = _apply_hypothesis_policy(
-                run_id=run_id, candidate=candidate, plan=plan, current=current,
-                hypothesis=hypothesis, steps=steps, decisions=decisions,
-                dispatches=dispatches, repository=repository, emit=emit,
-                publish_json=publish_json, read_artifact=read_artifact,
-                jev_service=jev_service, authorize_iteration=authorize_iteration,
-                authorized_by=authorized_by)
-            hypothesis["policy"] = policy_payload
+            hypothesis["policy"] = _apply_hypothesis_policy(
+                run_id=run_id, candidate=candidate, current=current,
+                hypothesis=hypothesis, repository=repository, emit=emit,
+                publish_json=publish_json)
     finalization = stage("FINALIZATION", lambda: run_stage8_finalize(
         run_id=run_id, candidate=candidate, investigation_status=investigation_status,
         final_move=final_move, stop_reason=stop_reason, error_code=None, steps=tuple(steps),

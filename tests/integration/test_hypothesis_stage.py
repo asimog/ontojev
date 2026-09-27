@@ -18,6 +18,7 @@ from cancerjev.research.hypotheses import (
     LLM_HYPOTHESIS_LABEL,
     TEMPLATE_GENERATOR,
 )
+from cancerjev.research.hypothesis_policy import HYPOTHESIS_POLICY_VERSION
 from cancerjev.science.actions import ACTION_REGISTRY
 from cancerjev.storage.readers import read_hypothesis_record
 from tests.integration.test_live_replay import (
@@ -120,20 +121,15 @@ def test_template_generation_is_labelled_bounded_and_judged_once(runtime, monkey
     assert all(event["data"]["move"] != "GENERATE_HYPOTHESES" for event in dispatch), \
         "the GENERATE_HYPOTHESES terminal move itself is never dispatched"
     policy = summary["hypothesis"]["policy"]
-    assert policy["policy_version"] == "hypothesis-policy-v1"
+    assert policy["policy_version"] == HYPOTHESIS_POLICY_VERSION
     policy_events = [event for event in _events(repository, run_id)
                      if event["type"] == "HYPOTHESIS_POLICY_RECORDED"]
     assert len(policy_events) == 1
     assert policy_events[0]["data"]["move"] == policy["move"]
-    if policy["move"] == "TEST_HYPOTHESIS":
-        assert policy["action_id"] in ACTION_REGISTRY
-        assert dispatch, "the requested discriminating test is dispatched through the recorded-move path"
-        assert dispatch[-1]["data"]["decision_reason_code"] == "HYPOTHESIS_TEST_REQUESTED"
-        assert dispatch[-1]["data"]["action_id"] == policy["action_id"]
-    else:
-        assert policy["move"] in {"KEEP_HYPOTHESIS", "ABSTAIN"}
-        assert all(event["data"].get("decision_reason_code") != "HYPOTHESIS_TEST_REQUESTED"
-                   for event in dispatch)
+    assert policy["move"] in {"KEEP_HYPOTHESIS", "ABSTAIN"}
+    assert policy["action_id"] is None, "no evidence-producing test exists on this registry"
+    assert all(event["data"].get("decision_reason_code") != "HYPOTHESIS_TEST_REQUESTED"
+               for event in dispatch)
 
     rows = _hypothesis_rows(repository, run_id)
     assert len(rows) == 2
