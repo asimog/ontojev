@@ -38,6 +38,7 @@ from cancerjev.domain.evidence import (
 )
 from cancerjev.domain.measurements import (
     EntityRef,
+    MethodRef,
     MetricAvailability,
     MetricRecord,
     ObservedCount,
@@ -64,7 +65,7 @@ from cancerjev.science.actions import (
     eligible_actions,
     execute,
 )
-from cancerjev.science.methods import METHODS
+from cancerjev.science.methods import METHODS, MUTATION_DISTINCT_CASE_COUNT_METHOD, MethodDefinition
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.readers import ScientificReadError, read_candidate_state, read_revision_chain
 from cancerjev.storage.repositories import Repository
@@ -253,13 +254,23 @@ def _project_level_evidence(state: StatisticalState) -> tuple[ProjectEvidenceRow
     return tuple(rows)
 
 
+def _mutation_baseline_method(mutation: Any) -> MethodDefinition | MethodRef:
+    """The identity that produced the state's affected-case value.
+
+    A present value carries its own method identity and its own limitations, so a
+    historical V1 value stays V1. An unavailable value was never produced by V1,
+    so the declared baseline identity is the canonical V2 measurement method.
+    """
+    affected = mutation.affected_cases
+    return affected.method if isinstance(affected, ObservedCount) else MUTATION_DISTINCT_CASE_COUNT_METHOD
+
+
 def _baseline_observations(state: StatisticalState) -> tuple[BaselineObservation, ...]:
     observations: list[BaselineObservation] = []
 
-    def add(method_id: str, *, availability: str, value: Any, unit: str, n_effective: Any,
-            missingness_count: Any, missingness_reason: str | None,
+    def add(definition: MethodDefinition | MethodRef, *, availability: str, value: Any, unit: str,
+            n_effective: Any, missingness_count: Any, missingness_reason: str | None,
             notes: tuple[str, ...] = ()) -> None:
-        definition = METHODS[method_id]
         observations.append(BaselineObservation(
             method_id=definition.method_id, method_version=definition.version,
             observed=canonical_json({"value": value, "unit": unit}),
@@ -271,7 +282,7 @@ def _baseline_observations(state: StatisticalState) -> tuple[BaselineObservation
     for project in state.projects:
         project_id = project.population.frame.project_id
         mutation = project.mutation
-        add("MUTATION_AFFECTED_CASE_COUNT_V1",
+        add(_mutation_baseline_method(mutation),
             availability=_observation_availability(mutation.affected_cases),
             value=_observed_count(mutation.affected_cases), unit="cases",
             n_effective=len(mutation.frame.examined_ids),
@@ -282,7 +293,7 @@ def _baseline_observations(state: StatisticalState) -> tuple[BaselineObservation
     ]
     ssm_values = [value for value in ssm_values if value is not None]
     examined_n = len(state.projects[0].population.frame.examined_ids) if state.projects else None
-    add("PROJECT_SSM_COVERAGE_V1",
+    add(METHODS["PROJECT_SSM_COVERAGE_V1"],
         availability="OBSERVED" if ssm_values else "NOT_OBSERVED",
         value=sum(ssm_values) if ssm_values else None, unit="cases",
         n_effective=examined_n, missingness_count=0, missingness_reason=None)
@@ -291,14 +302,14 @@ def _baseline_observations(state: StatisticalState) -> tuple[BaselineObservation
         expression = project.expression
         if isinstance(expression, ExpressionSummaryResult):
             n_missing: Any = len(expression.coverage.frame.examined_ids) - len(expression.coverage.valid_ids)
-            add("EXPRESSION_LOG2_SUMMARY_V1",
+            add(METHODS["EXPRESSION_LOG2_SUMMARY_V1"],
                 availability=_observation_availability(expression.median),
                 value=_observed_scalar(expression.median), unit="log2(UQFPKM+1)",
                 n_effective=len(expression.values), missingness_count=n_missing,
                 missingness_reason="EXAMINED_CASES_WITHOUT_RETURNED_VALUE" if n_missing else None,
                 notes=(f"project {project_id}",))
         else:
-            add("EXPRESSION_LOG2_SUMMARY_V1",
+            add(METHODS["EXPRESSION_LOG2_SUMMARY_V1"],
                 availability=_observation_availability(expression),
                 value=None, unit="log2(UQFPKM+1)",
                 n_effective=None, missingness_count=None, missingness_reason=None,

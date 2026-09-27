@@ -77,7 +77,11 @@ from cancerjev.gdc.parsers import (
     ProviderSelection,
 )
 from cancerjev.research.specs import LUAD_RESEARCH_V1
-from cancerjev.science.methods import ProjectFrame, compute_statistical_state
+from cancerjev.science.methods import (
+    MUTATION_DISTINCT_CASE_COUNT_METHOD,
+    ProjectFrame,
+    compute_statistical_state,
+)
 
 # ------------------------------------------------------------ typed fixtures
 
@@ -253,12 +257,13 @@ def baseline_observations(state):
     observations = []
     for project in state.projects:
         affected = project.mutation.affected_cases
+        method = affected.method if isinstance(affected, ObservedCount) else MUTATION_DISTINCT_CASE_COUNT_METHOD
         observations.append(BaselineObservation(
-            "MUTATION_AFFECTED_CASE_COUNT_V1", "1",
+            method.method_id, method.version,
             canonical_json({"value": affected.value if isinstance(affected, ObservedCount) else None,
                             "unit": "cases"}),
             "OBSERVED" if isinstance(affected, ObservedCount) else "NOT_OBSERVED",
-            len(project.mutation.frame.examined_ids), 0, None))
+            len(project.mutation.frame.examined_ids), 0, None, limitations=method.limitations))
         expression = project.expression
         if isinstance(expression, ExpressionSummaryResult):
             observed = expression.median.value if isinstance(expression.median, ObservedScalar) else None
@@ -463,6 +468,27 @@ def test_state_schema_5_round_trip_preserves_typed_fields():
     assert payload["state_hash"] == state_identity(state)
     assert read_state(raw) == state
     assert read_state(raw, expected_hash=state_identity(state)) == state
+
+
+def test_baseline_observation_identity_follows_the_state_measurement():
+    state = build_state()
+    affected = state.projects[0].mutation.affected_cases
+    assert isinstance(affected, ObservedCount)
+    row = baseline_observations(state)[0]
+    assert (row.method_id, row.method_version) == (affected.method.method_id, affected.method.version)
+    assert row.limitations == affected.method.limitations
+
+    canonical_project = replace(
+        state.projects[0],
+        mutation=replace(state.projects[0].mutation,
+                         affected_cases=replace(affected,
+                                                method=MUTATION_DISTINCT_CASE_COUNT_METHOD)))
+    canonical = replace(state, projects=(canonical_project,))
+    row = baseline_observations(canonical)[0]
+    assert row.method_id == "MUTATION_AFFECTED_CASE_COUNT_V2"
+    assert row.method_version == "2"
+    assert not any("DEPRECATED" in item for item in row.limitations), \
+        "a V2 measurement must never carry the V1 deprecation"
 
 
 @pytest.mark.parametrize("outcome", [CheckOutcome.VERIFIED, CheckOutcome.CONTRADICTED])

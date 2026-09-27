@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from cancerjev.domain.evidence import EvidenceState
+from cancerjev.domain.measurements import ObservedCount
 from cancerjev.jev.contracts import JevContractError
 from cancerjev.jev.typesafe_adapter import JevProviderError
 from cancerjev.research import deep
@@ -23,6 +24,7 @@ from cancerjev.science.actions import ActionError
 from cancerjev.storage.readers import (
     read_evidence_record,
     read_revision_chain,
+    read_state_record,
 )
 from tests.integration.replay import GENES
 from tests.integration.test_live_replay import (
@@ -197,6 +199,18 @@ def test_live_deep_slice_creates_e0_and_e1_from_one_explicit_action(runtime, mon
     assert absent.needed_evidence == "new_gdc_measurement"
     assert absent.availability.value == "NOT_ACQUIRED"
     assert len(chain[0].evidence.baseline_observations) == 3
+    accepted = read_state_record(repository, runtime[2], candidate["source_state_id"]).state
+    affected_cases = accepted.projects[0].mutation.affected_cases
+    assert isinstance(affected_cases, ObservedCount)
+    mutation_rows = [observation for observation in chain[0].evidence.baseline_observations
+                     if observation.method_id == affected_cases.method.method_id]
+    assert len(mutation_rows) == 1, "E0 binds its mutation row to the state's own method identity"
+    mutation_row = mutation_rows[0]
+    assert mutation_row.method_id == "MUTATION_AFFECTED_CASE_COUNT_V2"
+    assert mutation_row.method_version == affected_cases.method.version == "2"
+    assert mutation_row.limitations == affected_cases.method.limitations
+    assert not any("DEPRECATED" in item for item in mutation_row.limitations), \
+        "a V2 measurement must never carry the V1 deprecation"
     assert chain[1].evidence.baseline_observations == ()
     assert chain[1].evidence.provenance.input_artifacts
     assert all(item.verified for item in chain[1].evidence.provenance.input_artifacts)

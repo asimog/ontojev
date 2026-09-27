@@ -43,6 +43,7 @@ from cancerjev.jev.projection import (
 )
 from cancerjev.jev.questions import DEEP_QUESTIONS, applicability_map
 from cancerjev.science.actions import ACTION_REGISTRY
+from cancerjev.science.methods import MUTATION_DISTINCT_CASE_COUNT_METHOD
 
 RELEASE = "Data Release 46.0"
 ENTITY = EntityRef("ENSG00000141510", "TP53", RELEASE)
@@ -212,6 +213,26 @@ def test_baseline_observations_project_with_null_outcome():
     assert observation["availability"] == "OBSERVED"
     assert projection["revision"]["evidence_present"] is True
     assert projection["quality"]["checks_total"] == 0
+
+
+def test_baseline_observation_method_identity_is_projected_verbatim():
+    observation = build_evidence_projection(_baseline_record(), ACTION_PAYLOAD)["observations"][0]
+    assert (observation["method_id"], observation["method_version"]) == (
+        "MUTATION_AFFECTED_CASE_COUNT_V1", "1")
+    assert observation["limitations"] == []
+
+    canonical_observation = replace(
+        _baseline_record().revision.baseline_observations[0],
+        method_id="MUTATION_AFFECTED_CASE_COUNT_V2", method_version="2",
+        limitations=MUTATION_DISTINCT_CASE_COUNT_METHOD.limitations)
+    baseline = _baseline_record()
+    canonical = replace(baseline, revision=replace(baseline.revision,
+                                                   baseline_observations=(canonical_observation,)))
+    observation = build_evidence_projection(canonical, ACTION_PAYLOAD)["observations"][0]
+    assert observation["method_id"] == "MUTATION_AFFECTED_CASE_COUNT_V2"
+    assert observation["limitations"] == list(MUTATION_DISTINCT_CASE_COUNT_METHOD.limitations)
+    assert not any("DEPRECATED" in item for item in observation["limitations"]), \
+        "a V2 measurement must never carry the V1 deprecation"
 
 
 def test_action_block_and_eligible_actions_are_declared():
