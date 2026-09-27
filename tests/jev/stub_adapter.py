@@ -1,23 +1,43 @@
-"""Deterministic stub adapter for offline Jev tests. No network, no SDK."""
+"""Deterministic stub adapter for offline Jev tests. No network, no SDK.
+
+The stub answers exactly the questions it is handed: each ``QuestionDefinition``
+supplies the primitive and, for Choice, the option roster, while declared
+per-question defaults supply the probability or the chosen option. A question id
+with no declared default fails closed, so a changed question set can never be
+silently answered by a stale projection-version vector.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
-from cancerjev.jev.questions import (
-    DEEP_LIMITATION_ROSTER,
-    HYPOTHESIS_UNSUPPORTED_ROSTER,
-    LIMITATION_ROSTER,
-    QuestionDefinition,
-)
+from cancerjev.jev.questions import QuestionDefinition
 from cancerjev.jev.typesafe_adapter import ProviderAnswerSet
 
-DEEP_ANSWERS = {
-    "revision_reliable": {"kind": "noul", "probability_yes": 0.90},
-    "evidence_sufficient_for_next_step": {"kind": "noul", "probability_yes": 0.70},
-    "next_step_warranted": {"kind": "noul", "probability_yes": 0.20},
-    "stopping_more_honest": {"kind": "noul", "probability_yes": 0.80},
+NOUL_DEFAULTS: dict[str, float] = {
+    "evidence_quality_adequate": 0.85,
+    "mutation_evidence_coherent": 0.82,
+    "expression_evidence_coherent": 0.80,
+    "signal_explained_by_coverage": 0.10,
+    "unresolved_uncertainty_material": 0.85,
+    "warrants_deeper_investigation": 0.90,
+    "revision_reliable": 0.90,
+    "evidence_sufficient_for_next_step": 0.70,
+    "next_step_warranted": 0.20,
+    "stopping_more_honest": 0.80,
+    "hypothesis_testable": 0.80,
+    "hypothesis_exceeds_recorded_evidence": 0.35,
 }
+CHOICE_DEFAULTS: dict[str, tuple[str, float]] = {
+    "dominant_limitation": ("NONE", 0.88),
+    "hypothesis_dominant_unsupported_assumption": ("NONE", 0.70),
+}
+COVERAGE_OPTION = "COVERAGE"
+
+
+def _coverage_imbalance(state: dict[str, Any]) -> bool:
+    cohort = state.get("cohort")
+    return bool(isinstance(cohort, dict) and cohort.get("coverage_imbalance"))
 
 
 class StubAdapter:
@@ -39,14 +59,10 @@ class StubAdapter:
         self.last_state = state
         if self.fail:
             raise JevProviderError("PROVIDER_ERROR", "stub provider failure")
-        if state.get("projection_version") == "jev-evidence-projection-v2":
-            answers = self._deep_answers()
-            answers.update(self.deep_override)
-        elif state.get("projection_version") == "jev-hypothesis-projection-v2":
-            answers = self._hypothesis_answers()
-        else:
-            answers = self._wide_answers(state)
-            answers.update(self.override)
+        answers = {definition.question_id: self._answer(definition, state)
+                   for definition in definitions}
+        for declared in (self.override, self.deep_override):
+            answers.update({key: value for key, value in declared.items() if key in answers})
         return ProviderAnswerSet(
             requested_model=self.model,
             resolved_model=self.resolved_model,
@@ -56,48 +72,38 @@ class StubAdapter:
             request_id="stub-request-id",
         )
 
-    def _deep_answers(self) -> dict[str, dict[str, Any]]:
-        limitation = "NONE"
-        probabilities = {
-            option: (0.88 if option == limitation else 0.12 / (len(DEEP_LIMITATION_ROSTER) - 1))
-            for option in DEEP_LIMITATION_ROSTER
-        }
-        return {
-            **DEEP_ANSWERS,
-            "dominant_limitation": {
-                "kind": "choice", "choice": limitation, "confidence": 0.88,
-                "probabilities": probabilities,
-            },
-        }
+    def _answer(self, definition: QuestionDefinition,
+                state: dict[str, Any]) -> dict[str, Any]:
+        if definition.primitive == "NOUL":
+            probability = NOUL_DEFAULTS.get(definition.question_id)
+            if probability is None:
+                raise AssertionError(
+                    "StubAdapter has no declared Noul default for question "
+                    f"{definition.question_id!r}")
+            return {"kind": "noul", "probability_yes": probability}
+        if definition.primitive == "CHOICE":
+            return self._choice_answer(definition, state)
+        raise AssertionError(
+            f"StubAdapter cannot answer primitive {definition.primitive!r} for question "
+            f"{definition.question_id!r}")
 
-    def _hypothesis_answers(self) -> dict[str, dict[str, Any]]:
+    def _choice_answer(self, definition: QuestionDefinition,
+                       state: dict[str, Any]) -> dict[str, Any]:
+        options = tuple((definition.criteria or {}).keys())
+        declared = CHOICE_DEFAULTS.get(definition.question_id)
+        if declared is None:
+            raise AssertionError(
+                "StubAdapter has no declared Choice default for question "
+                f"{definition.question_id!r}")
+        limitation, confidence = declared
+        if COVERAGE_OPTION in options and _coverage_imbalance(state):
+            limitation = COVERAGE_OPTION
+        if limitation not in options:
+            raise AssertionError(
+                f"StubAdapter default {limitation!r} is not an option of "
+                f"{definition.question_id!r}")
+        remainder = (1.0 - confidence) / (len(options) - 1) if len(options) > 1 else 0.0
         probabilities = {
-            option: (0.70 if option == "NONE" else 0.30 / (len(HYPOTHESIS_UNSUPPORTED_ROSTER) - 1))
-            for option in HYPOTHESIS_UNSUPPORTED_ROSTER
-        }
-        return {
-            "hypothesis_testable": {"kind": "noul", "probability_yes": 0.80},
-            "hypothesis_exceeds_recorded_evidence": {"kind": "noul", "probability_yes": 0.35},
-            "hypothesis_dominant_unsupported_assumption": {
-                "kind": "choice", "choice": "NONE", "confidence": 0.70, "probabilities": probabilities,
-            },
-        }
-
-    def _wide_answers(self, state: dict[str, Any]) -> dict[str, dict[str, Any]]:
-        limitation = "COVERAGE" if state["cohort"]["coverage_imbalance"] else "NONE"
-        probabilities = {
-            option: (0.88 if option == limitation else 0.12 / (len(LIMITATION_ROSTER) - 1))
-            for option in LIMITATION_ROSTER
-        }
-        return {
-            "evidence_quality_adequate": {"kind": "noul", "probability_yes": 0.85},
-            "mutation_evidence_coherent": {"kind": "noul", "probability_yes": 0.82},
-            "expression_evidence_coherent": {"kind": "noul", "probability_yes": 0.80},
-            "signal_explained_by_coverage": {"kind": "noul", "probability_yes": 0.10},
-            "unresolved_uncertainty_material": {"kind": "noul", "probability_yes": 0.85},
-            "warrants_deeper_investigation": {"kind": "noul", "probability_yes": 0.90},
-            "dominant_limitation": {
-                "kind": "choice", "choice": limitation, "confidence": 0.88,
-                "probabilities": probabilities,
-            },
-        }
+            option: (confidence if option == limitation else remainder) for option in options}
+        return {"kind": "choice", "choice": limitation, "confidence": confidence,
+                "probabilities": probabilities}

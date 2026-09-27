@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import json
 
 import pytest
 
 from cancerjev.domain.codecs import state_identity, write_state
+from cancerjev.domain.discovery import CNV_RETAIN_REASON, CnvDisposition
 from cancerjev.domain.envelopes import StateRecord
 from cancerjev.domain.events import canonical_json, utc_now
 from cancerjev.domain.measurements import Acquisition, OperationalSource, ScientificSource
@@ -32,13 +34,21 @@ from cancerjev.gdc.parsers import (
 )
 from cancerjev.jev.contracts import EvaluationRecord
 from cancerjev.jev.projection import PROJECTION_VERSION, build_projection, projection_hash
-from cancerjev.jev.questions import applicability_map
+from cancerjev.jev.questions import (
+    WIDE_QUESTIONS,
+    WIDE_QUESTIONS_BY_ID,
+    applicability_map,
+    wide_question_set_hash,
+)
 from cancerjev.jev.service import JevService, is_pinned_model_identity
 from cancerjev.jev.typesafe_adapter import JevProviderError
 from cancerjev.research import deep
+from cancerjev.research.cutover import UNION_SELECTION_RULE_ID, compose_discovery_states
+from cancerjev.research.specs import LUAD_RESEARCH_V1
 from cancerjev.science.actions import ACTION_REGISTRY
 from cancerjev.science.methods import ProjectFrame, compute_statistical_state
 from tests.jev.stub_adapter import StubAdapter
+from tests.science.test_modality_union import G1, _call, _cnv_result, _lanes
 
 RELEASE = "Data Release 46.0"
 COHORT = "TCGA-LUAD"
@@ -307,6 +317,63 @@ def test_evaluate_record_persists_projection_evaluation_and_events(runtime):
     assert len(projections["items"]) == 1
     events = [event["type"] for event in repository.events(context["run_id"], 0, 100)["items"]]
     assert "JEV_PROJECTION_CREATED" in events
+    assert "JEV_WIDE_STATE_EVALUATED" in events
+
+
+def test_judgment_over_a_canonical_union_state_hands_the_wide_questions_through(runtime):
+    """The wide service path is exercised over a canonical union state.
+
+    Legacy-provider-rank states alone would not catch a union-projection defect or
+    a question-set handoff that no longer matches the definitions the stub answers.
+    """
+    mutation, expression = _lanes(runtime)
+    cases = expression.population.examined_ids[:5]
+    cnv = _cnv_result(mutation, (
+        _call(G1, "Amplification", cases, disposition=CnvDisposition.RETAIN,
+              reason=CNV_RETAIN_REASON),
+    ))
+    union_state = next(state for state in compose_discovery_states(
+        mutation, expression, cnv, LUAD_RESEARCH_V1)
+        if state.entity.gene_id == G1)
+
+    settings, repository, artifacts = runtime
+    adapter = StubAdapter()
+    service = JevService(settings, repository, artifacts, adapter_factory=lambda: adapter)
+    run_id = repository.create_run("jev-union", mode="LIVE", fixture_id=None,
+                                   fixture_version=None)
+    record = StateRecord("union-state-1", state_identity(union_state), union_state)
+    register_state(repository, artifacts, run_id, record)
+
+    evaluation = service.evaluate_record(run_id=run_id, state=record, emit=_emit(repository))
+    vector = evaluation.boundary_representation()
+    assert vector["error"] is None
+    assert adapter.calls == 1
+
+    projection = build_projection(record)
+    assert union_state.tested_context.selection_rule == UNION_SELECTION_RULE_ID
+    assert projection["scope"]["selection_bias"] == union_state.tested_context.selection_bias
+    assert vector["projection_hash"] == projection_hash(projection)
+
+    answers = vector["answers"]
+    assert set(answers) == {definition.question_id for definition in WIDE_QUESTIONS}
+    for definition in WIDE_QUESTIONS:
+        assert answers[definition.question_id]["kind"] == definition.primitive.lower()
+    choice_definition = WIDE_QUESTIONS_BY_ID["dominant_limitation"]
+    assert set(answers["dominant_limitation"]["probabilities"]) == set(
+        choice_definition.criteria or {}), "the stub builds Choice probabilities from the roster"
+    assert answers["dominant_limitation"]["choice"] == "NONE"
+    assert answers["mutation_evidence_coherent"] == {"kind": "noul", "probability_yes": 0.82}
+    assert vector["applicability"] == applicability_map(projection)
+
+    row = repository.get_evaluation(evaluation.evaluation_id)
+    assert row is not None
+    definitions_artifact = artifacts.read(
+        repository.artifact(row["vector"]["question_definitions_ref"])["relative_path"])
+    document = json.loads(definitions_artifact)
+    assert document["question_set_hash"] == wide_question_set_hash()
+    assert [question["question_id"] for question in document["questions"]] == [
+        definition.question_id for definition in WIDE_QUESTIONS]
+    events = [event["type"] for event in repository.events(run_id, 0, 100)["items"]]
     assert "JEV_WIDE_STATE_EVALUATED" in events
 
 
