@@ -57,6 +57,7 @@ COMPLETED_REASON = "CAMPAIGN_COMPLETED"
 BLOCKED_REASON = "CAMPAIGN_BLOCKED"
 RETRY_REASON = "CAMPAIGN_RETRY_SCHEDULED"
 RECOVERY_REASON = "CAMPAIGN_COMPLETION_RECOVERED"
+PRECONDITION_UNMET_REASON = "CAMPAIGN_PRECONDITION_UNMET"
 RETRY_BASE_SECONDS = 300
 RETRY_MAX_SECONDS = 3600
 RECOVERY_SCAN_LIMIT = 20
@@ -64,7 +65,23 @@ RECOVERY_EVENT_LIMIT = 500
 
 PROGRAM_REASON_CODES = frozenset({
     SELECTED_REASON, IDLE_REASON, COMPLETED_REASON, BLOCKED_REASON, RETRY_REASON,
+    PRECONDITION_UNMET_REASON,
 })
+
+
+class CampaignPreconditionError(Exception):
+    """A dispatch precondition failed before any work; never a durable attempt.
+
+    Raised by the dispatch boundary (for example a missing provider credential)
+    before any live probe or campaign run, so the campaign record stays PENDING
+    with its attempt count unchanged and is retried unpenalized once the
+    precondition is fixed.
+    """
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(f"{code}: {detail}")
+        self.code = code
+        self.detail = detail
 
 
 class ProgramStateError(RuntimeError):
@@ -302,7 +319,22 @@ def run_program_once(*, profiles: tuple[CampaignProfile, ...],
         )
     base = records[profile.profile_id]
     identity = identities[profile.profile_id]
-    succeeded = bool(run_campaign(profile))
+    try:
+        succeeded = bool(run_campaign(profile))
+    except CampaignPreconditionError:
+        # A precondition refusal is not a campaign failure: no work happened, the
+        # record stays PENDING with its attempt count unchanged, and the next cycle
+        # retries unpenalized once the precondition is fixed.
+        reasons_by_profile[profile.profile_id] = PRECONDITION_UNMET_REASON
+        return ProgramRunOutcome(
+            state=ProgramState.PROGRAM_IDLE, selected_profile_id=profile.profile_id,
+            reason_code=PRECONDITION_UNMET_REASON,
+            campaign_statuses=tuple(sorted(
+                ((record.profile_id, record.status) for record in records.values()),
+                key=lambda item: item[0])),
+            records=tuple(sorted(records.values(), key=lambda record: record.profile_id)),
+            reasons_by_profile=reasons_by_profile,
+        )
     if succeeded:
         updated = replace(
             base, status=CampaignStatus.CAMPAIGN_COMPLETE,
@@ -426,7 +458,18 @@ def run_program_worker(*, run_id: str, repository: Repository, artifacts: Artifa
     outcome = run_program_once(
         profiles=profiles, run_campaign=run_campaign, durable=durable, recovered=recovered,
         observation=observation, method_identity=method, now=now, cycle_run_id=run_id)
-    if outcome.selected_profile_id is None:
+    if outcome.reason_code == PRECONDITION_UNMET_REASON:
+        emit(run_id, "CAMPAIGN_PRECONDITION_UNMET",
+             f"program:{run_id}:precondition:{outcome.selected_profile_id}",
+             f"Campaign {outcome.selected_profile_id} was not dispatched: a declared "
+             "precondition is unmet; no attempt was consumed.",
+             stage="PROGRAM", level="warning",
+             data={"profile_id": outcome.selected_profile_id,
+                   "reason_code": PRECONDITION_UNMET_REASON,
+                   "attempts": next(item.attempts for item in outcome.records
+                                    if item.profile_id == outcome.selected_profile_id),
+                   "campaign_decisions": dict(outcome.reasons_by_profile)})
+    elif outcome.selected_profile_id is None:
         emit(run_id, "PROGRAM_IDLE", f"program:{run_id}:idle",
              "No eligible campaign; the program is idle.", stage="PROGRAM",
              data={"reason_code": outcome.reason_code,

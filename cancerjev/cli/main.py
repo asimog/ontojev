@@ -470,7 +470,9 @@ def _campaign_run(settings: Settings, repository: Repository, artifacts: Artifac
 
     service = (jev_service if jev_service is not None
                else _autonomous_jev_service(settings, repository, artifacts))
-    if llm_generator is None and settings.llm_model and os.getenv("OPENROUTER_API_KEY"):
+    llm_available = bool(settings.llm_model and os.getenv("OPENROUTER_API_KEY"))
+    generator_label = "LLM_AVAILABLE" if llm_available else "TEMPLATE_ONLY"
+    if llm_generator is None and llm_available:
         from cancerjev.llm.openrouter import OpenRouterGenerator
 
         # Optional bounded semantic component: absence or failure leaves the
@@ -483,12 +485,12 @@ def _campaign_run(settings: Settings, repository: Repository, artifacts: Artifac
                "profile_id": profile.profile_id, "spec_id": spec.spec_id,
                "project_id": profile.project_id, "research_spec": spec.as_dict(),
                "execution": "SYSTEMATIC_MODALITY_UNION", "activation": activation,
-               "readiness_effect": "NONE",
+               "readiness_effect": "NONE", "hypothesis_generation": generator_label,
                "enabled_modalities": [modality.value for modality in profile.enabled_modalities]},
         started_message=f"Canonical {activation.lower()} campaign run started.",
         started_data={"profile_id": profile.profile_id, "spec_id": spec.spec_id,
                       "execution": "SYSTEMATIC_MODALITY_UNION", "activation": activation,
-                      "readiness_effect": "NONE"},
+                      "readiness_effect": "NONE", "hypothesis_generation": generator_label},
         ownership=ownership,
     ) as run_id:
 
@@ -618,7 +620,7 @@ def _dispatch_campaign(settings: Settings, repository: Repository, artifacts: Ar
     first inside a SYSTEM_AUTONOMOUS run and its result feeds the same gate.
     """
     from cancerjev.research.campaign import CampaignActivationError, require_autonomous_activation
-    from cancerjev.research.program import dispatch_validated_campaign
+    from cancerjev.research.program import CampaignPreconditionError, dispatch_validated_campaign
     from cancerjev.research.specs import research_spec_by_id
 
     spec = research_spec_by_id(profile.spec_id)
@@ -626,6 +628,14 @@ def _dispatch_campaign(settings: Settings, repository: Repository, artifacts: Ar
         raise CampaignActivationError("UNKNOWN_RESEARCH_SPEC",
                                       f"{profile.profile_id} declares unknown spec {profile.spec_id}")
     require_autonomous_activation(profile)
+    if jev_service is None and not os.getenv("TYPESAFE_API_KEY"):
+        # Checked before the bounded capability preflight so a missing credential
+        # neither spends live requests nor consumes a durable attempt (P-12).
+        raise CampaignPreconditionError(
+            "JEV_PROVIDER_CREDENTIAL_MISSING",
+            "autonomous campaign dispatch requires TYPESAFE_API_KEY for wide Jev; "
+            "the campaign was not dispatched and no attempt was consumed",
+        )
     if capability is None:
         capability = _preflight_capability(settings, repository, artifacts, profile,
                                            transport_factory)

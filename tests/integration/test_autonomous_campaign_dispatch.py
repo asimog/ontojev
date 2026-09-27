@@ -8,6 +8,7 @@ import pytest
 
 from cancerjev.cli.main import (
     _dispatch_campaign,
+    _program,
     _run_campaign_systematic,
     _run_campaign_validation,
 )
@@ -17,8 +18,9 @@ from cancerjev.jev.service import JevService
 from cancerjev.research.acquisition import LiveRunError
 from cancerjev.research.campaign import LUAD_CAMPAIGN_V1
 from cancerjev.research.capability import CapabilityError
+from cancerjev.research.program import load_program_state
 from cancerjev.research.specs import LUAD_RESEARCH_V1
-from tests.helpers import canned_capability
+from tests.helpers import canned_capability, fake_release_observation
 from tests.integration.replay import ReplayTransport
 from tests.jev.stub_adapter import StubAdapter
 
@@ -85,8 +87,9 @@ def test_failed_systematic_campaign_is_terminal_and_not_dispatched(runtime, monk
     assert events[-1]["data"]["reason_code"] == "TEST_SYSTEMATIC_FAILURE"
 
 
-def test_capability_preflight_failure_is_recorded_and_raised(runtime):
+def test_capability_preflight_failure_is_recorded_and_raised(runtime, monkeypatch):
     settings, repository, artifacts = runtime
+    monkeypatch.setenv("TYPESAFE_API_KEY", "offline-test-key")
 
     class _FailingTransport:
         def request(self, request):
@@ -114,6 +117,35 @@ class _FakeCampaignResult:
     def summary(self) -> dict:
         return {"execution": "SYSTEMATIC_MODALITY_UNION", "activation": "VALIDATION",
                 "readiness_effect": "NONE", "states": 1}
+
+
+def test_missing_provider_credential_skips_the_preflight_and_the_attempt_ledger(runtime, monkeypatch):
+    settings, repository, artifacts = runtime
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setattr("cancerjev.cli.main.PROGRAM_PROFILES", (VALIDATED,))
+    monkeypatch.setattr("cancerjev.research.release_monitor.observe_release",
+                        lambda transport: fake_release_observation())
+
+    def forbidden_preflight(*args, **kwargs):
+        raise AssertionError("a missing credential must be checked before the live preflight")
+
+    monkeypatch.setattr("cancerjev.cli.main._preflight_capability", forbidden_preflight)
+
+    _program(settings, repository, artifacts)
+
+    state = load_program_state(repository=repository, artifacts=artifacts)
+    assert state is not None
+    assert state["state"] == "PROGRAM_IDLE"
+    assert state["reason_code"] == "CAMPAIGN_PRECONDITION_UNMET"
+    campaign = next(item for item in state["campaigns"]
+                    if item["profile_id"] == VALIDATED.profile_id)
+    assert campaign["status"] == "PENDING" and campaign["attempts"] == 0, \
+        "the credential precondition never spends a durable attempt"
+    runs = repository.list_runs(5, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS)
+    events = repository.events(runs[0]["run_id"], 0, 200)["items"]
+    assert "CAMPAIGN_PRECONDITION_UNMET" in [event["type"] for event in events]
+    assert not any(event.get("stage") == "CAMPAIGN_CAPABILITY_PREFLIGHT" for event in events), \
+        "no live capability preflight runs when the provider credential is missing"
 
 
 def test_validation_route_dispatches_the_canonical_spine_under_validation_ownership(runtime, monkeypatch):

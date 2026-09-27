@@ -17,7 +17,13 @@ from cancerjev.research.campaign_selection import (
     RETRY_BACKOFF_REASON,
     RETRY_EXHAUSTED_REASON,
 )
-from cancerjev.research.program import load_program_state, run_program_worker
+from cancerjev.research.program import (
+    PRECONDITION_UNMET_REASON,
+    CampaignPreconditionError,
+    load_program_state,
+    run_program_once,
+    run_program_worker,
+)
 from cancerjev.science.errors import ScienceError
 from cancerjev.storage.ownership import ResearchOwnership
 from tests.helpers import canned_capability, fake_release_observation
@@ -79,6 +85,20 @@ def test_completed_campaign_is_not_redispatched_after_a_restart(runtime):
     assert campaign["release_identity"] == state["release_identity"]
     assert state["release"] == observation.release
     assert state["method_identity"] == METHOD
+
+
+def test_a_precondition_refusal_never_consumes_a_durable_attempt():
+    def refuse(profile) -> bool:
+        raise CampaignPreconditionError("TEST_PRECONDITION", "provider configuration missing")
+
+    outcome = run_program_once(profiles=(VALIDATED,), run_campaign=refuse)
+
+    assert outcome.state is ProgramState.PROGRAM_IDLE
+    assert outcome.reason_code == PRECONDITION_UNMET_REASON
+    assert outcome.selected_profile_id == VALIDATED.profile_id
+    record = next(item for item in outcome.records if item.profile_id == VALIDATED.profile_id)
+    assert record.status.value == "PENDING" and record.attempts == 0, \
+        "a precondition refusal is not a campaign attempt"
 
 
 def test_completed_campaign_is_recovered_when_the_state_publish_was_interrupted(runtime):
