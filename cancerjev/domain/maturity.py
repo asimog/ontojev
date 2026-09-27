@@ -99,7 +99,8 @@ def derive_evidence_maturity(state: StatisticalState) -> EvidenceMaturity:
         level = EvidenceLevel.MEASURED
     unattained = (
         (EvidenceLevel.STATISTICALLY_SUPPORTED.value,
-         "no declared inferential population/null/FDR contract exists"),
+         "requires declared calibration artifacts for a selected claim family; the expression "
+         "fence-exceedance screen is declared but uncalibrated"),
         (EvidenceLevel.INTERNALLY_REPLICATED.value,
          "no persisted case-disjoint replication partition exists for this gene"),
         (EvidenceLevel.EXTERNALLY_REPLICATED.value,

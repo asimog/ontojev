@@ -401,8 +401,8 @@ def _followup_evidence(outcome: ActionOutcome, candidate: CandidateEvidence, rec
         missing_evidence.append(MissingEvidence(
             needed_evidence="downstream_inference",
             availability=MetricAvailability.NOT_OBSERVED,
-            reason=("descriptive measurement only; no declared inferential population/null/FDR "
-                    "contract exists"),
+            reason=("descriptive measurement only; the expression fence-exceedance screen is "
+                    "declared but no calibrated inferential population/FDR contract exists"),
         ))
     else:
         missing_evidence.append(MissingEvidence(

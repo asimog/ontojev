@@ -204,6 +204,12 @@ Independent bounded units; each may land as its own commit with its own tests.
 
 **Verification:** frozen expression fixture asserting nomination counts against the declared null (before/after on the same fixture); union-size measurement against the Phase 2 quota policy; full command set (§2). `STATISTICALLY_SUPPORTED` stays blocked until Phase 9 records calibration artifacts.
 
+**Landed record (implementation complete; `5391c19`, `a90a5b6`).**
+- Null declared and persisted: `EXPRESSION_EXPECTED_TAIL_V2` (`GENOME_WIDE_EMPIRICAL_FENCE_EXCEEDANCE_V1`, excess `>= 3.0` binomial null SD), per-gene `null_lower_rate`/`null_upper_rate` and `expected_*_case_count` persisted in the schema-2 descriptor; pooled rates are computed over every observed tail in the run. The retired `EXPRESSION_TUKEY_TAIL_V1` stays defined for historical replay and is excluded from new state method environments (environment hash changes once, as a declared method-identity change).
+- Disposition policy `expression-dispositions-v3`: `RETAIN` requires the declared excess on at least one side; within-null tails `DROP` with `TAIL_CASES_WITHIN_NULL_EXPECTATION`; a missing null fails closed with `NULL_EXPECTATION_UNAVAILABLE`; the asymmetry review trigger is unchanged. Historical schema-1 artifacts keep a strict reader (frozen fixture `tests/unit/fixtures/expression_discovery_result_v1.json`).
+- Measured on the frozen DR46 live corpus (the Phase 7 `expression-discovery-result`, same fixture before/after): 19,843 genes, 17,338 observed tails, 8,981,084 valid values; pooled rates 0.396% lower / 3.325% upper. Nominations before: 14,998 `RETAIN` + 1,942 `JEV_REVIEW`; after: **4,969 `RETAIN`** + 1,942 `JEV_REVIEW`, with 10,029 within the null and 398 no-tail drops. The screen is roughly three times more selective and removes chance tail membership; the expression nominations still exceed the pre-Wide hard cap of 1,000, so `pre-wide-policy-v2` quotas remain the selection mechanism and the calibration of the `3.0` effect size belongs to Phase 9.
+- Sharding compatibility: Phase 8 touches only expression discovery/domain/codecs/methods; the streaming CNV shard pipeline (raw-page eviction, schema-8 eviction records, doctor/API semantics) is untouched, and the full suite including the shard, eviction and merge tests stays green. The only cross-phase effect is the declared method-environment hash change, which the Phase 5 durable program handles as a `METHOD_CHANGED` redispatch identity.
+
 ---
 
 ## 12. Phase 9 — Calibration and Jev incremental-value measurement (Gate 6)
