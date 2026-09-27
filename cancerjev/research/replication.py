@@ -1,9 +1,12 @@
 """Deterministic case-disjoint replication partitions.
 
-A scientific holdout is predeclared, case-disjoint and versioned; it is not an
-operational shard and not a reviewer-label split. There is no universal ratio:
-each method declares its discovery share and power rationale, and insufficient
-cases report replication unavailable with a reason rather than a silent split.
+Declared prerequisite, no production caller: no runtime path calls this module
+today; it is kept for the Phase 10 replication decision after the Phase 8
+scientific work. A scientific holdout is predeclared, case-disjoint and versioned;
+it is not an operational shard and not a reviewer-label split. There is no
+universal ratio: each method declares its discovery share and power rationale, and
+insufficient cases report replication unavailable with a reason rather than a
+silent split.
 """
 
 from __future__ import annotations

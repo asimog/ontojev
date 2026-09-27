@@ -1,9 +1,11 @@
 """OPTIONAL evaluation / calibration harness: blinded grouped labels and arm comparison.
 
-This module is deliberately OUTSIDE the numbered runtime stages. The runtime Stage 8
-(candidate finalization, dossier, no-Jev comparison, CANDIDATE_COMPLETE) never
-invokes it, never requires human labels, and never calls into this module: normal
-candidate completion does not need or read anything from here.
+Declared prerequisite, no production caller: this module is deliberately OUTSIDE
+the numbered runtime stages and is kept for the Phase 9 calibration design. The
+runtime Stage 8 (candidate finalization, dossier, no-Jev comparison,
+CANDIDATE_COMPLETE) never invokes it, never requires human labels, and never calls
+into this module: normal candidate completion does not need or read anything from
+here.
 
 Its optional future uses are offline operator-driven studies: human-labelled
 evaluation, blinded comparative studies, calibration, external reviewer assessment,

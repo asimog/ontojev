@@ -6,11 +6,13 @@ explicit through a round trip.
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
 from cancerjev.domain.codecs import (
     evidence_identity,
+    read_cnv_discovery,
     read_evidence,
     read_state,
     state_identity,
@@ -38,7 +40,12 @@ from cancerjev.domain.measurements import (
     canonical_bytes,
     digest,
 )
-from cancerjev.domain.scientific import ExpressionSummaryResult, Lane, UnavailableLane
+from cancerjev.domain.scientific import (
+    CnvOccurrenceResult,
+    ExpressionSummaryResult,
+    Lane,
+    UnavailableLane,
+)
 from cancerjev.gdc.parsers import (
     CaseRecord,
     DiscoveryHit,
@@ -174,6 +181,18 @@ def minimal_evidence(state):
         provenance=EvidenceProvenance(state.entity.release, state.sources, state.methods,
                                       state.environment_hash, "2",
                                       state.tested_context.examined_genes_hash, ()))
+
+
+def test_retired_survivor_only_cnv_discovery_artifact_still_reads():
+    """The legacy producer is deleted; historical artifacts keep a strict typed reader."""
+    raw = (Path(__file__).parent / "fixtures" / "cnv_discovery_result.json").read_bytes()
+
+    result = read_cnv_discovery(raw)
+
+    assert result.project_id == "TCGA-LUAD"
+    assert tuple(entry.entity.gene_id for entry in result.entries) == result.survivor_ids
+    assert all(isinstance(entry.outcome, (CnvOccurrenceResult, UnavailableLane))
+               for entry in result.entries)
 
 
 # ------------------------------------------------------- schema-4 strictness

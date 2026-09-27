@@ -43,7 +43,7 @@ files = [
   "cancerjev/research/discovery.py", "cancerjev/research/expression_discovery.py",
   "cancerjev/research/cnv_discovery.py", "cancerjev/research/cutover.py",
   "cancerjev/research/shards.py", "cancerjev/research/capability.py",
-  "cancerjev/research/campaign.py", "cancerjev/research/file_admission.py",
+  "cancerjev/research/campaign.py",
   "cancerjev/research/live.py", "cancerjev/research/state_store.py",
   "cancerjev/research/systematic.py", "cancerjev/research/nextmove.py",
   "cancerjev/research/pathways.py", "cancerjev/research/program.py",

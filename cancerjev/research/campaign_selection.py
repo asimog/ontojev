@@ -70,24 +70,6 @@ def release_successor(previous: str | None, current: str | None) -> bool | None:
     return newer > older
 
 
-def eligible_campaigns(profiles: tuple[CampaignProfile, ...]) -> tuple[CampaignProfile, ...]:
-    """Profiles that may run now, in declared priority then campaign-id order."""
-    eligible = [profile for profile in profiles
-                if profile.readiness is ScientificReadiness.VALIDATED_FOR_AUTONOMOUS_USE
-                and profile.status is CampaignStatus.PENDING]
-    eligible.sort(key=lambda profile: (-profile.priority, profile.profile_id))
-    return tuple(eligible)
-
-
-def select_next_campaign(profiles: tuple[CampaignProfile, ...],
-                         ) -> tuple[CampaignProfile | None, str]:
-    """Return the next eligible campaign, or (None, PROGRAM_IDLE)."""
-    eligible = eligible_campaigns(profiles)
-    if not eligible:
-        return None, IDLE_REASON
-    return eligible[0], SELECTED_REASON
-
-
 def identity_change_reason(
         record: CampaignRecord,
         identity: tuple[str | None, str | None, str | None]) -> str | None:

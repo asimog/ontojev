@@ -18,10 +18,10 @@ from cancerjev.research.campaign import (
 )
 from cancerjev.research.campaign_selection import (
     IDLE_REASON,
+    NOT_VALIDATED_REASON,
     SELECTED_REASON,
-    eligible_campaigns,
     release_successor,
-    select_next_campaign,
+    select_next_campaign_with_state,
 )
 from cancerjev.research.program import run_program_once
 
@@ -31,8 +31,9 @@ VALIDATED = replace(LUAD_CAMPAIGN_V1, readiness=ScientificReadiness.VALIDATED_FO
 def test_experimental_campaigns_never_run_autonomously():
     assert LUAD_CAMPAIGN_V1.readiness is ScientificReadiness.EXPERIMENTAL
 
-    profile, reason = select_next_campaign((LUAD_CAMPAIGN_V1,))
+    profile, reason, reasons = select_next_campaign_with_state((LUAD_CAMPAIGN_V1,))
     assert profile is None and reason == IDLE_REASON
+    assert reasons[LUAD_CAMPAIGN_V1.profile_id] == NOT_VALIDATED_REASON
     with pytest.raises(CampaignActivationError):
         require_autonomous_activation(LUAD_CAMPAIGN_V1)
 
@@ -42,10 +43,10 @@ def test_selection_order_is_priority_then_campaign_id_never_registry_order():
     high_a = replace(VALIDATED, profile_id="CAMPAIGN_A", priority=5)
     high_b = replace(VALIDATED, profile_id="CAMPAIGN_B", priority=5)
 
-    assert [item.profile_id for item in eligible_campaigns((low, high_b, high_a))] == [
-        "CAMPAIGN_A", "CAMPAIGN_B", "CAMPAIGN_C"]
-    selected, reason = select_next_campaign((low, high_b, high_a))
+    selected, reason, reasons = select_next_campaign_with_state((low, high_b, high_a))
     assert selected is high_a and reason == SELECTED_REASON
+    assert list(reasons) == ["CAMPAIGN_A", "CAMPAIGN_B", "CAMPAIGN_C"], \
+        "the durable selector evaluates in declared priority then campaign-id order"
 
 
 def test_program_once_runs_one_campaign_then_idles_or_blocks():

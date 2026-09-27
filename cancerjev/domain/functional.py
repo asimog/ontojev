@@ -1,7 +1,9 @@
 """Typed functional/external-source posture, checked against its decision record.
 
-No functional source is adopted this cycle: the record and these constants must
-agree, and nothing here can manufacture functional evidence or promote a level.
+Not wired: this module is a decision record and its constants only; no runtime
+path consumes it, and no functional source is adopted this cycle. The record and
+these constants must agree, and nothing here can manufacture functional evidence
+or promote a level.
 """
 
 from __future__ import annotations

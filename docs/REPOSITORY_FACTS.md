@@ -61,7 +61,6 @@ that describes behavior (see the source-of-truth hierarchy in
   "mutation_inference_decision": "DEFER_WITH_JUSTIFICATION v1",
   "mutation_reduction_method": "MUTATION_AFFECTED_CASE_COUNT_DESC_V1 v3",
   "no_jev_baseline_version": "no-jev-baseline-v1",
-  "open_file_admission_version": "1",
   "package_version": "0.2.0",
   "pathway_membership_method": "REACTOME_TOP_LEVEL_ENSEMBL_V1 v1",
   "pre_wide_selection_policy": "pre-wide-policy-v2",

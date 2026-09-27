@@ -965,14 +965,6 @@ def cnv_discovery_identity(result: CnvDiscoveryResult) -> str:
                    "kind": "CNV_DISCOVERY_RESULT", **payload})
 
 
-def write_cnv_discovery(result: CnvDiscoveryResult) -> bytes:
-    payload = _jsonable(asdict(result))
-    assert isinstance(payload, dict)
-    return canonical_bytes({"schema_version": CNV_DISCOVERY_SCHEMA_VERSION,
-                            "kind": "CNV_DISCOVERY_RESULT", **payload,
-                            "cnv_discovery_hash": cnv_discovery_identity(result)})
-
-
 def read_cnv_discovery(data: bytes, *, expected_hash: str | None = None) -> CnvDiscoveryResult:
     try:
         d = decode(data)

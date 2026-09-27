@@ -1,14 +1,14 @@
 """Strict reader and evidence builder for the adopted Reactome membership snapshot.
 
-The snapshot is external deterministic data read from disk; this module never
-performs network access, never mutates membership and never computes enrichment.
+Declared reader, no production caller: the snapshot is external deterministic data
+read from disk, and nothing in the runtime attaches pathway evidence until a named
+scientific consumer exists (audit section 34). This module never performs network
+access, never mutates membership and never computes enrichment.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
-from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from cancerjev.domain.measurements import ContractError, require
@@ -20,15 +20,11 @@ from cancerjev.domain.pathway import (
 )
 
 if TYPE_CHECKING:
-    from cancerjev.domain.scientific import StatisticalState
+    pass
 
 REACTOME_SOURCE = "Reactome"
 REACTOME_LICENSE_REF = "CC-BY-4.0"
 REACTOME_MAPPING_METHOD = "Ensembl gene id to Reactome stable id (top-level pathways)"
-PATHWAY_EVIDENCE_PRODUCT = "STATISTICAL_STATE_PATHWAY_EVIDENCE"
-PATHWAY_EVIDENCE_CONSUMERS: Mapping[str, str] = {
-    "DOSSIER_DESCRIPTIVE_MEMBERSHIP_V1": PATHWAY_EVIDENCE_PRODUCT,
-}
 
 _GENE_ID = re.compile(r"^ENSG\d{11}$")
 _PATHWAY_ID = re.compile(r"^R-HSA-\d+$")
@@ -105,39 +101,3 @@ def pathway_evidence(membership: PathwayMembership, gene_id: str, *,
         method=pathway_membership_method(membership.snapshot_sha256),
         limitations=PATHWAY_MEMBERSHIP_LIMITATIONS,
     )
-
-
-def attach_pathway_evidence(states: tuple[StatisticalState, ...],
-                            membership: PathwayMembership, *,
-                            consumer_method: str,
-                            consumers: Mapping[str, str] | None = None,
-                            ) -> tuple[StatisticalState, ...]:
-    """Attach descriptive membership to states for a declared consumer method.
-
-    A missing or undeclared consumer is refused loudly, so a state never carries
-    pathway evidence that no declared semantic consumer asked for. Attached evidence
-    stays descriptive: an unmapped gene records empty membership plus the declared
-    NO_PATHWAY_MEMBERSHIP_OBSERVED limitation, never a negative result.
-    """
-    from cancerjev.domain.scientific import StatisticalState
-
-    if type(states) is not tuple or not all(isinstance(state, StatisticalState) for state in states):
-        raise ContractError("pathway attachment requires immutable statistical states",
-                            "INVALID_STATE_SET")
-    declared = PATHWAY_EVIDENCE_CONSUMERS if consumers is None else consumers
-    if consumer_method not in declared or declared[consumer_method] != PATHWAY_EVIDENCE_PRODUCT:
-        raise ContractError(
-            f"pathway evidence consumer {consumer_method!r} is not declared for "
-            f"{PATHWAY_EVIDENCE_PRODUCT}",
-            "PATHWAY_CONSUMER_NOT_DECLARED",
-        )
-    mapped_by_universe: dict[tuple[str, ...], int] = {}
-    attached: list[StatisticalState] = []
-    for state in states:
-        universe_ids = state.universe.ordered_ids
-        if universe_ids not in mapped_by_universe:
-            mapped_by_universe[universe_ids] = membership.coverage(universe_ids)[0]
-        attached.append(replace(state, pathway_evidence=pathway_evidence(
-            membership, state.entity.gene_id, universe_ids=universe_ids,
-            universe_mapped_genes=mapped_by_universe[universe_ids])))
-    return tuple(attached)

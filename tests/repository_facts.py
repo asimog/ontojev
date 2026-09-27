@@ -84,7 +84,6 @@ from cancerjev.jev.questions import (
 from cancerjev.research.campaign import LUAD_CAMPAIGN_V1
 from cancerjev.research.campaign_selection import CAMPAIGN_SELECTION_POLICY_VERSION
 from cancerjev.research.deep import DEEP_ACTION_POLICY_VERSION
-from cancerjev.research.file_admission import FILE_ADMISSION_VERSION
 from cancerjev.research.finalize import FINAL_RESULT_SCHEMA_VERSION, NO_JEV_BASELINE_VERSION
 from cancerjev.research.hypothesis_policy import HYPOTHESIS_POLICY_VERSION
 from cancerjev.research.nextmove import DEEP_POLICY_VERSION
@@ -180,7 +179,6 @@ def collect_facts() -> dict[str, object]:
         "final_candidate_result_schema_version": FINAL_RESULT_SCHEMA_VERSION,
         "gdc_data_model_reference": GDC_DATA_MODEL_REFERENCE,
         "systematic_universe_method": LUAD_DISCOVERY_V1.universe_method,
-        "open_file_admission_version": FILE_ADMISSION_VERSION,
         "mutation_composition_method": (
             f"{MUTATION_CANONICAL_COMPOSITION_METHOD_ID} v{MUTATION_CANONICAL_COMPOSITION_VERSION}"),
         "mutation_inference_decision": (

@@ -13,7 +13,6 @@ from cancerjev.gdc.parsers import (
     parse_cnv_occurrences_page,
     parse_expression_availability,
     parse_expression_values,
-    parse_files_provenance,
     parse_gene_case_counts,
     parse_gene_selection,
     parse_genes,
@@ -249,13 +248,6 @@ def test_real_expression_values_capture_uses_labels_not_order(fixture, expected)
     assert values.nonfinite_values == 0
 
 
-def test_real_files_provenance_capture():
-    provenance = parse_files_provenance(*load("files_expression_workflows"))
-    assert provenance.workflows == ["STAR - Counts"]
-    assert provenance.strategies == ["RNA-Seq"]
-    assert provenance.non_open_records == 0
-
-
 @pytest.mark.parametrize(("body", "completeness", "code"), [
     (load("status")[0], "TRUNCATED", "INCOMPLETE_RESPONSE"),
     (b"{not json", "COMPLETE", "MALFORMED_JSON"),
@@ -362,20 +354,6 @@ def test_aggregation_truncation_flags_make_results_partial():
     assert any("case_with_ssm:doc_count_error_upper_bound" in reason
                for reason in coverage.partial_reasons)
     assert coverage.case_with_ssm["P1"] == 7
-
-
-@pytest.mark.parametrize("hits", [
-    [{"file_id": "f1", "analysis": {"workflow_type": "STAR - Counts"}},
-     {"file_id": "f2", "access": "open", "analysis": {"workflow_type": "STAR - Counts"}}],
-    [{"file_id": "f1", "access": "open", "analysis": {"workflow_type": "STAR - Counts"}},
-     {"file_id": "f2", "access": "controlled", "analysis": {"workflow_type": "STAR - Counts"}}],
-])
-def test_files_record_without_explicit_open_access_is_not_open(hits):
-    body = json.dumps({"data": {"hits": hits}, "warnings": {}}).encode()
-    provenance = parse_files_provenance(body, meta_for("/files"))
-    assert provenance.files_seen == 2
-    assert provenance.non_open_records == 1
-    assert provenance.workflows == ["STAR - Counts"]
 
 
 @pytest.mark.parametrize(

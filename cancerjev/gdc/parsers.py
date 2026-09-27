@@ -189,15 +189,6 @@ class ExpressionValues:
 
 
 @dataclass(frozen=True)
-class FilesProvenance:
-    workflows: list[str]
-    strategies: list[str]
-    files_seen: int
-    non_open_records: int
-    warnings: list[str]
-
-
-@dataclass(frozen=True)
 class CnvOccurrenceRecord:
     occurrence_id: str
     cnv_id: str
@@ -1085,26 +1076,6 @@ def parse_expression_values(body: bytes, meta: ResponseMeta, *, expected_cases: 
         nonfinite_values=nonfinite,
         warnings=[],
     )
-
-
-def parse_files_provenance(body: bytes, meta: ResponseMeta) -> FilesProvenance:
-    document = _load_json(body, meta)
-    workflows: list[str] = []
-    strategies: list[str] = []
-    non_open = 0
-    hits = _hits(document, "files")
-    for hit in hits:
-        access = _optional(hit, "access", (str,), "files")
-        if access != "open":
-            non_open += 1
-        workflow = _optional(hit, "analysis.workflow_type", (str,), "files")
-        if workflow and workflow not in workflows:
-            workflows.append(workflow)
-        strategy = _optional(hit, "experimental_strategy", (str,), "files")
-        if strategy and strategy not in strategies:
-            strategies.append(strategy)
-    return FilesProvenance(workflows=sorted(workflows), strategies=sorted(strategies),
-                           files_seen=len(hits), non_open_records=non_open, warnings=_warnings(document))
 
 
 FACET_NAMES = ("access", "experimental_strategy", "analysis.workflow_type", "data_type")

@@ -164,7 +164,7 @@ GDC metadata query
 
 The system should prefer high-level harmonized products over rebuilding GDC production workflows.
 
-Implemented now: a typed admission gate (`research/file_admission.py`) decides every candidate open-file product as ADMITTED / DEFERRED / REJECTED before any downloader could exist. No consumer method is declared today (`NAMED_FILE_CONSUMERS` is empty), so every candidate defers with `NO_NAMED_CONSUMER`; activation requires a named method consumer, the exact declared product, a complete open-access preflight manifest and a total below the 2 GiB multi-GB prohibition. No `gdc-client` integration, no token and no file format are implemented.
+No file-download path exists today: no downloader, no `gdc-client` integration, no token and no file format. A future open-file product must first add a typed admission gate (ADMITTED / DEFERRED / REJECTED) requiring a named method consumer, the exact declared product, a complete open-access preflight manifest and a total below the 2 GiB multi-GB prohibition; no file is acquired before that gate exists in production.
 
 ## 8. Data-volume planning
 

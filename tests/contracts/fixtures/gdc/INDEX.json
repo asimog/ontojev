@@ -82,19 +82,6 @@
       "url": "https://api.gdc.cancer.gov/gene_expression/values"
     },
     {
-      "body_bytes_read": 741,
-      "body_sha256": "92ab935f92ce704798904d504793a515e380b272ced3f6d88f27fb81789127f9",
-      "completeness": "COMPLETE",
-      "endpoint": "/files",
-      "error": null,
-      "http_status": 200,
-      "method": "GET",
-      "probe_name": "files_expression_workflows",
-      "response_truncated_by_probe_cap": false,
-      "retrieved_at": "2026-09-22T08:29:13.464930Z",
-      "url": "https://api.gdc.cancer.gov/files?size=3&filters=%7B%22op%22%3A+%22and%22%2C+%22content%22%3A+%5B%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22access%22%2C+%22value%22%3A+%5B%22open%22%5D%7D%7D%2C+%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22data_type%22%2C+%22value%22%3A+%5B%22Gene+Expression+Quantification%22%5D%7D%7D%2C+%7B%22op%22%3A+%22in%22%2C+%22content%22%3A+%7B%22field%22%3A+%22cases.project.project_id%22%2C+%22value%22%3A+%5B%22TCGA-BRCA%22%5D%7D%7D%5D%7D&fields=file_id%2Caccess%2Canalysis.workflow_type%2Cexperimental_strategy"
-    },
-    {
       "body_bytes_read": 355,
       "body_sha256": "9785419666e5e20c78a781c6dcab0fd18fcfebf101148df2452501509e1aac1d",
       "completeness": "COMPLETE",
