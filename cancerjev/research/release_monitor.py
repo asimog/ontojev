@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from cancerjev.domain.measurements import ScientificSource, sha256, text
+from cancerjev.domain.measurements import ScientificSource, digest, sha256, text
 from cancerjev.gdc.endpoints import status_request
 from cancerjev.gdc.parsers import parse_status
 from cancerjev.research.acquisition import (
@@ -19,6 +19,7 @@ from cancerjev.research.acquisition import (
 )
 
 RELEASE_MONITOR_VERSION = "release-monitor-v1"
+UNVERIFIED_RELEASE = "UNVERIFIED_RELEASE"
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,7 @@ def observe_release(transport: AcquisitionTransport) -> ReleaseObservation:
     """Exactly one bounded status request; provenance is recorded with the release."""
     response = transport.request(status_request())
     status = parse_status(response.body, response_meta(response, None))
-    release = status.data_release or "UNVERIFIED_RELEASE"
+    release = status.data_release or UNVERIFIED_RELEASE
     source = response_operational_source(response, release=release).source
     return ReleaseObservation(release=release, release_commit=status.commit, source=source)
 
@@ -52,9 +53,18 @@ def release_changed(previous: ReleaseObservation, current: ReleaseObservation) -
             or previous.release_commit != current.release_commit)
 
 
-def observation_hash(observation: ReleaseObservation) -> str:
-    from cancerjev.domain.measurements import digest
+def release_identity(observation: ReleaseObservation) -> str:
+    """Declared release identity: exactly the release label and its pinned commit.
 
+    The observation's response body hash is provenance, not identity: a status
+    payload that differs only in incidental fields must never invalidate a
+    completed campaign or gate a redispatch.
+    """
+    return digest({"version": RELEASE_MONITOR_VERSION, "release": observation.release,
+                   "release_commit": observation.release_commit})
+
+
+def observation_hash(observation: ReleaseObservation) -> str:
     sha256(observation.source.response_hash, "release observation response hash")
     return digest({"version": RELEASE_MONITOR_VERSION, "release": observation.release,
                    "release_commit": observation.release_commit,

@@ -72,12 +72,13 @@ def canned_capability(*, complete: bool = True) -> CohortCapability:
 
 
 def fake_release_observation(*, release: str = "Data Release TEST",
-                             commit: str | None = "0" * 40):
+                             commit: str | None = "0" * 40,
+                             response_hash: str = "b" * 64):
     """A typed release observation that never touches a provider."""
     from cancerjev.domain.measurements import Acquisition, ScientificSource
     from cancerjev.research.release_monitor import ReleaseObservation
 
     source = ScientificSource(
-        endpoint="/status", request_hash="a" * 64, response_hash="b" * 64,
+        endpoint="/status", request_hash="a" * 64, response_hash=response_hash,
         parser_version="gdc-parser-v1", release=release, acquisition=Acquisition.COMPLETE)
     return ReleaseObservation(release=release, release_commit=commit, source=source)

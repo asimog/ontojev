@@ -127,7 +127,7 @@ def test_completed_campaign_is_recovered_when_the_state_publish_was_interrupted(
 def test_declared_identity_changes_make_a_completed_campaign_eligible(runtime):
     succeed = lambda profile: True  # noqa: E731 - tiny deterministic callback
     _cycle(runtime, profiles=(VALIDATED,), run_campaign=succeed,
-           observation=fake_release_observation(release="Data Release TEST"))
+           observation=fake_release_observation(release="Data Release 38.0"))
 
     changed_release = _cycle(
         runtime, profiles=(VALIDATED,), run_campaign=succeed,
@@ -147,6 +147,55 @@ def test_declared_identity_changes_make_a_completed_campaign_eligible(runtime):
         observation=fake_release_observation(release="Data Release 47.0"),
         method_identity="test-method-v2")
     assert profile_change[2].reasons_by_profile[VALIDATED.profile_id] == "PROFILE_CHANGED"
+
+
+def test_release_downgrade_does_not_redispatch_a_completed_campaign(runtime):
+    _cycle(runtime, profiles=(VALIDATED,), run_campaign=lambda profile: True,
+           observation=fake_release_observation(release="Data Release 47.0"))
+    calls: list[str] = []
+
+    downgrade = _cycle(
+        runtime, profiles=(VALIDATED,),
+        run_campaign=lambda profile: calls.append(profile.profile_id) or True,
+        observation=fake_release_observation(release="Data Release 39.0"))
+
+    assert calls == [], "a downgrade never redispatches a completed campaign"
+    assert downgrade[2].reasons_by_profile[VALIDATED.profile_id] == "RELEASE_NOT_ORDERABLE"
+    assert downgrade[2].state is ProgramState.PROGRAM_IDLE
+
+
+def test_status_body_change_does_not_redispatch_a_completed_campaign(runtime):
+    _cycle(runtime, profiles=(VALIDATED,), run_campaign=lambda profile: True,
+           observation=fake_release_observation(release="Data Release 47.0"))
+    calls: list[str] = []
+
+    same_release_new_body = _cycle(
+        runtime, profiles=(VALIDATED,),
+        run_campaign=lambda profile: calls.append(profile.profile_id) or True,
+        observation=fake_release_observation(release="Data Release 47.0",
+                                             response_hash="c" * 64))
+
+    assert calls == [], "the response body hash is provenance, never identity"
+    assert same_release_new_body[2].reasons_by_profile[VALIDATED.profile_id] == \
+        "CAMPAIGN_ALREADY_COMPLETE_FOR_IDENTITY"
+
+
+def test_unverified_release_fails_closed_instead_of_dispatching(runtime):
+    calls: list[str] = []
+
+    outcome = _cycle(
+        runtime, profiles=(VALIDATED,),
+        run_campaign=lambda profile: calls.append(profile.profile_id) or True,
+        observation=fake_release_observation(release="UNVERIFIED_RELEASE"))
+
+    assert calls == [], "a campaign is never dispatched without a verified release"
+    assert outcome[2].state is ProgramState.PROGRAM_IDLE
+    assert outcome[2].reasons_by_profile[VALIDATED.profile_id] == "RELEASE_UNVERIFIED"
+    state = load_program_state(repository=outcome[4], artifacts=outcome[5])
+    assert state is not None
+    campaign = next(item for item in state["campaigns"]
+                    if item["profile_id"] == VALIDATED.profile_id)
+    assert campaign["status"] == "PENDING" and campaign["attempts"] == 0
 
 
 def test_failed_campaign_receives_bounded_backoff_and_then_stops(runtime):

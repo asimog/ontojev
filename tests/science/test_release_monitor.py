@@ -11,6 +11,7 @@ from cancerjev.research.release_monitor import (
     observation_hash,
     observe_release,
     release_changed,
+    release_identity,
 )
 from tests.integration.replay import ReplayTransport
 
@@ -50,3 +51,14 @@ def test_release_change_detection_is_structural_only():
     assert observation_hash(base) == observation_hash(_observation())
     assert observation_hash(base) != observation_hash(
         replace(base, release="Data Release 47.0"))
+
+
+def test_release_identity_is_the_label_and_commit_never_the_response_body():
+    base = _observation()
+
+    assert release_identity(base) == release_identity(_observation())
+    body_changed = replace(base, source=replace(base.source, response_hash="c" * 64))
+    assert release_identity(body_changed) == release_identity(base), \
+        "a status body hash is provenance, not release identity"
+    assert observation_hash(body_changed) != observation_hash(base)
+    assert release_identity(replace(base, release="Data Release 47.0")) != release_identity(base)

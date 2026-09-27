@@ -46,6 +46,8 @@ class CampaignRecord:
     next_attempt_at: str | None
     reason_code: str | None
     last_cycle_run_id: str | None
+    release: str | None = None
+    release_commit: str | None = None
 
     def __post_init__(self) -> None:
         text(self.profile_id, "campaign record profile id")
@@ -55,7 +57,9 @@ class CampaignRecord:
                              ("method identity", self.method_identity),
                              ("next attempt", self.next_attempt_at),
                              ("reason code", self.reason_code),
-                             ("last cycle run id", self.last_cycle_run_id)):
+                             ("last cycle run id", self.last_cycle_run_id),
+                             ("release", self.release),
+                             ("release commit", self.release_commit)):
             if value is not None:
                 text(value, f"campaign record {label}")
         count(self.attempts, "campaign record attempts")
@@ -75,6 +79,8 @@ class CampaignRecord:
             "next_attempt_at": self.next_attempt_at,
             "reason_code": self.reason_code,
             "last_cycle_run_id": self.last_cycle_run_id,
+            "release": self.release,
+            "release_commit": self.release_commit,
         }
 
     @classmethod
@@ -90,6 +96,8 @@ class CampaignRecord:
             next_attempt_at=payload.get("next_attempt_at"),
             reason_code=payload.get("reason_code"),
             last_cycle_run_id=payload.get("last_cycle_run_id"),
+            release=payload.get("release"),
+            release_commit=payload.get("release_commit"),
         )
 
 

@@ -40,7 +40,11 @@ from cancerjev.research.campaign_selection import (
     SELECTED_REASON,
     select_next_campaign_with_state,
 )
-from cancerjev.research.release_monitor import ReleaseObservation, observation_hash
+from cancerjev.research.release_monitor import (
+    ReleaseObservation,
+    observation_hash,
+    release_identity,
+)
 from cancerjev.research.seams import PublishJson
 from cancerjev.science.methods import method_environment_hash
 from cancerjev.storage.artifacts import ArtifactStore
@@ -118,10 +122,14 @@ def dispatch_validated_campaign(*, profile: CampaignProfile,
 def campaign_identity_components(
         profile: CampaignProfile, *, observation: ReleaseObservation | None,
         method_identity: str | None) -> tuple[str | None, str | None, str | None]:
-    """Declared identity of one campaign dispatch: profile, release, method."""
+    """Declared identity of one campaign dispatch: profile, release, method.
+
+    The release component is the declared release identity (label plus pinned
+    commit); the status response hash is provenance and never part of identity.
+    """
     profile_identity = str(digest(profile.payload()))
-    release_identity = observation_hash(observation) if observation is not None else None
-    return profile_identity, release_identity, method_identity
+    release = release_identity(observation) if observation is not None else None
+    return profile_identity, release, method_identity
 
 
 def initial_record(profile: CampaignProfile) -> CampaignRecord:
@@ -135,16 +143,30 @@ def initial_record(profile: CampaignProfile) -> CampaignRecord:
 def durable_records(state: dict[str, Any] | None,
                     profiles: tuple[CampaignProfile, ...],
                     ) -> dict[str, CampaignRecord]:
-    """Decode the persisted campaign records; unknown profiles get an initial record."""
+    """Decode the persisted campaign records; unknown profiles get an initial record.
+
+    A record written before release labels were persisted is upgraded from the
+    state's own top-level release exactly when its identity matches that release;
+    otherwise its labels stay absent and release ordering fails closed.
+    """
     records = {profile.profile_id: initial_record(profile) for profile in profiles}
     payload = state or {}
     campaigns = payload.get("campaigns")
     if campaigns is None:
         return records
     require(isinstance(campaigns, list), "program state campaigns must be a list")
+    baseline_identity = payload.get("release_identity")
+    baseline_release = payload.get("release")
+    baseline_commit = payload.get("release_commit")
     for entry in campaigns:
         if isinstance(entry, dict) and entry.get("profile_id") in records:
-            records[str(entry["profile_id"])] = CampaignRecord.from_payload(entry)
+            record = CampaignRecord.from_payload(entry)
+            if (record.release is None and record.release_identity is not None
+                    and record.release_identity == baseline_identity
+                    and baseline_release is not None):
+                record = replace(record, release=baseline_release,
+                                 release_commit=baseline_commit)
+            records[str(entry["profile_id"])] = record
     return records
 
 
@@ -264,8 +286,11 @@ def run_program_once(*, profiles: tuple[CampaignProfile, ...],
             profile, observation=observation, method_identity=method_identity)
         for profile in profiles
     }
+    release = observation.release if observation is not None else None
+    release_commit = observation.release_commit if observation is not None else None
+    releases = {profile.profile_id: release for profile in profiles}
     profile, reason, reasons_by_profile = select_next_campaign_with_state(
-        profiles, records=records, identities=identities, now=moment)
+        profiles, records=records, identities=identities, releases=releases, now=moment)
     if profile is None:
         return ProgramRunOutcome(
             state=ProgramState.PROGRAM_IDLE, selected_profile_id=None, reason_code=reason,
@@ -283,7 +308,7 @@ def run_program_once(*, profiles: tuple[CampaignProfile, ...],
             base, status=CampaignStatus.CAMPAIGN_COMPLETE,
             profile_identity=identity[0], release_identity=identity[1], method_identity=identity[2],
             attempts=0, next_attempt_at=None, reason_code=COMPLETED_REASON,
-            last_cycle_run_id=cycle_run_id,
+            last_cycle_run_id=cycle_run_id, release=release, release_commit=release_commit,
         )
         state = ProgramState.CAMPAIGN_COMPLETE
         reason_code = COMPLETED_REASON
@@ -296,7 +321,7 @@ def run_program_once(*, profiles: tuple[CampaignProfile, ...],
             attempts=attempts,
             next_attempt_at=None if exhausted else retry_after(moment, attempts),
             reason_code=RETRY_EXHAUSTED_REASON if exhausted else RETRY_REASON,
-            last_cycle_run_id=cycle_run_id,
+            last_cycle_run_id=cycle_run_id, release=release, release_commit=release_commit,
         )
         state = ProgramState.BLOCKED_NOT_READY
         reason_code = BLOCKED_REASON if exhausted else RETRY_REASON
@@ -324,7 +349,7 @@ def program_state_payload(outcome: ProgramRunOutcome, profiles: tuple[CampaignPr
         "policy_version": CAMPAIGN_SELECTION_POLICY_VERSION,
         "release": observation.release if observation is not None else None,
         "release_commit": observation.release_commit if observation is not None else None,
-        "release_identity": (observation_hash(observation)
+        "release_identity": (release_identity(observation)
                              if observation is not None else None),
         "method_identity": method_identity,
         "campaign_decisions": dict(outcome.reasons_by_profile),
@@ -382,6 +407,7 @@ def run_program_worker(*, run_id: str, repository: Repository, artifacts: Artifa
         emit(run_id, "RELEASE_OBSERVED", f"program:{run_id}:release-observed",
              f"Observed GDC release {observation.release}.", stage="PROGRAM",
              data={"release": observation.release, "release_commit": observation.release_commit,
+                   "release_identity": release_identity(observation),
                    "observation_hash": observation_hash(observation),
                    "response_hash": observation.source.response_hash})
     method = method_identity if method_identity is not None else method_environment_hash()
