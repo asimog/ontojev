@@ -67,9 +67,10 @@ def validate_candidate_transition(current: str, target: str) -> None:
             f"illegal candidate transition: {current_status} -> {target_status}")
 
 
-# Crash recovery never rewrites a candidate that already owns its dossier or reached
-# a terminal state; only in-flight candidates are deferred. DOSSIER_READY is stable
-# for recovery even though its lifecycle edge to CANDIDATE_COMPLETE still exists.
+# Crash recovery never rewrites a candidate that already reached a terminal state;
+# in-flight candidates are deferred. A DOSSIER_READY candidate that owns its
+# registered dossier is the one declared repair: recovery re-asserts the
+# DOSSIER_READY -> CANDIDATE_COMPLETE edge instead of leaving the orphan stranded.
 RECOVERY_PRESERVED_CANDIDATE_STATUSES = (
     TERMINAL_CANDIDATE_STATUSES | {CandidateStatus.DOSSIER_READY})
 RECOVERY_DEFERRABLE_CANDIDATE_STATUSES = (

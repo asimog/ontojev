@@ -589,6 +589,46 @@ def test_multiple_selections_get_independent_arcs(runtime, monkeypatch):
 # ------------------------------------------------------------- failure containment
 
 
+def test_operator_selection_alias_is_investigated_once(runtime, monkeypatch):
+    orchestrator, _, repository = _orchestrator(
+        runtime, monkeypatch, jev_adapter=StubAdapter(),
+        deep_selections=("GENEONE", "gene:GENEONE"),
+        deep_action_id="CHECK_EVIDENCE_INTEGRITY_V1")
+    run_id = orchestrator.run()
+    assert repository.get_run(run_id)["status"] == "COMPLETED"
+    assert len(repository.list_table("candidates", run_id)) == 2, \
+        "the second alias never creates a duplicate operator candidate"
+    assert len(repository.list_table("dossiers", run_id)) == 1, \
+        "two aliases of one candidate run the arc exactly once"
+    duplicate = [event for event in _events(repository, run_id)
+                 if event["type"] == "DEEP_SELECTION_UNAVAILABLE"
+                 and event["data"].get("reason_code") == "DUPLICATE_SELECTION"]
+    assert duplicate, "the alias duplicate is recorded, never silently investigated twice"
+    deep = next(event for event in _events(repository, run_id)
+                if event["type"] == "RUN_COMPLETED")["data"]["deep"]
+    assert deep["selections"] == ["GENEONE", "gene:GENEONE"]
+    assert deep["completed_count"] == 1
+
+
+def test_operator_dispatch_failure_records_a_terminal_candidate(runtime, monkeypatch):
+    def failing_execute(action_id, state, *, read_artifact, observations=()):
+        raise ActionError("ACTION_EXECUTION_FAILED", "synthetic dispatched-action failure")
+
+    monkeypatch.setattr(deep, "execute", failing_execute)
+    monkeypatch.setattr(deep, "FOLLOWUP_LIMIT", 2)
+    run_id, summary, repository = _completed_slice(
+        runtime, monkeypatch, jev_adapter=_followup_adapter(), deep_followup_authorized=True)
+
+    assert summary["candidate_status"] == "FAILED"
+    assert summary["stop_reason"] == "DISPATCH_ACTION_FAILED"
+    candidate = repository.get_candidate(summary["candidate_id"])
+    assert candidate["status"] == "FAILED", \
+        "a selected candidate whose dispatch fails is terminal, never left in WIDE_EVALUATED"
+    terminal = [event for event in _events(repository, run_id)
+                if event["type"] == "CANDIDATE_NOT_COMPLETED"]
+    assert terminal and terminal[-1]["data"]["reason_code"] == "ACTION_EXECUTION_FAILED"
+
+
 def test_deep_judgment_failure_is_contained_and_typed(runtime, monkeypatch):
     adapter = _FailsOnEvidenceJudgment()
     run_id, summary, repository = _completed_slice(runtime, monkeypatch, jev_adapter=adapter)

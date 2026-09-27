@@ -66,6 +66,91 @@ def test_recovery_preserves_interrupted_run_and_new_id(runtime):
     assert new_id != old_id
 
 
+def test_recovery_completes_a_dossier_ready_candidate_owning_its_dossier(runtime):
+    _, repository, _ = runtime
+    run_id = repository.create_run("old")
+    repository.append_event(run_id, event_type="RUN_CREATED", idempotency_key="created",
+                            message="created")
+    repository.append_event(run_id, event_type="RUN_STARTED", idempotency_key="started",
+                            message="started")
+    state_id = str(uuid4())
+    state_artifact = PublishedArtifact(
+        artifact_id=str(uuid4()), relative_path="statistical_states/recovery-dossier.json",
+        sha256="a" * 64, size_bytes=2, media_type="application/json", purpose="statistical-state",
+    )
+    repository.register_artifact(state_artifact, run_id)
+    repository.append_event(
+        run_id, event_type="STATISTICAL_STATE_CREATED", idempotency_key="state", message="state",
+        stage="STATE_GENERATION",
+        registrations=[repository.state_registration(
+            state_id=state_id, run_id=run_id, state_hash="a" * 64,
+            artifact_id=state_artifact.artifact_id, disposition="PROMOTED", summary_json="{}",
+            created_at="2026-01-01T00:00:00Z",
+        )],
+    )
+    candidate_id = str(uuid4())
+    repository.append_event(
+        run_id, event_type="CANDIDATE_PROMOTED", idempotency_key="promoted", message="promoted",
+        stage="JEV_WIDE", candidate_id=candidate_id,
+        data={"candidate_id": candidate_id, "source_state_id": state_id,
+              "evaluation_id": str(uuid4()), "promotion_slot": 1, "policy_version": "fixture-v1",
+              "reason": "fixture"},
+        registrations=[repository.candidate_registration(
+            candidate_id=candidate_id, run_id=run_id, promotion_slot=1, status="WIDE_EVALUATED",
+            current_stage="JEV_WIDE", source_state_id=state_id, entity_json="{}", summary_json="{}",
+            created_at="2026-01-01T00:00:00Z", updated_at="2026-01-01T00:00:00Z",
+        )],
+    )
+    repository.append_event(
+        run_id, event_type="EVIDENCE_BUILD_COMPLETED", idempotency_key="deep", message="deep",
+        stage="DEEP_ANALYSIS", candidate_id=candidate_id,
+        registrations=[repository.candidate_status_registration(
+            candidate_id=candidate_id, status="DEEP_ANALYZED", current_stage="DEEP_ANALYSIS",
+            updated_at="2026-01-01T00:00:01Z",
+        )],
+    )
+    dossier_id = str(uuid4())
+    dossier_artifact = PublishedArtifact(
+        artifact_id=str(uuid4()), relative_path="dossiers/recovery-dossier.json",
+        sha256="b" * 64, size_bytes=2, media_type="application/json",
+        purpose="authoritative-dossier",
+    )
+    markdown_artifact = PublishedArtifact(
+        artifact_id=str(uuid4()), relative_path="dossiers/recovery-dossier.md",
+        sha256="c" * 64, size_bytes=2, media_type="text/markdown; charset=utf-8",
+        purpose="derived-dossier-markdown",
+    )
+    repository.register_artifact(dossier_artifact, run_id)
+    repository.register_artifact(markdown_artifact, run_id)
+    repository.append_event(
+        run_id, event_type="DOSSIER_CREATED", idempotency_key="dossier", message="dossier",
+        stage="DOSSIER", candidate_id=candidate_id,
+        registrations=[
+            repository.dossier_registration(
+                dossier_id=dossier_id, run_id=run_id, candidate_id=candidate_id,
+                json_artifact_id=dossier_artifact.artifact_id,
+                markdown_artifact_id=markdown_artifact.artifact_id, summary_json="{}",
+                created_at="2026-01-01T00:00:02Z",
+            ),
+            repository.candidate_status_registration(
+                candidate_id=candidate_id, status="DOSSIER_READY", current_stage=None,
+                updated_at="2026-01-01T00:00:02Z", dossier_id=dossier_id,
+            ),
+        ],
+    )
+
+    assert repository.recover_interrupted() == [run_id]
+
+    candidate = repository.list_table("candidates", run_id)[0]
+    assert candidate["status"] == "CANDIDATE_COMPLETE", \
+        "a dossier-owning orphan is re-driven to completion, never stranded"
+    assert candidate["dossier_id"] == dossier_id
+    events = repository.events(run_id, 0, 50)["items"]
+    assert [event["type"] for event in events[-2:]] == ["CANDIDATE_COMPLETED", "RUN_STOPPED"]
+    assert events[-2]["data"]["reason_code"] == "INTERRUPTED_FINALIZATION_COMPLETED"
+    assert events[-2]["data"]["dossier_id"] == dossier_id
+
+
 def test_recovery_defers_in_flight_candidates_without_replay(runtime):
     _, repository, _ = runtime
     run_id = repository.create_run("old")

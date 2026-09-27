@@ -129,5 +129,6 @@ def test_recovery_preserves_dossier_ready_and_completed_candidates(runtime):
     statuses = {row["candidate_id"]: row["status"]
                 for row in repository.list_table("candidates", run_id)}
     assert statuses[completed] == "CANDIDATE_COMPLETE", "completion is never undone by recovery"
-    assert statuses[dossier_ready] == "DOSSIER_READY", "a dossier-owning candidate is preserved"
+    assert statuses[dossier_ready] == "DOSSIER_READY", \
+        "a DOSSIER_READY candidate without a registered dossier is preserved, never guessed complete"
     assert statuses[in_flight] == "DEFERRED"

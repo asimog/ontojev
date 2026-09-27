@@ -11,6 +11,7 @@ computed here and no model is called.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import Any
 
@@ -379,6 +380,29 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: StoredS
     }
 
 
+def _adopt_recorded_dossier(*, artifacts: Any, path: str,
+                            expected: dict[str, Any]) -> dict[str, Any]:
+    """Adopt an on-disk dossier from an interrupted attempt without rewriting it.
+
+    Adoption is allowed only for a valid document whose declared identity (dossier
+    id, run, candidate, schema version and evidence chain) matches the retry;
+    anything else is a typed content collision, never a silent overwrite.
+    """
+    try:
+        payload = json.loads(artifacts.read(path))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ScientificReadError(
+            "DOSSIER_CONTENT_COLLISION", f"{path}: unreadable dossier on disk") from exc
+    if not isinstance(payload, dict) or any(
+            payload.get(key) != expected.get(key)
+            for key in ("dossier_id", "run_id", "candidate_id", "schema_version",
+                        "evidence_state_ids")):
+        raise ScientificReadError(
+            "DOSSIER_CONTENT_COLLISION",
+            f"{path}: the recorded dossier does not match this candidate's identity")
+    return payload
+
+
 def run_dossier_stage(*, run_id: str, candidate: dict[str, Any], repository: Any, artifacts: Any,
                       decisions: list[dict[str, Any]],
                       publish_json: Callable[[str, str, Any, str], Any],
@@ -450,11 +474,31 @@ def _publish_dossier_stage(*, run_id: str, candidate: dict[str, Any], repository
         final_result=final_result, comparison=comparison,
         mode=mode,
     )
-    json_artifact = publish_json(run_id, f"runs/{run_id}/dossier/{dossier['dossier_id']}.json",
-                                 dossier, "authoritative-dossier")
+    json_path = f"runs/{run_id}/dossier/{dossier['dossier_id']}.json"
+    md_path = f"runs/{run_id}/dossier/{dossier['dossier_id']}.md"
+    try:
+        json_artifact = publish_json(run_id, json_path, dossier, "authoritative-dossier")
+    except FileExistsError:
+        # A crash between the file write and DOSSIER_CREATED leaves the immutable
+        # dossier on disk without its record. The retry adopts those exact bytes
+        # when they belong to this candidate's identity; never overwrite.
+        dossier = _adopt_recorded_dossier(artifacts=artifacts, path=json_path, expected=dossier)
+        try:
+            json_artifact = publish_json(run_id, json_path, dossier, "authoritative-dossier")
+        except FileExistsError as collision:
+            raise ScientificReadError(
+                "DOSSIER_CONTENT_COLLISION",
+                f"{json_path}: an existing dossier cannot be reconciled with this candidate",
+            ) from collision
     markdown = render_markdown(dossier, warning=dossier["warning"]).encode()
-    md_artifact = artifacts.publish(f"runs/{run_id}/dossier/{dossier['dossier_id']}.md", markdown,
-                                    "text/markdown; charset=utf-8", "derived-dossier-markdown")
+    try:
+        md_artifact = artifacts.publish(md_path, markdown, "text/markdown; charset=utf-8",
+                                        "derived-dossier-markdown")
+    except FileExistsError as collision:
+        raise ScientificReadError(
+            "DOSSIER_CONTENT_COLLISION",
+            f"{md_path}: the recorded Markdown does not match the adopted dossier",
+        ) from collision
     summary = {
         "dossier_id": dossier["dossier_id"], "run_id": run_id,
         "candidate_id": candidate["candidate_id"], "mode": mode, "entity": dossier["entity"],

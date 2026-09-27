@@ -12,6 +12,7 @@ from cancerjev.domain.measurements import ContractError, require
 from cancerjev.domain.runs import ExecutionOwnership, validate_run_transition
 from cancerjev.domain.states import (
     RECOVERY_DEFERRABLE_CANDIDATE_STATUSES,
+    CandidateStatus,
     validate_candidate_transition,
 )
 from cancerjev.storage.artifacts import PublishedArtifact
@@ -514,8 +515,24 @@ class Repository:
         return self.page_child("jev_projections", run_id, limit, cursor, {})
 
     def recover_interrupted(self) -> list[str]:
+        """Repair crash windows from the recorded facts; nothing is ever replayed.
+
+        Unfinished runs are stopped and their in-flight candidates deferred. A
+        DOSSIER_READY candidate that owns its registered dossier is the one declared
+        repair: it is re-asserted to CANDIDATE_COMPLETE, whatever the run's status,
+        so an interrupted finalization can never strand a candidate forever.
+        """
         with self.database.read() as connection:
             ids = [row["run_id"] for row in connection.execute("SELECT run_id FROM research_runs WHERE status IN ('PENDING','RUNNING')")]
+            dossier_ready = connection.execute(
+                "SELECT candidates.run_id, candidates.candidate_id, dossiers.dossier_id "
+                "FROM candidates JOIN dossiers ON dossiers.candidate_id=candidates.candidate_id "
+                "WHERE candidates.status=?",
+                (CandidateStatus.DOSSIER_READY.value,),
+            ).fetchall()
+        for row in dossier_ready:
+            self._complete_recovered_candidate(row["run_id"], row["candidate_id"],
+                                               row["dossier_id"])
         for run_id in ids:
             with self.database.read() as connection:
                 placeholders = ",".join("?" for _ in RECOVERY_DEFERRABLE_CANDIDATE_STATUSES)
@@ -540,6 +557,35 @@ class Repository:
                 )
             self.append_event(run_id, event_type="RUN_STOPPED", idempotency_key="recovery:interrupted", message="Previous unfinished run preserved and stopped as interrupted.", data={"status": "STOPPED", "reason_code": "INTERRUPTED", "coverage": "PARTIAL"}, level="warning")
         return ids
+
+    def _complete_recovered_candidate(self, run_id: str, candidate_id: str,
+                                      dossier_id: str) -> None:
+        """Re-assert CANDIDATE_COMPLETE for a DOSSIER_READY candidate owning its dossier.
+
+        The dossier row was registered atomically with the DOSSIER_READY status, so
+        completing the declared edge is the only repair needed for a crash between
+        the dossier and the completion registration; the recorded dossier is never
+        rewritten.
+        """
+        revisions = self.evidence_revisions(candidate_id)
+        latest_evidence_state_id = (
+            max(revisions, key=lambda row: int(row["iteration"]))["evidence_state_id"]
+            if revisions else None)
+        self.append_event(
+            run_id,
+            event_type="CANDIDATE_COMPLETED",
+            idempotency_key=f"recovery:candidate-completed:{candidate_id}",
+            message="Interrupted finalization completed from its recorded dossier.",
+            candidate_id=candidate_id,
+            data={"candidate_id": candidate_id, "dossier_id": dossier_id,
+                  "terminal_state": "CANDIDATE_COMPLETE",
+                  "reason_code": "INTERRUPTED_FINALIZATION_COMPLETED"},
+            level="warning",
+            registrations=[self.candidate_status_registration(
+                candidate_id=candidate_id, status="CANDIDATE_COMPLETE", current_stage=None,
+                updated_at=utc_now(), dossier_id=dossier_id,
+                latest_evidence_state_id=latest_evidence_state_id)],
+        )
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self.database.read() as connection:

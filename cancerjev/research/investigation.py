@@ -29,6 +29,7 @@ from typing import Any, cast
 
 from cancerjev.domain.events import canonical_json, utc_now
 from cancerjev.domain.runs import ExecutionOwnership
+from cancerjev.domain.states import TERMINAL_CANDIDATE_STATUSES
 from cancerjev.jev.service import JevService
 from cancerjev.research.acquisition import AcquisitionTransport
 from cancerjev.research.deep import (
@@ -47,6 +48,7 @@ from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
 
 AUTONOMOUS_DISPATCH_AUTHORIZATION = "autonomous-policy-v1"
+OPERATOR_AUTHORIZATION = "OPERATOR_AUTHORIZATION"
 VALIDATION_DISPATCH_AUTHORIZATION = "validation-policy-v1"
 
 
@@ -216,7 +218,7 @@ def run_candidate_investigation(*, run_id: str, candidate: dict[str, Any], selec
                                 llm_generator: HypothesisGenerator | None = None,
                                 transport: AcquisitionTransport | None = None,
                                 mode: str = "LIVE",
-                                authorized_by: str = "OPERATOR_AUTHORIZATION") -> CandidateInvestigation:
+                                authorized_by: str = OPERATOR_AUTHORIZATION) -> CandidateInvestigation:
     """Run the bounded arc for one explicitly selected candidate, then Stage 8."""
     plan = stage("DEEP_ANALYSIS", lambda: plan_deep_slice(
         run_id=run_id, candidate=candidate, repository=repository, artifacts=artifacts,
@@ -388,12 +390,13 @@ def _read_artifact(repository: Repository,
     return read
 
 
-def _record_terminal_failure(run_id: str, candidate_id: str, reason_code: str, detail: str,
-                             emit: Callable[..., Any], repository: Repository,
-                             authorized_by: str) -> None:
+def record_terminal_failure(run_id: str, candidate_id: str, reason_code: str, detail: str,
+                            emit: Callable[..., Any], repository: Repository,
+                            authorized_by: str) -> None:
+    """Record the declared terminal failure for a Candidate that produced no dossier."""
     current = next((row for row in repository.list_table("candidates", run_id)
                     if row["candidate_id"] == candidate_id), None)
-    if current is not None and current.get("status") == "CANDIDATE_COMPLETE":
+    if current is not None and current.get("status") in TERMINAL_CANDIDATE_STATUSES:
         return
     emit(
         run_id, "CANDIDATE_NOT_COMPLETED", f"queue:{candidate_id}:terminal-failure",
@@ -454,8 +457,8 @@ def run_autonomous_candidate_queue(*, run_id: str, repository: Repository,
                 reason = investigation.error_code or investigation.stop_reason
                 failures.append({"candidate_id": candidate_id, "reason_code": reason,
                                  "terminal_state": investigation.candidate_status})
-                _record_terminal_failure(run_id, candidate_id, reason, investigation.stop_reason,
-                                         emit, repository, authorized_by)
+                record_terminal_failure(run_id, candidate_id, reason, investigation.stop_reason,
+                                        emit, repository, authorized_by)
         except Exception as exc:  # noqa: BLE001 - one candidate must not abort the queue
             reason = str(getattr(exc, "code", type(exc).__name__))
             summaries.append({
@@ -467,6 +470,6 @@ def run_autonomous_candidate_queue(*, run_id: str, repository: Repository,
             })
             failures.append({"candidate_id": candidate_id, "reason_code": reason,
                              "terminal_state": "FAILED"})
-            _record_terminal_failure(run_id, candidate_id, reason, str(exc), emit, repository,
-                                     authorized_by)
+            record_terminal_failure(run_id, candidate_id, reason, str(exc), emit, repository,
+                                    authorized_by)
     return AutonomousCandidateQueue(tuple(summaries), tuple(failures), authorized_by)

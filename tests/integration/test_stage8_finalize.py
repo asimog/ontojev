@@ -15,7 +15,11 @@ import json
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
+
+from cancerjev.domain.events import canonical_json
 from cancerjev.domain.evidence import CheckOutcome
+from cancerjev.research.dossier import run_dossier_stage
 from cancerjev.research.finalize import (
     NO_JEV_BASELINE_VERSION,
     baseline_next_move,
@@ -356,6 +360,75 @@ def test_stage8_replay_repairs_an_interrupted_completion(runtime, monkeypatch):
                and event["data"].get("reason_code") == "FINALIZATION_STATUS_REPAIRED"]
     assert len(repairs) == 1
     assert repairs[0]["data"]["dossier_id"]
+
+
+def test_dossier_retry_completes_after_an_interrupted_dossier_write(runtime, monkeypatch):
+    """Crash between the dossier file write and DOSSIER_CREATED: retry adopts the bytes."""
+    _, repository, artifacts = runtime
+    original = repository.append_event
+    crash = {"on": True}
+
+    def crashing_append(target_run_id, **kwargs):
+        if crash["on"] and kwargs.get("event_type") == "DOSSIER_CREATED":
+            raise KeyboardInterrupt()
+        return original(target_run_id, **kwargs)
+
+    monkeypatch.setattr(repository, "append_event", crashing_append)
+    orchestrator, _, repository = _orchestrator(
+        runtime, monkeypatch, jev_adapter=StubAdapter(), deep_selection="GENEONE",
+        deep_action_id="CHECK_EVIDENCE_INTEGRITY_V1")
+    with pytest.raises(KeyboardInterrupt):
+        orchestrator.run()
+    crash["on"] = False
+
+    run_id = repository.list_runs(5)[0]["run_id"]
+    assert repository.get_run(run_id)["status"] == "STOPPED"
+    candidate = repository.list_table("candidates", run_id)[0]
+    assert candidate["status"] not in {"CANDIDATE_COMPLETE", "FAILED", "DEFERRED"}
+    [json_file] = (runtime[0].data_dir / f"runs/{run_id}/dossier").glob("*.json")
+    recorded_bytes = json_file.read_bytes()
+
+    retried = run_dossier_stage(
+        run_id=run_id, candidate=candidate, repository=repository, artifacts=artifacts,
+        decisions=[],
+        publish_json=lambda rid, path, payload, purpose: artifacts.publish(
+            path, canonical_json(payload), "application/json", purpose),
+        emit=lambda rid, event_type, key, message, **kwargs: repository.append_event(
+            rid, event_type=event_type, idempotency_key=key, message=message, **kwargs),
+        mode="LIVE",
+    )
+
+    assert retried.get("error_code") is None, retried
+    assert json_file.read_bytes() == recorded_bytes, \
+        "the recorded dossier is adopted byte-for-byte, never rewritten"
+    assert len(repository.list_table("dossiers", run_id)) == 1
+
+    assert repository.recover_interrupted() == []
+    assert repository.get_candidate(candidate["candidate_id"])["status"] == "CANDIDATE_COMPLETE", \
+        "the retried dossier is owned, so the orphan is completed, never stranded"
+    assert len([event for event in _events(repository, run_id)
+                if event["type"] == "CANDIDATE_COMPLETED"]) == 1
+
+
+def test_dossier_retry_refuses_a_colliding_dossier_as_a_typed_failure(runtime, monkeypatch):
+    run_id, summary, repository = _completed_slice(runtime, monkeypatch)
+    candidate = repository.get_candidate(summary["candidate_id"])
+    dossier_id = summary["dossier"]["dossier_id"]
+    path = f"runs/{run_id}/dossier/{dossier_id}.json"
+    (runtime[0].data_dir / path).write_bytes(b'{"dossier_id": "not-this-candidate"}')
+
+    retried = run_dossier_stage(
+        run_id=run_id, candidate=candidate, repository=repository, artifacts=runtime[2],
+        decisions=[],
+        publish_json=lambda rid, path, payload, purpose: runtime[2].publish(
+            path, canonical_json(payload), "application/json", purpose),
+        emit=lambda rid, event_type, key, message, **kwargs: repository.append_event(
+            rid, event_type=event_type, idempotency_key=key, message=message, **kwargs),
+        mode="LIVE",
+    )
+
+    assert retried["status"] == "UNAVAILABLE"
+    assert retried["error_code"] == "DOSSIER_CONTENT_COLLISION"
 
 
 def test_plan_abstention_is_finalized_not_comparable_downstream(runtime, monkeypatch):

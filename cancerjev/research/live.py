@@ -57,7 +57,11 @@ from cancerjev.research.acquisition import (
 )
 from cancerjev.research.deep import stable_id
 from cancerjev.research.discovery import publish_occurrence_scan
-from cancerjev.research.investigation import run_candidate_investigation
+from cancerjev.research.investigation import (
+    OPERATOR_AUTHORIZATION,
+    record_terminal_failure,
+    run_candidate_investigation,
+)
 from cancerjev.research.ranking import PROMOTION_LIMIT
 from cancerjev.research.seams import HypothesisGenerator, run_stage
 from cancerjev.research.specs import LUAD_RESEARCH_V1, ResearchSpec
@@ -317,15 +321,28 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
 
     def _resolve_deep_candidate(self, run_id: str, promoted: list[dict[str, Any]],
                                 selection: str) -> dict[str, Any] | None:
+        """Resolve one selection to a candidate by any declared alias.
+
+        Aliases are resolved consistently: a policy promotion is matched by symbol,
+        ``gene:<symbol>``, ``slot:N`` or its ``state:<state_id>``; a candidate created
+        earlier in the same selection list (operator-selected) is likewise matched by
+        symbol, ``gene:<symbol>`` or ``state:<state_id>``, so two aliases of one state
+        never create or investigate a second candidate.
+        """
         rows = {row["candidate_id"]: row for row in self.repository.list_table("candidates", run_id)}
+        symbol = selection[len("gene:"):] if selection.startswith("gene:") else selection
+        state_id = selection[len("state:"):] if selection.startswith("state:") else None
         for promotion in promoted:
             row = rows.get(promotion["candidate_id"])
             if row is None:
                 continue
             entity = row["entity"]
-            if selection == entity.get("gene_symbol"):
+            if symbol == entity.get("gene_symbol") or selection == f"slot:{promotion['slot']}":
                 return {**row, "entity": entity}
-            if selection == f"slot:{promotion['slot']}":
+        for row in rows.values():
+            entity = row["entity"]
+            if symbol == entity.get("gene_symbol") \
+                    or (state_id is not None and state_id == row.get("source_state_id")):
                 return {**row, "entity": entity}
         return None
 
@@ -487,6 +504,7 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
                 )
             seen.add(selection)
         summaries: list[dict[str, Any]] = []
+        investigated: set[str] = set()
         for selection in selections:
             candidate = self._resolve_selection(run_id, promoted, selection)
             if candidate is None:
@@ -498,19 +516,50 @@ data={"mode": self.run_mode, "research_spec": spec_payload, "caps": {
                     "dossier": None, "final_result": None,
                 })
                 continue
-            investigation = run_candidate_investigation(
-                run_id=run_id, candidate=candidate, selection=selection,
-                repository=self.repository, artifacts=self.artifacts, emit=self._event,
-                publish_json=self._publish_json, read_artifact=self._read_artifact,
-                stage=lambda name, function: self._stage(run_id, name, function),
-                jev_service=self.jev_service, requested_action_id=self.deep_action_id,
-                authorize_iteration=self.deep_followup_authorized,
-                hypotheses_requested=self.deep_hypotheses_requested,
-                llm_generator=self.llm_generator,
-                transport=transport,
-                mode=self.run_mode,
-            )
-            summaries.append(investigation.summary())
+            candidate_id = str(candidate["candidate_id"])
+            if candidate_id in investigated:
+                self._event(
+                    run_id, "DEEP_SELECTION_UNAVAILABLE", f"deep:selection:alias:{selection}",
+                    f"Deep selection {selection!r} names a candidate that was already selected; "
+                    "each candidate is investigated once.",
+                    stage="DEEP_ANALYSIS", level="warning",
+                    data={"selection": selection, "candidate_id": candidate_id,
+                          "reason_code": "DUPLICATE_SELECTION",
+                          "detail": "selections are de-duplicated by resolved candidate identity"},
+                )
+                continue
+            investigated.add(candidate_id)
+            try:
+                investigation = run_candidate_investigation(
+                    run_id=run_id, candidate=candidate, selection=selection,
+                    repository=self.repository, artifacts=self.artifacts, emit=self._event,
+                    publish_json=self._publish_json, read_artifact=self._read_artifact,
+                    stage=lambda name, function: self._stage(run_id, name, function),
+                    jev_service=self.jev_service, requested_action_id=self.deep_action_id,
+                    authorize_iteration=self.deep_followup_authorized,
+                    hypotheses_requested=self.deep_hypotheses_requested,
+                    llm_generator=self.llm_generator,
+                    transport=transport,
+                    mode=self.run_mode,
+                )
+            except Exception as exc:  # noqa: BLE001 - one selection must not abort the others
+                reason = str(getattr(exc, "code", type(exc).__name__))
+                record_terminal_failure(run_id, candidate_id, reason, str(exc), self._event,
+                                        self.repository, OPERATOR_AUTHORIZATION)
+                summaries.append({
+                    "selection": selection, "candidate_id": candidate_id, "status": "FAILED",
+                    "investigation_status": "FAILED", "candidate_status": "FAILED",
+                    "final_move": None, "stop_reason": reason, "error_code": reason,
+                    "first_step": {}, "steps": [], "decisions": [], "hypothesis": None,
+                    "dossier": None, "final_result": None,
+                })
+                continue
+            summary = investigation.summary()
+            summaries.append(summary)
+            if summary.get("candidate_status") != "CANDIDATE_COMPLETE":
+                reason = investigation.error_code or investigation.stop_reason
+                record_terminal_failure(run_id, candidate_id, reason, investigation.stop_reason,
+                                        self._event, self.repository, OPERATOR_AUTHORIZATION)
         completed = [summary for summary in summaries
                      if summary.get("candidate_status") == "CANDIDATE_COMPLETE"]
         return {"selections": list(selections), "candidate_count": len(summaries),
