@@ -28,6 +28,7 @@ PROTOCOL_SCHEMA_VERSION = 1
 OUTPUT_SCHEMA_VERSION = 1
 ALLOWED_SPLITS = frozenset({"TRAIN", "DEVELOPMENT", "HOLDOUT"})
 ALLOWED_DISPOSITIONS = frozenset({"INVESTIGATE", "STOP", "ABSTAIN", "EXTERNAL_EVIDENCE_REQUIRED"})
+TOP_K = 3
 
 
 class ProspectiveError(Exception):
@@ -221,39 +222,56 @@ def load_arms(path: Path, protocol: Protocol) -> tuple[tuple[Arm, ...], str]:
 
 
 def _metrics(labels: tuple[Label, ...], predictions: tuple[Prediction, ...]) -> dict[str, Any]:
+    """Declared offline metrics for one arm on one split.
+
+    ``precision_at_3`` uses the declared K denominator, so an arm that abstains or
+    stops on everything scores 0.0 instead of an undefined value and every arm is
+    comparable on the same replicate. ``coverage`` counts assertive decisions
+    (INVESTIGATE, STOP, EXTERNAL_EVIDENCE_REQUIRED); ABSTAIN and STOP are reported
+    separately and never conflated. Assertion-quality rates are computed over
+    assertive decisions only.
+    """
     label_by_id = {label.item_id: label for label in labels}
     ordered = sorted(
         (item for item in predictions if item.disposition == "INVESTIGATE"),
         key=lambda item: (-item.score, item.item_id),
     )
-    top = ordered[:3]
-    covered = [item for item in predictions if item.disposition != "ABSTAIN"]
+    top = ordered[:TOP_K]
+    decisions = [item for item in predictions if item.disposition != "ABSTAIN"]
     investigated = ordered
     gains = [label_by_id[item.item_id].ordinal_usefulness for item in top]
-    ideal = sorted((label.ordinal_usefulness for label in labels), reverse=True)[:3]
+    ideal = sorted((label.ordinal_usefulness for label in labels), reverse=True)[:TOP_K]
 
     def dcg(values: list[int]) -> float:
         return float(sum((2 ** value - 1) / math.log2(index + 2)
                          for index, value in enumerate(values)))
 
+    def rate(count: int) -> float:
+        return count / len(labels)
+
     known_input = all(item.input_tokens is not None for item in predictions)
     known_output = all(item.output_tokens is not None for item in predictions)
     known_spend = all(item.spend_usd is not None for item in predictions)
+    counts = {disposition: sum(1 for item in predictions if item.disposition == disposition)
+              for disposition in sorted(ALLOWED_DISPOSITIONS)}
     return {
         "n": len(labels),
-        "coverage": len(covered) / len(labels),
-        "abstention_rate": 1.0 - len(covered) / len(labels),
+        "coverage": rate(len(decisions)),
+        "abstention_rate": rate(counts["ABSTAIN"]),
+        "stop_rate": rate(counts["STOP"]),
+        "investigate_rate": rate(counts["INVESTIGATE"]),
+        "external_evidence_rate": rate(counts["EXTERNAL_EVIDENCE_REQUIRED"]),
         "investigate_precision": (
             sum(label_by_id[item.item_id].useful_investigation for item in investigated)
             / len(investigated) if investigated else None),
-        "precision_at_3": (
-            sum(label_by_id[item.item_id].useful_investigation for item in top) / len(top)
-            if top else None),
+        "precision_at_3": sum(label_by_id[item.item_id].useful_investigation for item in top) / TOP_K,
         "ndcg_at_3": dcg(gains) / dcg(ideal) if ideal and dcg(ideal) else None,
-        "unsupported_assertion_rate": sum(item.unsupported_assertion for item in covered) / len(covered)
-        if covered else None,
-        "wrong_population_rate": sum(item.wrong_population for item in covered) / len(covered)
-        if covered else None,
+        "unsupported_assertion_rate": (
+            sum(item.unsupported_assertion for item in decisions) / len(decisions)
+            if decisions else None),
+        "wrong_population_rate": (
+            sum(item.wrong_population for item in decisions) / len(decisions)
+            if decisions else None),
         "resources": {
             "attempts": sum(item.attempts for item in predictions),
             "input_tokens": sum(item.input_tokens or 0 for item in predictions) if known_input else None,
@@ -265,9 +283,20 @@ def _metrics(labels: tuple[Label, ...], predictions: tuple[Prediction, ...]) -> 
     }
 
 
-def evaluate_prospective(protocol: Protocol, arms: tuple[Arm, ...], *, split: str = "HOLDOUT") -> dict[str, Any]:
+def evaluate_prospective(protocol: Protocol, arms: tuple[Arm, ...], *,
+                         arms_source_hash: str, split: str = "HOLDOUT") -> dict[str, Any]:
+    """Paired grouped-bootstrap evaluation of one preregistered protocol.
+
+    ``arms_source_hash`` must be the hash of the exact arm-output document so the
+    report binds both the preregistered protocol and the evaluated outputs. Every
+    bootstrap replicate computes baseline and comparison metrics on the same
+    resample, so all arms share one replicate set and abstain-heavy arms are never
+    silently dropped from an interval.
+    """
     if split not in ALLOWED_SPLITS:
         raise ProspectiveError("INVALID_SPLIT", split)
+    if not isinstance(arms_source_hash, str) or len(arms_source_hash) != 64:
+        raise ProspectiveError("MALFORMED_OUTPUT", "arms_source_hash must be the arm-output sha256")
     labels = tuple(label for label in protocol.labels if label.split == split)
     if not labels:
         raise ProspectiveError("EMPTY_SPLIT", f"no labels assigned to {split}")
@@ -300,24 +329,20 @@ def evaluate_prospective(protocol: Protocol, arms: tuple[Arm, ...], *, split: st
         for arm_id in differences:
             comparison = _metrics(
                 sample_label_tuple, tuple(sampled_predictions[arm_id]))["precision_at_3"]
-            if baseline is not None and comparison is not None:
-                differences[arm_id].append(comparison - baseline)
+            differences[arm_id].append(comparison - baseline)
     intervals: dict[str, Any] = {}
     for arm_id, values in differences.items():
         values.sort()
-        if values:
-            intervals[arm_id] = {
-                "metric": "precision_at_3_difference_vs_A",
-                "lower_95": values[int(0.025 * (len(values) - 1))],
-                "upper_95": values[int(0.975 * (len(values) - 1))],
-                "replicates": len(values),
-            }
-        else:
-            intervals[arm_id] = {"metric": "precision_at_3_difference_vs_A",
-                                 "lower_95": None, "upper_95": None, "replicates": 0}
+        intervals[arm_id] = {
+            "metric": "precision_at_3_difference_vs_A",
+            "lower_95": values[int(0.025 * (len(values) - 1))] if values else None,
+            "upper_95": values[int(0.975 * (len(values) - 1))] if values else None,
+            "replicates": len(values),
+        }
     return {
         "schema_version": 1, "kind": "PROSPECTIVE_EVALUATION_REPORT",
         "protocol_id": protocol.protocol_id, "protocol_hash": protocol.source_hash,
+        "arm_output_hash": arms_source_hash, "top_k": TOP_K,
         "split": split, "groups": len(groups), "items": len(labels), "arms": metrics,
         "grouped_bootstrap": intervals,
         "release_decision": "HUMAN_REVIEW_REQUIRED",

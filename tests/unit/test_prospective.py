@@ -9,16 +9,26 @@ under the declared seed.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from cancerjev.research.prospective import (
+    Arm,
+    Prediction,
     ProspectiveError,
     evaluate_prospective,
     load_arms,
     load_protocol,
 )
+
+
+def _prediction_template() -> Prediction:
+    return Prediction(item_id="item-0", disposition="INVESTIGATE", score=1.0,
+                      unsupported_assertion=False, wrong_population=False, attempts=1,
+                      input_tokens=100, output_tokens=10, latency_ms=10, human_minutes=1.0,
+                      spend_usd=0.01)
 
 
 def _write(path: Path, document: dict) -> Path:
@@ -73,11 +83,11 @@ def _prepared(tmp_path: Path):
     protocol_path = _write(tmp_path / "protocol.json", protocol_document)
     protocol = load_protocol(protocol_path)
     arms, arm_hash = load_arms(_write(tmp_path / "arms.json", _arm_document()), protocol)
-    return protocol, arms, protocol_path
+    return protocol, arms, protocol_path, arm_hash
 
 
 def test_valid_protocol_and_arms_load_with_source_hashes(tmp_path):
-    protocol, arms, protocol_path = _prepared(tmp_path)
+    protocol, arms, protocol_path, _ = _prepared(tmp_path)
     assert protocol.protocol_id == "PROTO-1" and protocol.seed == 7
     assert len(protocol.source_hash) == 64
     reloaded = load_protocol(protocol_path)
@@ -87,18 +97,22 @@ def test_valid_protocol_and_arms_load_with_source_hashes(tmp_path):
 
 
 def test_holdout_metrics_are_deterministic_and_never_claim_value(tmp_path):
-    protocol, arms, _ = _prepared(tmp_path)
-    first = evaluate_prospective(protocol, arms, split="HOLDOUT")
-    second = evaluate_prospective(protocol, arms, split="HOLDOUT")
+    protocol, arms, _, arm_hash = _prepared(tmp_path)
+    first = evaluate_prospective(protocol, arms, arms_source_hash=arm_hash, split="HOLDOUT")
+    second = evaluate_prospective(protocol, arms, arms_source_hash=arm_hash, split="HOLDOUT")
     assert first == second
     assert first["release_decision"] == "HUMAN_REVIEW_REQUIRED"
     assert "No incremental-value" in first["claim"]
     assert first["items"] == 2 and first["groups"] == 1
     assert first["protocol_hash"] == protocol.source_hash
+    assert first["arm_output_hash"] == arm_hash, "the evaluated arm outputs are bound in the report"
     metrics = first["arms"]
     assert metrics["A"]["investigate_precision"] == 0.5
     assert metrics["B"]["investigate_precision"] == 1.0
     assert metrics["A"]["abstention_rate"] == 0.0
+    assert metrics["A"]["stop_rate"] == 0.0 and metrics["B"]["stop_rate"] == 0.5
+    assert metrics["A"]["precision_at_3"] == 1 / 3, \
+        "precision@3 always divides by the declared K, never by the returned list length"
     intervals = first["grouped_bootstrap"]
     assert intervals["B"]["metric"] == "precision_at_3_difference_vs_A"
     assert intervals["B"]["replicates"] == 200
@@ -106,13 +120,45 @@ def test_holdout_metrics_are_deterministic_and_never_claim_value(tmp_path):
     assert intervals["B"]["lower_95"] <= intervals["B"]["upper_95"]
 
 
+def test_abstain_and_stop_stay_distinct_and_every_arm_keeps_the_paired_replicates(tmp_path):
+    protocol, _, _, arm_hash = _prepared(tmp_path)
+    arms = []
+    for arm_id, disposition in (("A", "INVESTIGATE"), ("B", "STOP"), ("C", "ABSTAIN")):
+        predictions = tuple(
+            replace(_prediction_template(), item_id=label.item_id, disposition=disposition)
+            for label in protocol.labels)
+        arms.append(Arm(arm_id, f"{disposition} arm", predictions))
+
+    report = evaluate_prospective(protocol, tuple(arms), arms_source_hash=arm_hash,
+                                  split="HOLDOUT")
+
+    stop_arm = report["arms"]["B"]
+    assert stop_arm["coverage"] == 1.0 and stop_arm["stop_rate"] == 1.0
+    assert stop_arm["abstention_rate"] == 0.0, "a STOP is a decision, never an abstention"
+    assert stop_arm["precision_at_3"] == 0.0, "an arm that never investigates scores 0, not undefined"
+    abstain_arm = report["arms"]["C"]
+    assert abstain_arm["coverage"] == 0.0 and abstain_arm["abstention_rate"] == 1.0
+    assert abstain_arm["precision_at_3"] == 0.0
+    for arm_id in ("B", "C"):
+        assert report["grouped_bootstrap"][arm_id]["replicates"] == 200, \
+            "every arm is measured on the identical paired resample set"
+
+
+def test_a_malformed_arm_output_hash_is_refused(tmp_path):
+    protocol, arms, _, _ = _prepared(tmp_path)
+    with pytest.raises(ProspectiveError, match="MALFORMED_OUTPUT"):
+        evaluate_prospective(protocol, arms, arms_source_hash="not-a-sha256")
+
+
 def test_grouped_bootstrap_follows_the_declared_seed(tmp_path):
-    _, arms, protocol_path = _prepared(tmp_path)
+    _, arms, protocol_path, arm_hash = _prepared(tmp_path)
     protocol = load_protocol(protocol_path)
     shifted_document = {**_protocol_document(), "seed": 8}
     shifted = load_protocol(_write(tmp_path / "protocol2.json", shifted_document))
-    first = evaluate_prospective(protocol, arms, split="HOLDOUT")["grouped_bootstrap"]
-    other = evaluate_prospective(shifted, arms, split="HOLDOUT")["grouped_bootstrap"]
+    first = evaluate_prospective(protocol, arms, arms_source_hash=arm_hash,
+                                 split="HOLDOUT")["grouped_bootstrap"]
+    other = evaluate_prospective(shifted, arms, arms_source_hash=arm_hash,
+                                 split="HOLDOUT")["grouped_bootstrap"]
     # Both intervals are finite and bound the same difference metric.
     assert first["B"]["lower_95"] is not None and other["B"]["lower_95"] is not None
 
@@ -147,7 +193,7 @@ def test_unblinded_or_unreviewed_or_duplicate_labels_are_refused(tmp_path):
 
 
 def test_arm_outputs_must_bind_the_protocol_and_cover_every_item(tmp_path):
-    protocol, _, _ = _prepared(tmp_path)
+    protocol, _, _, _ = _prepared(tmp_path)
     wrong_binding = {**_arm_document(), "protocol_id": "OTHER"}
     with pytest.raises(ProspectiveError, match="MALFORMED_OUTPUT"):
         load_arms(_write(tmp_path / "wrong-binding.json", wrong_binding), protocol)
@@ -166,6 +212,6 @@ def test_arm_outputs_must_bind_the_protocol_and_cover_every_item(tmp_path):
 
 
 def test_split_with_no_labels_is_a_typed_refusal(tmp_path):
-    protocol, arms, _ = _prepared(tmp_path)
+    protocol, arms, _, arm_hash = _prepared(tmp_path)
     with pytest.raises(ProspectiveError, match="EMPTY_SPLIT"):
-        evaluate_prospective(protocol, arms, split="DEVELOPMENT")
+        evaluate_prospective(protocol, arms, arms_source_hash=arm_hash, split="DEVELOPMENT")
