@@ -201,27 +201,29 @@ def acquire_gene_universe(transport: AcquisitionTransport, discovery_spec: Disco
 def _mutation_outcome(project_id: str, gene: GeneRecord, population_frame: PopulationFrame,
                       scan: MutationOccurrenceScan, release: str, coverage: ProjectCoverage,
                       coverage_source: OperationalSource, coverage_complete: bool,
-                      scan_source: OperationalSource) -> tuple[MutationCountResult, bool]:
-    """Typed per-gene V2 outcome from the complete occurrence scan."""
+                      scan_source: OperationalSource) -> MutationCountResult:
+    """Typed per-gene V2 outcome from the complete occurrence scan.
+
+    The complete scan is the measurement, so every scan gene is eligible; the
+    provider aggregation completeness only informs measurement sufficiency
+    context and never gates eligibility.
+    """
     distinct, _occurrence_docs = scan.counts_for(gene.gene_id)
-    outcome = scanned_mutation_result(
+    return scanned_mutation_result(
         project_id=project_id, gene=gene, population_frame=population_frame,
         distinct_cases=distinct, release=release, coverage=coverage,
         coverage_source=coverage_source.source, coverage_complete=coverage_complete,
         scan_source=scan_source)
-    return outcome, coverage_complete
 
 
 @dataclass(frozen=True)
 class _Candidate:
     gene_id: str
     outcome: MutationCountResult
-    count_value: int | None
-    disposition: DiscoveryDisposition | None
+    count_value: int
     reason: str
 
     def reduction_key(self) -> tuple[int, str]:
-        assert self.count_value is not None
         return -self.count_value, self.gene_id
 
 
@@ -238,7 +240,8 @@ def build_discovery_entries(project_id: str, genes: dict[str, GeneRecord],
     scan (an absent gene is an observed zero) plus descriptive canonical-only
     composition. Positive genes are ordered by affected-case count descending
     with gene_id ascending as the deterministic tie break; the first
-    ``max_survivors`` are retained (JEV_REVIEW when a declared trigger fires);
+    ``max_survivors`` are retained (JEV_REVIEW when a declared trigger fires;
+    a JEV_REVIEW entry is ranked and review-marked but is never a survivor);
     zero-count genes are DROP and positive non-survivors are
     BELOW_SURVIVOR_CUTOFF. Entries are emitted in universe order.
     """
@@ -246,7 +249,7 @@ def build_discovery_entries(project_id: str, genes: dict[str, GeneRecord],
     descriptive_of: dict[str, MutationDescriptiveEvidence] = {}
     for gene_id in ordered_ids:
         gene = genes[gene_id]
-        outcome, eligible = _mutation_outcome(
+        outcome = _mutation_outcome(
             project_id, gene, population_frame, scan, release, coverage, coverage_source,
             coverage_complete, scan_source)
         distinct, occurrence_docs = scan.counts_for(gene_id)
@@ -256,17 +259,12 @@ def build_discovery_entries(project_id: str, genes: dict[str, GeneRecord],
             positions=scan.protein_positions_per_gene.get(gene_id, {}),
             transcript_counts=scan.canonical_transcript_counts_per_gene.get(gene_id, {}),
         )
-        if eligible:
-            affected = outcome.affected_cases
-            candidates.append(_Candidate(gene_id, outcome,
-                                          affected.value if isinstance(affected, ObservedCount) else None,
-                                          None, COMPLETE_COUNT_REASON))
-        else:
-            candidates.append(_Candidate(gene_id, outcome, None,
-                                         DiscoveryDisposition.MUTATION_AGGREGATION_PARTIAL,
-                                         "MUTATION_COVERAGE_PARTIAL"))
+        affected = outcome.affected_cases
+        assert isinstance(affected, ObservedCount), \
+            "the complete scan always yields an observed per-gene count"
+        candidates.append(_Candidate(gene_id, outcome, affected.value, COMPLETE_COUNT_REASON))
     positive_sorted = sorted((candidate for candidate in candidates
-                              if candidate.count_value is not None and candidate.count_value > 0),
+                              if candidate.count_value > 0),
                              key=_Candidate.reduction_key)
     dispositions: dict[str, tuple[DiscoveryDisposition, int | None, str]] = {}
     survivor_ids: list[str] = []
@@ -276,19 +274,17 @@ def build_discovery_entries(project_id: str, genes: dict[str, GeneRecord],
             disposition = (DiscoveryDisposition.JEV_REVIEW
                            if descriptive_of[candidate.gene_id].review_trigger is not None
                            else DiscoveryDisposition.RETAINED)
-            survivor_ids.append(candidate.gene_id)
+            if disposition is DiscoveryDisposition.RETAINED:
+                survivor_ids.append(candidate.gene_id)
         else:
             disposition = DiscoveryDisposition.BELOW_SURVIVOR_CUTOFF
         dispositions[candidate.gene_id] = (disposition, index + 1, candidate.reason)
     for candidate in candidates:
         if candidate.gene_id in dispositions:
             continue
-        if candidate.count_value == 0:
-            dispositions[candidate.gene_id] = (
-                DiscoveryDisposition.DROP, None, "ZERO_OBSERVED_AFFECTED_CASES")
-            continue
-        assert candidate.disposition is not None
-        dispositions[candidate.gene_id] = (candidate.disposition, None, candidate.reason)
+        assert candidate.count_value == 0, "only zero-count genes lack a positive-rank disposition"
+        dispositions[candidate.gene_id] = (
+            DiscoveryDisposition.DROP, None, "ZERO_OBSERVED_AFFECTED_CASES")
     outcome_of = {candidate.gene_id: candidate.outcome for candidate in candidates}
     entries = tuple(
         MutationDiscoveryEntry(

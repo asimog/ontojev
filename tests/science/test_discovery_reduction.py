@@ -2,10 +2,11 @@
 
 Realistic failure modes protected: a tie that resolves nondeterministically, a
 survivor cap that leaks, a complete-scan zero treated as unavailable, partial
-project coverage promoting a survivor, and a truncated universe accepted as
-complete. The mutation quantity source is the complete occurrence scan; an
-absent gene in a complete scan is an observed zero by construction, so the
-legacy NOT_OBSERVED bucket semantics cannot reappear.
+project coverage demoting a complete-scan survivor, a review-triggered gene
+breaking the survivor contract, and a truncated universe accepted as complete.
+The mutation quantity source is the complete occurrence scan; an absent gene in
+a complete scan is an observed zero by construction, so the legacy NOT_OBSERVED
+bucket semantics cannot reappear.
 """
 
 from __future__ import annotations
@@ -16,7 +17,10 @@ from uuid import uuid4
 
 import pytest
 
-from cancerjev.domain.discovery import DiscoveryDisposition
+from cancerjev.domain.discovery import (
+    JEV_REVIEW_OCCURRENCE_RATIO_TRIGGER,
+    DiscoveryDisposition,
+)
 from cancerjev.domain.measurements import (
     Acquisition,
     ObservedCount,
@@ -24,6 +28,7 @@ from cancerjev.domain.measurements import (
     PopulationFrame,
     PopulationUnit,
     ScientificSource,
+    Sufficiency,
     UnavailableMeasurement,
 )
 from cancerjev.gdc.endpoints import genes_universe_request
@@ -136,14 +141,45 @@ def test_complete_scan_zero_and_absent_gene_are_observed_zeroes():
     assert survivors == ()
 
 
-def test_partial_coverage_blocks_eligibility_for_complete_scan():
+def test_partial_provider_coverage_keeps_complete_scan_eligible():
+    """The complete scan is the measurement; the provider aggregation is context.
+
+    A partial provider aggregation may only lower declared sufficiency; it can
+    never demote a per-gene distinct-case count derived from the complete scan.
+    """
     ids = _ids(8)
     scan = _scan({_gene_id(8): 12})
     entries, survivors = _entries_for(ids, scan, coverage=_coverage(complete=False),
                                       coverage_complete=False)
-    assert survivors == ()
-    assert entries[0].disposition.value == "MUTATION_AGGREGATION_PARTIAL"
-    assert entries[0].reason == "MUTATION_COVERAGE_PARTIAL"
+    assert survivors == (_gene_id(8),)
+    assert entries[0].disposition is DiscoveryDisposition.RETAINED
+    assert entries[0].reason == "COMPLETE_DISTINCT_AFFECTED_CASE_COUNT"
+    assert entries[0].outcome.quality.sufficiency is Sufficiency.PARTIAL
+    assert isinstance(entries[0].outcome.affected_cases, ObservedCount)
+    assert entries[0].outcome.affected_cases.value == 12
+
+
+def test_review_triggered_retained_gene_is_ranked_but_not_a_survivor():
+    """A declared review trigger must not break the survivor contract (P1-01).
+
+    The retained review entry keeps its rank and trigger for the record and for
+    the union's pending-review nomination, but survivor_ids stays exactly the
+    RETAINED entries in rank order.
+    """
+    ids = _ids(1, 2)
+    scan = _scan({_gene_id(1): 10, _gene_id(2): 8},
+                 {_gene_id(1): 50, _gene_id(2): 8})
+    entries, survivors = _entries_for(ids, scan)
+    by_id = {entry.entity.gene_id: entry for entry in entries}
+    review = by_id[_gene_id(1)]
+    retained = by_id[_gene_id(2)]
+
+    assert review.disposition is DiscoveryDisposition.JEV_REVIEW
+    assert review.rank == 1
+    assert review.descriptive.review_trigger == JEV_REVIEW_OCCURRENCE_RATIO_TRIGGER
+    assert retained.disposition is DiscoveryDisposition.RETAINED
+    assert retained.rank == 2
+    assert survivors == (_gene_id(2),)
 
 
 def test_project_absent_from_coverage_keeps_complete_scan_eligible():
