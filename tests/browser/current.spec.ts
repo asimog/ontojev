@@ -6,10 +6,10 @@ import path from "node:path";
 const API_BASE = process.env.NEXT_PUBLIC_CANCERJEV_API_URL ?? "http://127.0.0.1:8000";
 const REPOSITORY_ROOT = path.resolve(process.cwd(), "..", "..");
 
-function runDemo() {
+function runDemo(stageDelayMs = "0") {
   return spawn("python", ["-m", "cancerjev", "run", "--fixture", "demo"], {
     cwd: REPOSITORY_ROOT,
-    env: { ...process.env, CANCERJEV_FIXTURE_STAGE_DELAY_MS: "0" },
+    env: { ...process.env, CANCERJEV_FIXTURE_STAGE_DELAY_MS: stageDelayMs },
     stdio: "pipe",
   });
 }
@@ -29,6 +29,33 @@ async function waitForNewRunId(request: APIRequestContext, known: string[]): Pro
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error("demo run did not appear in the API");
+}
+
+async function waitForRunCompleted(request: APIRequestContext, runId: string): Promise<void> {
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    const run = (await request
+      .get(`${API_BASE}/api/runs/${runId}`)
+      .then((response) => response.json())) as { status: string };
+    if (run.status === "COMPLETED") return;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`run ${runId} did not complete`);
+}
+
+async function firstEventId(request: APIRequestContext, runId: string): Promise<string> {
+  const body = (await request
+    .get(`${API_BASE}/api/runs/${runId}/events?after_sequence=0&limit=1`)
+    .then((response) => response.json())) as { items: Array<{ event_id: string }> };
+  return body.items[0].event_id;
+}
+
+async function candidateOptionValues(page: Page): Promise<string[]> {
+  return page
+    .locator("section.filter-row select")
+    .first()
+    .locator("option")
+    .evaluateAll((nodes) => nodes.map((node) => (node as HTMLOptionElement).value));
 }
 
 async function waitForEventType(
@@ -116,4 +143,92 @@ test("shared typed demo run is observed end to end in the browser", async ({ pag
   } finally {
     if (research.exitCode === null) research.kill();
   }
+});
+
+test("a scrolled-up reader keeps position, is told about new events and resumes on request", async ({ page, request }) => {
+  test.setTimeout(300_000);
+  await page.goto("/runs");
+  const known = await knownRunIds(request);
+  const research = runDemo("2500");
+  try {
+    const runId = await waitForNewRunId(request, known);
+    await page.goto(`/runs/${runId}`);
+    const feed = page.locator('[data-testid="event-feed"]');
+    await expect(feed.locator("details").first()).toBeVisible({ timeout: 60_000 });
+    await expect
+      .poll(() => feed.locator("details").count(), { timeout: 120_000 })
+      .toBeGreaterThanOrEqual(10);
+
+    // Auto-follow: a reader who scrolls up is not forced back down; new events are announced.
+    const scrolledTop = await feed.evaluate((node) => {
+      node.scrollTop = 0;
+      return node.scrollTop;
+    });
+    await expect(page.getByRole("button", { name: /new events/ })).toBeVisible({ timeout: 60_000 });
+    expect(await feed.evaluate((node) => node.scrollTop)).toBe(scrolledTop);
+    await page.getByRole("button", { name: /new events/ }).click();
+    await expect(page.getByRole("button", { name: /new events/ })).toHaveCount(0);
+    expect(await feed.evaluate((node) => node.scrollTop)).toBeGreaterThan(scrolledTop);
+
+    // Refresh while active: the retained history is reconstructed and polling resumes.
+    const beforeReload = await feed.locator("details").count();
+    await page.reload();
+    await expect(feed.locator("details").first()).toBeVisible({ timeout: 30_000 });
+    await expect
+      .poll(() => feed.locator("details").count(), { timeout: 60_000 })
+      .toBeGreaterThanOrEqual(beforeReload);
+  } finally {
+    if (research.exitCode === null) research.kill();
+  }
+});
+
+test("run detail resets run-scoped state on a client-side run switch", async ({ page, request }) => {
+  test.setTimeout(300_000);
+  const created: string[] = [];
+  for (let index = 0; index < 2; index += 1) {
+    const known = await knownRunIds(request);
+    const research = runDemo();
+    try {
+      const runId = await waitForNewRunId(request, known);
+      created.push(runId);
+      await waitForRunCompleted(request, runId);
+    } finally {
+      if (research.exitCode === null) research.kill();
+    }
+  }
+  const [older, newer] = created;
+  const olderFirstEvent = await firstEventId(request, older);
+  const newerFirstEvent = await firstEventId(request, newer);
+  expect(olderFirstEvent).not.toBe(newerFirstEvent);
+
+  await page.goto("/runs");
+  await page.locator(`[data-testid="run-${newer}"]`).getByRole("link", { name: /Open run/ }).click();
+  await expect(page).toHaveURL(new RegExp(`/runs/${newer}$`));
+  const feed = page.locator('[data-testid="event-feed"]');
+  await expect
+    .poll(() => feed.locator("details").first().getAttribute("data-event-id"), { timeout: 60_000 })
+    .toBe(newerFirstEvent);
+  const newerCandidates = await candidateOptionValues(page);
+  await page.evaluate(() => {
+    (window as unknown as { __cjMarker?: string }).__cjMarker = "kept";
+  });
+
+  // In-app client-side transition to the other run without a document reload.
+  await page.getByRole("link", { name: "Runs", exact: true }).click();
+  await expect(page).toHaveURL(/\/runs$/);
+  await page.locator(`[data-testid="run-${older}"]`).getByRole("link", { name: /Open run/ }).click();
+  await expect(page).toHaveURL(new RegExp(`/runs/${older}$`));
+  expect(await page.evaluate(() => (window as unknown as { __cjMarker?: string }).__cjMarker)).toBe("kept");
+  await expect
+    .poll(() => feed.locator("details").first().getAttribute("data-event-id"), { timeout: 60_000 })
+    .toBe(olderFirstEvent);
+  await expect.poll(() => candidateOptionValues(page), { timeout: 30_000 }).not.toEqual(newerCandidates);
+
+  // And back again; the feed must never retain the other run's events.
+  await page.getByRole("link", { name: "Runs", exact: true }).click();
+  await page.locator(`[data-testid="run-${newer}"]`).getByRole("link", { name: /Open run/ }).click();
+  await expect
+    .poll(() => feed.locator("details").first().getAttribute("data-event-id"), { timeout: 60_000 })
+    .toBe(newerFirstEvent);
+  await expect.poll(() => candidateOptionValues(page), { timeout: 30_000 }).toEqual(newerCandidates);
 });

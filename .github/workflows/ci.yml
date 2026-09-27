@@ -41,6 +41,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      - name: Run the routed web helper specs
+        run: npm run test:e2e
 
   browser:
     runs-on: ubuntu-latest
