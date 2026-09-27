@@ -25,6 +25,14 @@ def _codes(report) -> set[str]:
     return {finding.code for finding in report.findings}
 
 
+def _remove_database(settings) -> None:
+    settings.database_path.unlink()
+    for suffix in ("-wal", "-shm"):
+        sidecar = settings.database_path.with_name(settings.database_path.name + suffix)
+        if sidecar.exists():
+            sidecar.unlink()
+
+
 def test_healthy_store_reports_no_findings(runtime):
     settings, repository, artifacts = runtime
     report = run_doctor(settings)
@@ -76,6 +84,55 @@ def test_stale_temp_is_reported_and_pruned_only_when_declared(runtime):
     assert removed == ("runs/doctor/stale.tmp",)
     assert not stale.exists()
     assert registered["path"].is_file(), "a registered artifact is never pruned"
+
+
+def test_missing_database_is_reported_without_creating_it(runtime):
+    settings, repository, artifacts = runtime
+    _remove_database(settings)
+
+    report = run_doctor(settings)
+
+    assert _codes(report) == {"DATABASE_MISSING"}
+    assert report.ok() is False
+    assert report.schema_version is None
+    assert not settings.database_path.exists(), "the doctor never creates a missing database"
+
+
+def test_unreadable_database_is_a_typed_failure_and_is_untouched(runtime):
+    settings, repository, artifacts = runtime
+    _remove_database(settings)
+    settings.database_path.write_bytes(b"this is not a sqlite database")
+
+    report = run_doctor(settings)
+
+    assert _codes(report) == {"DATABASE_UNREADABLE"}
+    assert report.ok() is False
+    assert report.schema_version is None
+    assert settings.database_path.read_bytes() == b"this is not a sqlite database"
+
+
+def test_empty_database_file_is_reported_without_crashing(runtime):
+    settings, repository, artifacts = runtime
+    _remove_database(settings)
+    settings.database_path.write_bytes(b"")
+
+    report = run_doctor(settings)
+
+    assert _codes(report) == {"DATABASE_NOT_INITIALIZED"}
+    assert report.ok() is False
+
+
+def test_prune_refuses_a_store_without_a_readable_database(runtime):
+    settings, repository, artifacts = runtime
+    stale = settings.data_dir / "runs" / "doctor" / "stale.tmp"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_bytes(b"partial")
+    old = time.time() - 10 * 24 * 3600
+    os.utime(stale, (old, old))
+    _remove_database(settings)
+
+    assert prune_stale_temp_artifacts(settings) == ()
+    assert stale.is_file(), "without a readable registry nothing is judged or deleted"
 
 
 def test_future_schema_is_reported_and_the_file_is_untouched(runtime):

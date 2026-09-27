@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+import sqlite3
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -93,24 +94,42 @@ def run_doctor(settings: Settings) -> DoctorReport:
     findings: list[Finding] = []
     database = Database(settings.database_path)
     schema_version: int | None = None
+    database_readable = False
     if settings.database_path.is_file():
-        schema_version = database._probe_version()
-        if schema_version is not None and schema_version > SCHEMA_VERSION:
+        try:
+            schema_version = database._probe_version()
+        except (sqlite3.DatabaseError, RuntimeError) as exc:
             findings.append(Finding(
-                "SCHEMA_INCOMPATIBLE", "ERROR",
-                f"database schema {schema_version} is newer than this build's {SCHEMA_VERSION}"))
-        elif schema_version is not None and schema_version < SCHEMA_VERSION \
-                and schema_version not in MIGRATIONS:
-            findings.append(Finding(
-                "SCHEMA_INCOMPATIBLE", "ERROR",
-                f"database schema {schema_version} has no declared migration path to "
-                f"{SCHEMA_VERSION}"))
+                "DATABASE_UNREADABLE", "ERROR",
+                f"database {settings.database_path} is not a readable SQLite database: {exc}"))
+        else:
+            database_readable = schema_version is not None
+            if schema_version is None:
+                findings.append(Finding(
+                    "DATABASE_NOT_INITIALIZED", "ERROR",
+                    f"database {settings.database_path} has no schema_info table"))
+            elif schema_version > SCHEMA_VERSION:
+                findings.append(Finding(
+                    "SCHEMA_INCOMPATIBLE", "ERROR",
+                    f"database schema {schema_version} is newer than this build's {SCHEMA_VERSION}"))
+            elif schema_version < SCHEMA_VERSION and schema_version not in MIGRATIONS:
+                findings.append(Finding(
+                    "SCHEMA_INCOMPATIBLE", "ERROR",
+                    f"database schema {schema_version} has no declared migration path to "
+                    f"{SCHEMA_VERSION}"))
     else:
         findings.append(Finding("DATABASE_MISSING", "ERROR",
                                 f"database {settings.database_path} does not exist"))
 
-    repository = Repository(database)
-    registered = _registered_paths(repository)
+    registered: dict[str, dict[str, Any]] = {}
+    if database_readable:
+        try:
+            registered = _registered_paths(Repository(database))
+        except sqlite3.DatabaseError as exc:
+            database_readable = False
+            findings.append(Finding(
+                "DATABASE_UNREADABLE", "ERROR",
+                f"database {settings.database_path} cannot be read: {exc}"))
 
     for relative, row in sorted(registered.items()):
         target = settings.data_dir / relative
@@ -126,7 +145,7 @@ def run_doctor(settings: Settings) -> DoctorReport:
                 f"registered artifact {row['artifact_id']} content hash differs from its record",
                 relative))
 
-    if settings.data_dir.is_dir():
+    if database_readable and settings.data_dir.is_dir():
         now = time.time()
         orphaned: list[str] = []
         stale_temp: list[str] = []
@@ -155,6 +174,7 @@ def run_doctor(settings: Settings) -> DoctorReport:
                 "TEMP_ARTIFACT_STALE", "WARNING",
                 f"temporary file is older than {TEMP_ARTIFACT_MAX_AGE_SECONDS}s", relative))
 
+    if settings.data_dir.is_dir():
         free = shutil.disk_usage(settings.data_dir).free
         if free < MIN_FREE_DISK_BYTES:
             findings.append(Finding(
@@ -171,7 +191,7 @@ def run_doctor(settings: Settings) -> DoctorReport:
             pass
 
     worker = None
-    if schema_version is not None and schema_version <= SCHEMA_VERSION:
+    if database_readable and schema_version is not None and schema_version <= SCHEMA_VERSION:
         with database.read() as connection:
             row = connection.execute("SELECT * FROM worker_status WHERE singleton=1").fetchone()
             worker = dict(row) if row else None
@@ -191,9 +211,21 @@ def run_doctor(settings: Settings) -> DoctorReport:
 def prune_stale_temp_artifacts(
         settings: Settings, *,
         max_age_seconds: int = TEMP_ARTIFACT_MAX_AGE_SECONDS) -> tuple[str, ...]:
-    """Delete only stale temporary files; never a registered artifact or evidence."""
-    repository = Repository(Database(settings.database_path))
-    registered = _registered_paths(repository)
+    """Delete only stale temporary files; never a registered artifact or evidence.
+
+    A missing, uninitialized or corrupt database means the registry cannot be
+    trusted, so nothing is judged or deleted.
+    """
+    if not settings.database_path.is_file():
+        return ()
+    database = Database(settings.database_path)
+    try:
+        schema_version = database._probe_version()
+        if schema_version is None:
+            return ()
+        registered = _registered_paths(Repository(database))
+    except (sqlite3.DatabaseError, RuntimeError):
+        return ()
     removed: list[str] = []
     now = time.time()
     if not settings.data_dir.is_dir():
