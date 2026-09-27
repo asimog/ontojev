@@ -167,6 +167,28 @@ def test_two_shards_merge_into_project_calls_with_declared_dispositions(runtime)
     assert len(completed) == 1
 
 
+def test_merge_excludes_out_of_universe_calls_with_a_recorded_warning(runtime):
+    """The canonical merge is universe-scoped: no call can escape Stage 4 scope (P1-02)."""
+    run_id, repository, artifacts, transport, emit, events = _prepare(runtime)
+
+    for index in (0, 1):
+        run_cnv_shard_scan(run_id, transport, repository, artifacts, emit,
+                           LUAD_RESEARCH_V1, shard_index=index)
+
+    result = run_cnv_shard_merge(run_id, repository, artifacts, emit, LUAD_RESEARCH_V1,
+                                 expected_shards=2, universe_ids=frozenset({TP53, BRCA1, KRAS}))
+
+    by_gene = {call.evidence.gene_id: call for call in result.calls}
+    assert EGFR not in by_gene, "a gene outside the tested universe cannot become a call"
+    assert result.retained_ids == (TP53,)
+    assert result.jev_review_ids == (BRCA1,)
+    assert any("CNV_UNIVERSE_EXCLUSION" in warning for warning in result.warnings)
+    assert result == read_cnv_project_scan(write_cnv_project_scan(result),
+                                           expected_hash=cnv_project_scan_identity(result))
+    completed = [event for event in events if event["type"] == "CNV_PROJECT_SCAN_COMPLETED"]
+    assert completed[-1]["data"]["excluded_outside_universe"] == 1
+
+
 def test_merge_refuses_until_every_required_shard_exists(runtime):
     run_id, repository, artifacts, transport, emit, _ = _prepare(runtime)
     run_cnv_shard_scan(run_id, transport, repository, artifacts, emit, LUAD_RESEARCH_V1,

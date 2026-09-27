@@ -202,7 +202,8 @@ def run_systematic_campaign(*, run_id: str, profile: CampaignProfile, spec: Rese
         emit, run_id, "STATE_GENERATION",
         lambda: run_cnv_shard_merge(
             run_id, repository, artifacts, lane_emit, spec, expected_shards=len(shards),
-            case_shard_size=CNV_CASE_SHARD_SIZE),
+            case_shard_size=CNV_CASE_SHARD_SIZE,
+            universe_ids=frozenset(mutation.universe.ordered_ids)),
     )
     states = run_stage(
         emit, run_id, "STATE_GENERATION",

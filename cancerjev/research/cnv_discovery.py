@@ -519,8 +519,15 @@ def run_cnv_shard_merge(
     expected_shards: int,
     case_shard_size: int = CNV_CASE_SHARD_SIZE,
     source_run_ids: tuple[str, ...] | None = None,
+    universe_ids: frozenset[str] | None = None,
 ) -> CnvProjectScanResult:
-    """Merge all required shard evidence into one project scan result, or fail closed."""
+    """Merge all required shard evidence into one project scan result, or fail closed.
+
+    When ``universe_ids`` is given, merged evidence outside the tested universe is
+    excluded from the calls and recorded as a warning; raw shard evidence is
+    untouched. The canonical campaign passes the release-bound Stage 4 universe, so
+    a CNV call can never nominate a gene the union cannot evidence.
+    """
     shards: list[CnvShardEvidence] = []
     sources: list[OperationalSource] = []
     seen_release: str | None = None
@@ -563,12 +570,24 @@ def run_cnv_shard_merge(
             bytes_read=0, latency_ms=None, http_status=None, cache_hit=True,
         ))
     merged = merge_cnv_shard_evidence(tuple(shards), expected_shards=expected_shards)
+    excluded: tuple[str, ...] = ()
+    if universe_ids is not None:
+        excluded = tuple(sorted(evidence.gene_id for evidence in merged
+                                if evidence.gene_id not in universe_ids))
+        merged = tuple(evidence for evidence in merged if evidence.gene_id in universe_ids)
     calls = tuple(
         CnvProjectCall(evidence, *cnv_lane_disposition(evidence)) for evidence in merged)
+    warnings: tuple[str, ...] = ()
+    if excluded:
+        warnings = (
+            f"CNV_UNIVERSE_EXCLUSION: {len(excluded)} merged CNV gene(s) outside the tested universe "
+            f"were excluded from the calls",
+        )
     result = CnvProjectScanResult(
         research_spec.spec_id, research_spec.cohort.cohort_id, research_spec.cohort.project_id,
         seen_release or "UNVERIFIED_RELEASE", CNV_SCAN_SELECTION_RULE, case_shard_size,
-        expected_shards, cnv_scan_summary_method(), calls, tuple(sources), (), CNV_SCAN_LIMITATIONS)
+        expected_shards, cnv_scan_summary_method(), calls, tuple(sources), warnings,
+        CNV_SCAN_LIMITATIONS)
     artifact = artifacts.publish(
         f"runs/{run_id}/cnv-discovery/project-scan-result.json",
         write_cnv_project_scan(result), "application/json", "cnv-project-scan-result")
@@ -577,6 +596,7 @@ def run_cnv_shard_merge(
          f"Merged CNV scan completed for {len(calls)} observed gene(s).",
          data={"genes": len(calls), "retained": len(result.retained_ids),
                "jev_review": len(result.jev_review_ids), "shards": expected_shards,
+               "excluded_outside_universe": len(excluded),
                "release": result.release,
                "artifact_id": artifact.artifact_id, "artifact_sha256": artifact.sha256},
          artifact_refs=[artifact.ref()],

@@ -137,18 +137,25 @@ def test_union_states_round_trip_with_nominations_and_findings(runtime):
     assert restored.quality == state.quality
 
 
-def test_union_refuses_a_nomination_outside_the_tested_universe(runtime):
+def test_union_drops_a_nomination_outside_the_tested_universe_with_a_recorded_warning(runtime):
+    """An out-of-universe nomination is declared and excluded, never fatal (P1-02)."""
     mutation, expression = _lanes(runtime)
     outsider = "ENSG00000000099"
+    cases = expression.population.examined_ids[:5]
     cnv = _cnv_result(mutation, (
-        _call(outsider, "Amplification", expression.population.examined_ids[:5],
-              disposition=CnvDisposition.RETAIN, reason=CNV_RETAIN_REASON),
+        _call(G1, "Amplification", cases, disposition=CnvDisposition.RETAIN,
+              reason=CNV_RETAIN_REASON),
+        _call(outsider, "Amplification", cases, disposition=CnvDisposition.RETAIN,
+              reason=CNV_RETAIN_REASON),
     ))
 
-    with pytest.raises(CutoverError) as failure:
-        compose_discovery_states(mutation, expression, cnv, LUAD_RESEARCH_V1)
+    states = compose_discovery_states(mutation, expression, cnv, LUAD_RESEARCH_V1)
 
-    assert failure.value.code in {"UNION_OUTSIDE_UNIVERSE", "UNION_EVIDENCE_MISSING"}
+    gene_ids = {state.entity.gene_id for state in states}
+    assert outsider not in gene_ids, "an out-of-universe nomination never becomes a state"
+    g1 = next(state for state in states if state.entity.gene_id == G1)
+    assert ("cnv", "RETAIN") in g1.nominations
+    assert any("UNION_UNIVERSE_EXCLUSION" in warning for warning in g1.warnings)
 
 
 def test_union_refuses_mixed_releases(runtime):

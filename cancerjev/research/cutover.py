@@ -150,14 +150,20 @@ def _compose_union_states(
         if call.disposition in (CnvDisposition.RETAIN, CnvDisposition.JEV_REVIEW):
             nominations.setdefault(call.evidence.gene_id, []).append(
                 ("cnv", call.disposition.value))
+    excluded = sorted(gene_id for gene_id in nominations if gene_id not in mutation_by_id)
+    for gene_id in excluded:
+        del nominations[gene_id]
+    exclusion_warning = (
+        f"UNION_UNIVERSE_EXCLUSION: {len(excluded)} nomination(s) outside the tested universe were "
+        f"excluded from the union" if excluded else None)
     union_ids = sorted(nominations)
     if not union_ids:
         raise CutoverError("EMPTY_UNION", "no modality nominated any gene")
     for gene_id in union_ids:
-        if gene_id not in mutation_by_id or gene_id not in expression_by_id:
-            raise CutoverError("UNION_EVIDENCE_MISSING", f"missing Stage 4/5 evidence for {gene_id}")
-        if gene_id not in mutation.universe.ordered_ids:
-            raise CutoverError("UNION_OUTSIDE_UNIVERSE", f"{gene_id} is outside the tested universe")
+        # Unreachable by construction: nominations are built only from the three
+        # universe-scoped lane artifacts, so this is defense against future lane changes.
+        assert gene_id in mutation_by_id and gene_id in expression_by_id, \
+            f"union nomination {gene_id} lacks Stage 4/5 evidence"
     sources = _unique_operational(mutation.sources, expression.sources, cnv.sources)
     scientific_sources = tuple(dict.fromkeys(source.source for source in sources))
     population = PopulationRecord(
@@ -222,6 +228,7 @@ def _compose_union_states(
         warnings = tuple(dict.fromkeys((
             *mutation.warnings, *expression.warnings, *cnv.warnings,
             *((PENDING_REVIEW_WARNING,) if pending_review else ()),
+            *((exclusion_warning,) if exclusion_warning is not None else ()),
         )))
         state = StatisticalState(
             entity=mutation_entry.entity,
