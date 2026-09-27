@@ -113,6 +113,31 @@ def test_canonical_campaign_runs_every_modality_and_the_union(runtime):
     assert repository.get_run(run_id)["status"] == "PENDING", "the CLI owns the run terminal state"
 
 
+def test_raw_shard_eviction_never_changes_what_jev_and_the_engine_see(runtime):
+    """The streaming pipeline deletes only raw pages; merge, union, Wide Jev and
+    selection consume exactly the derived shard evidence and stay unchanged."""
+    _, repository, artifacts = runtime
+    run_id, _, events, result = _execute(runtime)
+    types = [event["type"] for event in events]
+
+    evicted = [event for event in events if event["type"] == "CNV_SHARD_RAW_EVICTED"]
+    assert len(evicted) == result.cnv_shards, "every committed shard evicts its raw pages"
+    assert all(event["data"]["raw_artifacts"] >= 1 and event["data"]["registered"] >= 1
+               for event in evicted), "evictions are registered before the files are deleted"
+    assert repository.artifact_evictions()
+
+    for index in range(result.cnv_shards):
+        row = repository.artifact_at_path(f"runs/{run_id}/cnv-shards/shard-{index:04d}.json")
+        assert row is not None, "the derived shard evidence is never evicted"
+        assert artifacts.read(row["relative_path"], row["sha256"])
+
+    assert "CNV_PROJECT_SCAN_COMPLETED" in types, "the merge runs over evicted-shard evidence"
+    assert result.state_ids and result.wide is not None, "union and Wide Jev still run"
+    assert "JEV_WIDE_STARTED" in types and "JEV_WIDE_COMPLETED" in types
+    assert repository.list_table("jev_evaluations", run_id), \
+        "Wide judgments are persisted exactly as before the streaming pipeline"
+
+
 def test_union_states_use_the_canonical_persistence(runtime):
     _, repository, artifacts = runtime
     run_id, _, _, result = _execute(runtime)

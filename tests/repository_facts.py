@@ -81,6 +81,7 @@ from cancerjev.jev.questions import (
     HYPOTHESIS_QUESTION_SET_VERSION,
     WIDE_QUESTION_SET_VERSION,
 )
+from cancerjev.research.calibration import CALIBRATION_DESIGN_VERSION
 from cancerjev.research.campaign import LUAD_CAMPAIGN_V1
 from cancerjev.research.campaign_selection import CAMPAIGN_SELECTION_POLICY_VERSION
 from cancerjev.research.cnv_discovery import CNV_SHARD_RAW_EVICTION_POLICY
@@ -205,6 +206,7 @@ def collect_facts() -> dict[str, object]:
             ownership.value for ownership in ExecutionOwnership),
         "deep_action_policy": DEEP_ACTION_POLICY_VERSION,
         "campaign_selection_policy": CAMPAIGN_SELECTION_POLICY_VERSION,
+        "calibration_design_version": CALIBRATION_DESIGN_VERSION,
         "program_loop_version": PROGRAM_LOOP_VERSION,
         "release_monitor_version": RELEASE_MONITOR_VERSION,
         "luad_campaign_readiness": LUAD_CAMPAIGN_V1.readiness.value,

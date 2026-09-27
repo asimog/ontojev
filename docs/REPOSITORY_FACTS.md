@@ -23,6 +23,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "action_registry_version": "4",
   "api_version": "3.0.0",
   "arm_jev_decision": "DEFER",
+  "calibration_design_version": "calibration-design-v1",
   "campaign_selection_policy": "campaign-selection-v2",
   "cnv_discovery_result_schema_version": 1,
   "cnv_disposition_policy": "cnv-dispositions-v1",

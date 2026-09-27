@@ -150,6 +150,33 @@ def test_a_malformed_arm_output_hash_is_refused(tmp_path):
         evaluate_prospective(protocol, arms, arms_source_hash="not-a-sha256")
 
 
+def test_jev_vs_no_jev_design_is_evaluable_under_the_preregistered_contract(tmp_path):
+    """Design rehearsal for docs/CALIBRATION_DESIGN.md: frozen policies, paired arms,
+    mandatory failure/abstention analysis and no automatic incremental-value claim."""
+    protocol, _, _, _ = _prepared(tmp_path)
+    arms = (
+        Arm("A", "deterministic baseline without Jev",
+            tuple(replace(_prediction_template(), item_id=label.item_id,
+                          disposition="INVESTIGATE" if label.ordinal_usefulness >= 2 else "STOP")
+                  for label in protocol.labels)),
+        Arm("B", "pipeline with Wide/Deep Jev at frozen wide-policy-v2/deep-policy-v2",
+            tuple(replace(_prediction_template(), item_id=label.item_id,
+                          score=float(10 - label.ordinal_usefulness), disposition="INVESTIGATE")
+                  for label in protocol.labels)),
+    )
+
+    report = evaluate_prospective(protocol, arms, arms_source_hash="c" * 64, split="HOLDOUT")
+
+    assert report["top_k"] == 3 and report["arm_output_hash"] == "c" * 64
+    assert set(report["grouped_bootstrap"]) == {"B"}
+    assert report["grouped_bootstrap"]["B"]["replicates"] == protocol.bootstrap_replicates
+    for metrics in report["arms"].values():
+        assert {"coverage", "abstention_rate", "stop_rate", "unsupported_assertion_rate",
+                "wrong_population_rate"} <= set(metrics), \
+            "failure/abstention analysis is part of the preregistered metric set"
+    assert report["release_decision"] == "HUMAN_REVIEW_REQUIRED"
+
+
 def test_grouped_bootstrap_follows_the_declared_seed(tmp_path):
     _, arms, protocol_path, arm_hash = _prepared(tmp_path)
     protocol = load_protocol(protocol_path)
