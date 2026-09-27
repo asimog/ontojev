@@ -24,6 +24,7 @@ def test_second_research_owner_is_rejected(runtime):
     assert len(repository.list_runs()) == before
 
 
+@pytest.mark.local_process
 def test_second_research_owner_in_another_process_is_rejected(runtime):
     settings, repository, _ = runtime
     script = (

@@ -38,6 +38,7 @@ def test_strict_mypy_covers_every_tracked_production_module() -> None:
     assert problems == [], "strict-mypy coverage holes:\n" + "\n".join(problems)
 
 
+@pytest.mark.local_process
 def test_mypy_coverage_check_rejects_a_new_unlisted_module() -> None:
     modules = repository_facts.tracked_production_modules()
     listed = repository_facts.configured_mypy_modules()
