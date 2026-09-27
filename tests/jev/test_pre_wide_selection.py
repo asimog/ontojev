@@ -64,6 +64,24 @@ def test_declared_tie_break_resolves_equal_measured_keys_instead_of_aborting():
                for entry in selection.excluded)
 
 
+def test_within_ceiling_tie_break_is_state_hash_not_the_operational_id():
+    """Both branches must order equal measured keys by the declared state_hash asc.
+
+    The operational state_id is uuid4 in production, so using it as the in-flight
+    tie-break makes the Wide population order and Jev event order irreproducible.
+    """
+    first = _record("state-a", 10)
+    second = _record("state-z", 10)
+    records = [replace(first, state_hash="f" * 64), replace(second, state_hash="0" * 64)]
+
+    selection = select_pre_wide_states(records, ceiling=None)
+    cut = select_pre_wide_states(records, ceiling=1)
+
+    assert [record.state_id for record in selection.states] == ["state-z", "state-a"]
+    assert [record.state_id for record in cut.states] == ["state-z"], \
+        "within-ceiling and cut branches must use the same declared tie-break"
+
+
 def test_cut_reserves_capacity_for_expression_stratum_states():
     """A cut must not let the mutation stratum consume every Wide slot (P1-03)."""
     mutation_state = _record("state-mutation", 40)

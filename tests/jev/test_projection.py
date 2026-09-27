@@ -27,6 +27,7 @@ COHORT_FIELDS = {
     "mutation_coverage_complete", "ssm_coverage_cases", "expression_observed",
     "expression_median", "expression_sample_sd", "expression_n_finite", "expression_n_missing",
     "expression_provider_median", "expression_provider_stddev", "coverage_imbalance",
+    "coverage_imbalance_reason",
     "cnv_observed", "cnv_positive_cases", "cnv_conflicting_cases", "cnv_categories",
     "cnv_callers", "completeness", "scientific_sufficiency",
 }
@@ -51,6 +52,8 @@ def test_projection_is_deterministic_and_compact():
     assert first["cohort"]["expression_observed"] is True
     assert first["cohort"]["coverage_imbalance"] is False, \
         "a flag computed under the declared rule is forwarded, not nulled"
+    assert first["cohort"]["coverage_imbalance_reason"] is None, \
+        "an assessed summary carries no not-assessed reason"
     assert first["eligible_followups"] == [
         "CHECK_EVIDENCE_INTEGRITY_V1", "OCCURRENCE_DETAIL_EVIDENCE_V1",
         "SUMMARIZE_EXPRESSION_TAIL_V1"]
@@ -150,6 +153,8 @@ def test_projection_forwards_recorded_coverage_imbalance_and_nulls_only_not_asse
     canonical = build_projection(state_record("state-union", canonical_state))
     assert canonical["cohort"]["coverage_imbalance"] is None, \
         "a summary that does not apply the declared rule projects NOT_ASSESSED, never false"
+    assert canonical["cohort"]["coverage_imbalance_reason"] == "not applicable to one project", \
+        "the state's recorded not-assessed reason is projected with the null"
 
 
 def test_projection_declares_cnv_contextual_only_when_cnv_is_observed():

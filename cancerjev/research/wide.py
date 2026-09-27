@@ -111,7 +111,8 @@ def select_pre_wide_states(states: list[StateRecord], *,
         raise LiveRunError("INVALID_PRE_WIDE_CEILING", f"ceiling must be positive, got {ceiling}")
     _require_pre_wide_policy()
     if ceiling is None or len(states) <= ceiling:
-        ordered = sorted(states, key=lambda record: (measured_ordering_key(record), record.state_id))
+        ordered = sorted(states, key=lambda record: (measured_ordering_key(record),
+                                                     record.state_hash, record.state_id))
         counts: dict[str, int] = {stratum: 0 for stratum in PRE_WIDE_STRATA}
         for record in ordered:
             counts[state_stratum(record)] += 1

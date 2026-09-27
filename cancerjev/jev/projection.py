@@ -32,7 +32,7 @@ from cancerjev.domain.scientific import (
 from cancerjev.science.actions import ACTION_REGISTRY, eligible_actions
 from cancerjev.science.methods import COVERAGE_IMBALANCE_DEFINITION
 
-PROJECTION_VERSION = "jev-state-projection-v5"
+PROJECTION_VERSION = "jev-state-projection-v6"
 EVIDENCE_PROJECTION_VERSION = "jev-evidence-projection-v2"
 HYPOTHESIS_PROJECTION_VERSION = "jev-hypothesis-projection-v2"
 PROJECTION_BYTE_CAP = 65_536
@@ -70,6 +70,7 @@ INCLUDED_FIELDS = (
     "cohort.cnv_categories",
     "cohort.cnv_callers",
     "cohort.coverage_imbalance",
+    "cohort.coverage_imbalance_reason",
     "cohort.completeness",
     "cohort.scientific_sufficiency",
     "missingness[]",
@@ -183,6 +184,16 @@ def build_projection(record: StateRecord) -> dict[str, Any]:
         cnv_positive_cases = None
         cnv_conflicting_cases = None
         cnv_callers = []
+    # The recorded flag is forwarded only when the summary was computed under the declared
+    # rule. A summary that does not apply the rule (the single-cohort union marks it
+    # "not applicable to one project") is NOT ASSESSED: null, never observed-absence false,
+    # and the state's recorded reason for the not-assessed summary is projected alongside it.
+    coverage_imbalance_assessed = (
+        state.cross_project.coverage_imbalance_definition == COVERAGE_IMBALANCE_DEFINITION)
+    coverage_imbalance = (state.cross_project.coverage_imbalance
+                          if coverage_imbalance_assessed else None)
+    coverage_imbalance_reason = (None if coverage_imbalance_assessed
+                                 else state.cross_project.coverage_imbalance_definition)
     provider = project.provider_expression
     missingness = list(state.missingness)
     for warning in state.warnings:
@@ -226,14 +237,8 @@ def build_projection(record: StateRecord) -> dict[str, Any]:
             "cnv_conflicting_cases": cnv_conflicting_cases,
             "cnv_categories": cnv_categories,
             "cnv_callers": cnv_callers,
-            # The recorded flag is forwarded only when the summary was computed under the declared
-            # rule. A summary that does not apply the rule (the single-cohort union marks it
-            # "not applicable to one project") is NOT ASSESSED: null, never observed-absence false.
-            "coverage_imbalance": (
-                state.cross_project.coverage_imbalance
-                if state.cross_project.coverage_imbalance_definition == COVERAGE_IMBALANCE_DEFINITION
-                else None
-            ),
+            "coverage_imbalance": coverage_imbalance,
+            "coverage_imbalance_reason": coverage_imbalance_reason,
             "completeness": completeness,
             "scientific_sufficiency": state.quality.sufficiency.value,
         },

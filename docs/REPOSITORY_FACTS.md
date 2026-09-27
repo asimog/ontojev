@@ -79,7 +79,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "research_spec_schema_version": 8,
   "run_event_schema_version": 1,
   "sqlite_schema_version": 8,
-  "state_projection_version": "jev-state-projection-v5",
+  "state_projection_version": "jev-state-projection-v6",
   "statistical_state_schema_version": 5,
   "systematic_universe_method": "GENE_ID_ASC_INDEXED_COMPLETE_V1",
   "typesafe_decision_record": "1",

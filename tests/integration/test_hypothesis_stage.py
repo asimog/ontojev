@@ -18,7 +18,7 @@ from cancerjev.research.hypotheses import (
     LLM_HYPOTHESIS_LABEL,
     TEMPLATE_GENERATOR,
 )
-from cancerjev.research.hypothesis_policy import HYPOTHESIS_POLICY_VERSION
+from cancerjev.research.hypothesis_policy import HYPOTHESIS_POLICY_VERSION, MOVES
 from cancerjev.science.actions import ACTION_REGISTRY
 from cancerjev.storage.readers import read_hypothesis_record
 from tests.integration.test_live_replay import (
@@ -357,9 +357,11 @@ def test_each_statement_is_judged_once_and_bound_to_its_evidence(runtime, monkey
         assert stored.draft.statement == row["hypothesis"]["statement"]
         assert stored.evidence_state_id == generation_evidence_id
 
-    if summary["hypothesis"]["policy"]["move"] == "TEST_HYPOTHESIS":
-        assert candidate["latest_evidence_state_id"] != generation_evidence_id, \
-            "the requested discriminating test produced a new immutable revision"
+    policy = summary["hypothesis"]["policy"]
+    assert policy["move"] in MOVES, "the recorded move is one the declared policy can make"
+    assert policy["action_id"] is None, "the hypothesis policy never dispatches an action"
+    assert candidate["latest_evidence_state_id"] == generation_evidence_id, \
+        "with no evidence-producing hypothesis test the stage writes no new revision"
 
     dossier = _dossier(runtime, repository, run_id, summary["candidate_id"])
     versions = dossier["sections"]["jev_model_question_versions"]["narrative"]
