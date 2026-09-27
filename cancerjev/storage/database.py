@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # Sequential, DDL-only migrations keyed by the schema version they upgrade from.
 # A migration never rewrites scientific rows: it may only add tables, indexes or
@@ -15,18 +15,29 @@ SCHEMA_VERSION = 7
 V7_ARTIFACT_PURPOSE_INDEX = (
     "CREATE INDEX IF NOT EXISTS idx_artifacts_purpose ON artifacts(purpose, relative_path)"
 )
+V8_ARTIFACT_EVICTIONS = (
+    "CREATE TABLE IF NOT EXISTS gdc_artifact_evictions("
+    " artifact_id TEXT PRIMARY KEY, policy_version TEXT NOT NULL, bytes INTEGER NOT NULL,"
+    " evicted_at TEXT NOT NULL)"
+)
 
 
 def _migrate_6_to_7(connection: sqlite3.Connection) -> None:
     connection.execute(V7_ARTIFACT_PURPOSE_INDEX)
 
 
-MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {6: _migrate_6_to_7}
+def _migrate_7_to_8(connection: sqlite3.Connection) -> None:
+    connection.execute(V8_ARTIFACT_EVICTIONS)
+
+
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    6: _migrate_6_to_7, 7: _migrate_7_to_8,
+}
 
 IMMUTABLE_TABLES = (
     "run_events", "artifacts", "statistical_states", "evidence_states",
     "jev_evaluations", "hypotheses", "followup_executions", "dossiers",
-    "jev_projections", "jev_cache", "gdc_cache",
+    "jev_projections", "jev_cache", "gdc_cache", "gdc_artifact_evictions",
 )
 
 SCHEMA = """
@@ -134,7 +145,7 @@ CREATE INDEX IF NOT EXISTS idx_jev_projections_run ON jev_projections(run_id,cre
 CREATE TABLE IF NOT EXISTS jev_cache(
  cache_key TEXT PRIMARY KEY, evaluation_id TEXT NOT NULL, created_at TEXT NOT NULL
 );
-""" + V7_ARTIFACT_PURPOSE_INDEX + ";\n" + "".join(
+""" + V7_ARTIFACT_PURPOSE_INDEX + ";\n" + V8_ARTIFACT_EVICTIONS + ";\n" + "".join(
     f"CREATE TRIGGER IF NOT EXISTS {table}_no_update BEFORE UPDATE ON {table} "
     f"BEGIN SELECT RAISE(ABORT, '{table} is immutable'); END;\n"
     f"CREATE TRIGGER IF NOT EXISTS {table}_no_delete BEFORE DELETE ON {table} "

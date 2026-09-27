@@ -76,6 +76,24 @@ def test_request_completes_records_ledger_and_cache(transport_builder, loopback,
     assert totals["bytes"] == len(STATUS_BODY)
 
 
+def test_an_evicted_payload_is_a_cache_miss_and_refetches_live(transport_builder, loopback, runtime):
+    settings, repository, _ = runtime
+    loopback.json("/projects", STATUS_BODY)
+    transport = transport_builder()
+    first = transport.request(projects_request())
+    assert first.from_cache is False
+    assert repository.register_artifact_evictions(
+        ((first.artifact.artifact_id, first.artifact.size_bytes),),
+        policy_version="test-eviction-v1", evicted_at="2026-09-27T00:00:00Z") == 1
+    (settings.data_dir / first.artifact.relative_path).unlink()
+
+    again = transport.request(projects_request())
+
+    assert again.from_cache is False, "an evicted raw payload reads as a cache miss"
+    assert len(loopback.requests) == 2, "the miss refetches live and the run continues"
+    assert repository.gdc_run_totals(transport.run_id)["cache_hits"] == 0
+
+
 def test_no_authentication_headers_are_ever_sent(transport_builder, loopback):
     loopback.json("/status", STATUS_BODY)
     transport = transport_builder()

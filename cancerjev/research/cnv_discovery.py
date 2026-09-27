@@ -24,6 +24,7 @@ from cancerjev.domain.discovery import (
     CnvShardEvidence,
     cnv_scan_summary_method,
 )
+from cancerjev.domain.events import utc_now
 from cancerjev.domain.measurements import (
     Acquisition,
     OperationalSource,
@@ -327,24 +328,30 @@ def run_cnv_shard_scan(
          registrations=[repository.artifact_registration(artifact, run_id)])
     if evict_raw:
         _evict_committed_shard_raw(
-            artifacts=artifacts, emit=emit,
+            repository=repository, artifacts=artifacts, emit=emit,
             shard_index=shard_index, raw_pages=tuple(raw_pages), ledger=ledger)
     return evidence
 
 
 def _evict_committed_shard_raw(
-    *, artifacts: ArtifactStore, emit: Callable[..., Any],
+    *, repository: Repository, artifacts: ArtifactStore, emit: Callable[..., Any],
     shard_index: int, raw_pages: tuple[Any, ...], ledger: ShardLedger,
 ) -> None:
     """Delete a committed shard's raw page payloads; derived evidence stays durable.
 
     Runs only after the terminal page ledger and the shard evidence artifact are
-    committed, so an interrupted or failed shard never loses its raw pages. The
-    cache index rows stay immutable; a lookup of an evicted payload reads no file
-    and falls back to a live fetch, and the terminal ledger keeps every page's
-    request/response hash as provenance. The merge reads the derived shard
-    evidence, never these raw pages.
+    committed, so an interrupted or failed shard never loses its raw pages. Each
+    eviction is registered first (append-only) and the file is deleted after, so a
+    payload is never missing without a declared eviction record; the doctor reports
+    registered evictions as information instead of corruption. The cache index rows
+    stay immutable and a lookup of an evicted payload reads no file and falls back
+    to a live fetch; the terminal ledger keeps every page's request/response hash
+    as provenance. The merge reads the derived shard evidence, never raw pages.
     """
+    identities = tuple((str(page.artifact_id), int(page.size_bytes or 0))
+                       for page in raw_pages)
+    registered = repository.register_artifact_evictions(
+        identities, policy_version=CNV_SHARD_RAW_EVICTION_POLICY, evicted_at=utc_now())
     evicted = 0
     bytes_freed = 0
     for page in raw_pages:
@@ -356,7 +363,7 @@ def _evict_committed_shard_raw(
          f"Committed CNV shard {shard_index} raw pages evicted; derived evidence retained.",
          stage="STATE_GENERATION", level="warning",
          data={"shard_index": shard_index, "policy_version": CNV_SHARD_RAW_EVICTION_POLICY,
-               "raw_artifacts": evicted, "bytes": bytes_freed,
+               "raw_artifacts": evicted, "registered": registered, "bytes": bytes_freed,
                "page_records": len(ledger.records)})
 
 

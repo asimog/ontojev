@@ -283,6 +283,35 @@ class Repository:
                  created_at),
             )
 
+    def register_artifact_evictions(self, evictions: tuple[tuple[str, int], ...], *,
+                                    policy_version: str, evicted_at: str) -> int:
+        """Record evicted payload identities before their files are deleted.
+
+        Registration is append-only and idempotent: a crash between registration and
+        deletion leaves the file present with a pending eviction record, never a
+        missing payload without one.
+        """
+        if not evictions:
+            return 0
+        inserted = 0
+        with self.database.connect(write=True) as connection:
+            for artifact_id, size in evictions:
+                cursor = connection.execute(
+                    "INSERT INTO gdc_artifact_evictions"
+                    "(artifact_id,policy_version,bytes,evicted_at) VALUES(?,?,?,?) "
+                    "ON CONFLICT(artifact_id) DO NOTHING",
+                    (artifact_id, policy_version, size, evicted_at),
+                )
+                inserted += int(cursor.rowcount or 0)
+        return inserted
+
+    def artifact_evictions(self) -> dict[str, dict[str, Any]]:
+        with self.database.read() as connection:
+            rows = connection.execute(
+                "SELECT artifact_id, policy_version, bytes, evicted_at "
+                "FROM gdc_artifact_evictions").fetchall()
+            return {row["artifact_id"]: dict(row) for row in rows}
+
     def gdc_attempts(self, run_id: str) -> list[dict[str, Any]]:
         with self.database.read() as connection:
             rows = connection.execute(

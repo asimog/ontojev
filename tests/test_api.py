@@ -76,6 +76,24 @@ def test_health_and_system_report_the_current_configuration(runtime, monkeypatch
     assert system["budget_defaults"]["per_response_bytes"] == 5 * 1024 * 1024
 
 
+def test_evicted_artifact_is_reported_as_gone_not_corrupt(runtime, monkeypatch):
+    settings, repository, artifacts = runtime
+    run_id = repository.list_runs()[0]["run_id"]
+    artifact = artifacts.publish("raw/api-evicted.body", b"{}", "application/json",
+                                 "gdc-response")
+    repository.register_artifact(artifact, run_id)
+    repository.register_artifact_evictions(
+        ((artifact.artifact_id, artifact.size_bytes),),
+        policy_version="test-eviction-v1", evicted_at="2026-09-27T00:00:00Z")
+    (settings.data_dir / artifact.relative_path).unlink()
+
+    response = _client(settings, monkeypatch).get(f"/api/artifacts/{artifact.artifact_id}")
+
+    assert response.status_code == 410
+    assert response.json()["error"]["code"] == "HTTP_410"
+    assert "evicted by declared policy test-eviction-v1" in response.json()["error"]["message"]
+
+
 def test_worker_heartbeat_freshness_tracks_the_active_run(runtime, monkeypatch):
     settings, repository, _ = runtime
     client = _client(settings, monkeypatch)

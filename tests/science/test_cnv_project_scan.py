@@ -155,6 +155,13 @@ def test_a_committed_shard_evicts_its_raw_pages_while_derived_evidence_survives(
                         for name, artifact in transport.published if name != "cnv_occurrences")
     assert page_names and _fixture_files(runtime) == kept_names, \
         "committed shard raw pages are evicted; shared shard-framing responses are cacheable"
+    evictions = repository.artifact_evictions()
+    page_ids = [str(artifact.artifact_id) for name, artifact in transport.published
+                if name == "cnv_occurrences"]
+    assert sorted(page_ids) == sorted(
+        artifact_id for artifact_id in evictions
+        if evictions[artifact_id]["policy_version"] == "cnv-shard-raw-eviction-v1"), \
+        "every evicted raw page is registered append-only before its file is deleted"
     evicted = [event for event in events if event["type"] == "CNV_SHARD_RAW_EVICTED"]
     assert len(evicted) == 1
     assert evicted[0]["data"]["raw_artifacts"] >= 1 and evicted[0]["data"]["bytes"] > 0

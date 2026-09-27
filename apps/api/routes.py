@@ -261,5 +261,10 @@ def artifact(artifact_id: UUID, request: Request) -> Response:
     try:
         content = artifacts.read(metadata["relative_path"], metadata["sha256"])
     except (OSError, ValueError) as exc:
+        eviction = repository.artifact_evictions().get(str(artifact_id))
+        if eviction is not None:
+            raise HTTPException(
+                410, detail=f"artifact evicted by declared policy "
+                            f"{eviction['policy_version']}") from exc
         raise HTTPException(503, detail="artifact unavailable or corrupt") from exc
     return Response(content, media_type=metadata["media_type"], headers={"ETag": f'"{metadata["sha256"]}"'})

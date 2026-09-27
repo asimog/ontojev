@@ -122,9 +122,12 @@ def run_doctor(settings: Settings) -> DoctorReport:
                                 f"database {settings.database_path} does not exist"))
 
     registered: dict[str, dict[str, Any]] = {}
+    evictions: dict[str, dict[str, Any]] = {}
     if database_readable:
         try:
-            registered = _registered_paths(Repository(database))
+            repository = Repository(database)
+            registered = _registered_paths(repository)
+            evictions = repository.artifact_evictions()
         except sqlite3.DatabaseError as exc:
             database_readable = False
             findings.append(Finding(
@@ -134,6 +137,13 @@ def run_doctor(settings: Settings) -> DoctorReport:
     for relative, row in sorted(registered.items()):
         target = settings.data_dir / relative
         if not target.is_file():
+            eviction = evictions.get(str(row["artifact_id"]))
+            if eviction is not None:
+                findings.append(Finding(
+                    "ARTIFACT_EVICTED", "INFO",
+                    f"registered artifact {row['artifact_id']} was evicted by declared "
+                    f"policy {eviction['policy_version']}", relative))
+                continue
             findings.append(Finding("ARTIFACT_MISSING", "ERROR",
                                     f"registered artifact {row['artifact_id']} is missing on disk",
                                     relative))

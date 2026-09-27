@@ -92,6 +92,45 @@ def test_corrupt_database_file_is_refused(tmp_path):
         Database(path).bootstrap()
 
 
+def test_declared_migration_upgrades_a_previous_schema_with_a_backup(tmp_path):
+    path = tmp_path / "upgrade" / "cancerjev.db"
+    database = Database(path)
+    database.bootstrap()
+    with database.connect(write=True) as connection:
+        connection.execute("UPDATE schema_info SET version=?", (SCHEMA_VERSION - 1,))
+
+    Database(path).bootstrap()
+
+    with Database(path).read() as connection:
+        assert connection.execute("SELECT version FROM schema_info").fetchone()[0] == SCHEMA_VERSION
+        tables = {row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "gdc_artifact_evictions" in tables
+    backups = list(path.parent.glob(f"{path.name}.backup-v{SCHEMA_VERSION - 1}-*"))
+    assert len(backups) == 1, "every migration step is preceded by a declared backup"
+
+
+def test_artifact_eviction_registration_is_append_only_and_idempotent(runtime):
+    _, repository, artifacts = runtime
+    run_id = repository.create_run("eviction-guard")
+    artifact = artifacts.publish("raw/eviction-guard.body", b"{}", "application/json",
+                                 "gdc-response")
+    repository.register_artifact(artifact, run_id)
+    record = ((artifact.artifact_id, artifact.size_bytes),)
+
+    assert repository.register_artifact_evictions(
+        record, policy_version="test-eviction-v1", evicted_at="2026-09-27T00:00:00Z") == 1
+    assert repository.register_artifact_evictions(
+        record, policy_version="test-eviction-v1", evicted_at="2026-09-27T00:00:00Z") == 0
+
+    assert repository.artifact_evictions()[artifact.artifact_id]["policy_version"] == \
+        "test-eviction-v1"
+    with repository.database.connect(write=True) as connection:
+        with pytest.raises(sqlite3.IntegrityError, match="is immutable"):
+            connection.execute("DELETE FROM gdc_artifact_evictions")
+        connection.rollback()
+
+
 def test_ownership_lock_is_exclusive(tmp_path):
     lock_path = tmp_path / "data" / "research.lock"
     with ResearchOwnership(lock_path):

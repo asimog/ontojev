@@ -135,6 +135,38 @@ def test_prune_refuses_a_store_without_a_readable_database(runtime):
     assert stale.is_file(), "without a readable registry nothing is judged or deleted"
 
 
+def test_a_declared_eviction_is_information_not_corruption(runtime):
+    settings, repository, artifacts = runtime
+    run_id = repository.create_run("doctor-eviction")
+    artifact = artifacts.publish("raw/evicted-page.body", b'{"x": 1}', "application/json",
+                                 "gdc-response")
+    repository.register_artifact(artifact, run_id)
+    assert repository.register_artifact_evictions(
+        ((artifact.artifact_id, artifact.size_bytes),),
+        policy_version="test-eviction-v1", evicted_at="2026-09-27T00:00:00Z") == 1
+    (settings.data_dir / artifact.relative_path).unlink()
+
+    report = run_doctor(settings)
+
+    assert report.ok() is True, "a declared eviction is never corruption"
+    assert "ARTIFACT_EVICTED" in _codes(report)
+    assert "ARTIFACT_MISSING" not in _codes(report)
+
+
+def test_a_missing_payload_without_an_eviction_record_is_still_an_error(runtime):
+    settings, repository, artifacts = runtime
+    run_id = repository.create_run("doctor-missing")
+    artifact = artifacts.publish("raw/unrecorded.body", b"{}", "application/json", "gdc-response")
+    repository.register_artifact(artifact, run_id)
+    (settings.data_dir / artifact.relative_path).unlink()
+
+    report = run_doctor(settings)
+
+    assert report.ok() is False
+    assert "ARTIFACT_MISSING" in _codes(report)
+    assert "ARTIFACT_EVICTED" not in _codes(report)
+
+
 def test_future_schema_is_reported_and_the_file_is_untouched(runtime):
     settings, repository, artifacts = runtime
     database = Database(settings.database_path)

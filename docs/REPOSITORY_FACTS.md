@@ -77,7 +77,7 @@ that describes behavior (see the source-of-truth hierarchy in
   "release_monitor_version": "release-monitor-v1",
   "research_spec_schema_version": 8,
   "run_event_schema_version": 1,
-  "sqlite_schema_version": 7,
+  "sqlite_schema_version": 8,
   "state_projection_version": "jev-state-projection-v5",
   "statistical_state_schema_version": 5,
   "systematic_universe_method": "GENE_ID_ASC_INDEXED_COMPLETE_V1",
