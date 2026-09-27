@@ -44,10 +44,13 @@ from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
 
 NO_JEV_BASELINE_VERSION = "no-jev-baseline-v1"
+NO_JEV_BASELINE_REVISION_RULE = "FIRST_ACTION_REVISION"
 FINAL_RESULT_SCHEMA_VERSION = 1
 
 NOT_COMPARABLE = "NOT_COMPARABLE"
 SAME_DECISION = "SAME_DECISION"
+DIFFERENT = "DIFFERENT"
+PARTIALLY_COMPARABLE = "PARTIALLY_COMPARABLE"
 DIFFERENT_ADMISSION = "DIFFERENT_ADMISSION"
 DIFFERENT_RANK = "DIFFERENT_RANK"
 NO_BASELINE_DECISION = "NO_BASELINE_DECISION"
@@ -62,10 +65,11 @@ BASELINE_DETAIL = (
 def baseline_next_move(checks_contradicted: int) -> dict[str, Any]:
     """The declared deterministic no-jev-baseline-v1 deep rule.
 
-    The baseline executes the operator-selected deterministic action on the
-    accepted evidence exactly once and then stops: without a deep judgment there
-    is no warranted further step, and a contradicted revision abstains. It never
-    dispatches an additional follow-up and never generates hypotheses.
+    The baseline executes the deterministic action recorded as the first action
+    revision (E1) on the accepted evidence exactly once and then stops: without a
+    deep judgment there is no warranted further step, and a contradicted revision
+    abstains. It never dispatches an additional follow-up and never generates
+    hypotheses.
     """
     if checks_contradicted > 0:
         return {"move": "ABSTAIN", "reason_code": "REVISION_CONTRADICTS_RECORDED_EVIDENCE",
@@ -140,31 +144,68 @@ def _wide_comparison(rankings: dict[str, dict[str, Any]], source_state_id: str, 
     }
 
 
-def _investigation_comparison(final_revision_summary: dict[str, Any] | None,
+def _revision_summary(revision: Any) -> dict[str, Any]:
+    return {
+        "total": revision.summary.total, "verified": revision.summary.verified,
+        "contradicted": revision.summary.contradicted,
+        "not_observed": revision.summary.not_observed,
+        "has_action": revision.action is not None,
+    }
+
+
+def _revision_identity(stored: Any) -> dict[str, Any]:
+    revision = stored.evidence
+    return {
+        "evidence_state_id": stored.evidence_state_id,
+        "evidence_hash": stored.record.evidence_hash,
+        "revision_index": revision.revision_index,
+        "action_id": revision.action.action_id if revision.action else None,
+    }
+
+
+def _investigation_comparison(final_revision: dict[str, Any] | None,
+                              baseline_revision: dict[str, Any] | None,
+                              baseline_summary: dict[str, Any] | None,
                               actual_final_move: str | None, hypotheses_generated: int,
                               extra_dispatches: int) -> dict[str, Any]:
-    if final_revision_summary is None or final_revision_summary.get("has_action") is not True:
+    """Compare the observed trajectory with the declared baseline on E1.
+
+    The baseline leg consumes the first action revision (E1), which is the revision
+    the declared baseline rule produces; the observed leg stays on the final
+    revision and records both revision identities. Only ``stopping_changed`` is a
+    delta between the two trajectories. Follow-up dispatch and hypothesis counts
+    are recorded as observed facts, not as changed flags: the baseline rule never
+    dispatches or generates, so such flags would be tautological. There is no
+    Jev-attribution flag because every dispatch is made by the recorded Python
+    policy.
+    """
+    if baseline_revision is None or baseline_summary is None:
         return {
             "comparison": NOT_COMPARABLE,
             "reason": ("no deterministic action was executed on this candidate; "
-                       "the baseline rule consumes the operator-selected action"),
+                       "the baseline rule consumes the first action revision"),
             "path": {"actual": "OBSERVED", "baseline": "DETERMINISTIC_REPLAY"},
+            "baseline_revision_rule": NO_JEV_BASELINE_REVISION_RULE,
+            "baseline_revision": None,
+            "observed_final_revision": final_revision,
             "baseline_next_move": None,
         }
-    baseline = baseline_next_move(int(final_revision_summary.get("contradicted") or 0))
+    baseline = baseline_next_move(int(baseline_summary.get("contradicted") or 0))
     baseline_move = baseline["move"]
     return {
         "path": {"actual": "OBSERVED", "baseline": "DETERMINISTIC_REPLAY"},
-        "comparison": SAME_DECISION if actual_final_move == baseline_move else "DIFFERENT",
+        "comparison": SAME_DECISION if actual_final_move == baseline_move else DIFFERENT,
         "baseline_rule": NO_JEV_BASELINE_VERSION,
+        "baseline_revision_rule": NO_JEV_BASELINE_REVISION_RULE,
+        "baseline_revision": baseline_revision,
+        "observed_final_revision": final_revision,
         "baseline_next_move": baseline_move,
         "baseline_reason_code": baseline["reason_code"],
         "baseline_detail": baseline["detail"],
         "actual_final_move": actual_final_move,
-        "follow_up_changed": extra_dispatches > 0,
+        "extra_follow_up_dispatches": extra_dispatches,
+        "hypotheses_generated": hypotheses_generated,
         "stopping_changed": (actual_final_move == "COMPLETE") != (baseline_move == "COMPLETE"),
-        "hypothesis_generation_changed": hypotheses_generated,
-        "evidence_revisions_attributable_to_jev_route": extra_dispatches,
         "note": BASELINE_DETAIL,
     }
 
@@ -176,8 +217,8 @@ def _comparison_status(wide: dict[str, Any], investigation: dict[str, Any]) -> s
     if all(part in (NO_BASELINE_DECISION, NOT_COMPARABLE) for part in parts):
         return NOT_COMPARABLE
     if any(part in (NO_BASELINE_DECISION, NOT_COMPARABLE) for part in parts):
-        return "PARTIALLY_COMPARABLE"
-    return "DIFFERENT"
+        return PARTIALLY_COMPARABLE
+    return DIFFERENT
 
 
 def _hypothesis_status(hypothesis: dict[str, Any] | None) -> dict[str, Any]:
@@ -233,21 +274,19 @@ def derive_stage8(*, run_id: str, candidate: dict[str, Any], investigation_statu
     """Derive the final candidate result and its comparison from persisted records only."""
     state = stored_state.record.state
     final_revision = chain[-1].evidence if chain else None
-    final_revision_summary = None
-    if final_revision is not None:
-        final_revision_summary = {
-            "total": final_revision.summary.total, "verified": final_revision.summary.verified,
-            "contradicted": final_revision.summary.contradicted,
-            "not_observed": final_revision.summary.not_observed,
-            "has_action": final_revision.action is not None,
-        }
+    final_revision_summary = _revision_summary(final_revision) if final_revision is not None else None
+    baseline_entry = next((entry for entry in chain if entry.evidence.action is not None), None)
+    baseline_revision_summary = (
+        _revision_summary(baseline_entry.evidence) if baseline_entry is not None else None)
     extra_dispatches = max(len(steps) - 1, 0) if steps else 0
     hypotheses_generated = 1 if (hypothesis or {}).get("status") == "GENERATED" else 0
 
     wide_comparison = _wide_comparison(rankings, candidate["source_state_id"],
                                        promoted_by_policy=promoted_by_policy)
     investigation_comparison = _investigation_comparison(
-        final_revision_summary, final_move, hypotheses_generated, extra_dispatches)
+        _revision_identity(chain[-1]) if chain else None,
+        _revision_identity(baseline_entry) if baseline_entry is not None else None,
+        baseline_revision_summary, final_move, hypotheses_generated, extra_dispatches)
     comparison = {
         "schema_version": 1,
         "kind": "JEV_NO_JEV_COMPARISON",

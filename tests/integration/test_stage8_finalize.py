@@ -12,15 +12,19 @@ no human-review gate anywhere in the lifecycle.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from types import SimpleNamespace
 
+from cancerjev.domain.evidence import CheckOutcome
 from cancerjev.research.finalize import (
     NO_JEV_BASELINE_VERSION,
     baseline_next_move,
+    derive_stage8,
     run_stage8_finalize,
 )
 from cancerjev.research.ranking import BASELINE_POLICY_VERSION
 from cancerjev.science.actions import CHECK_CONTRADICTED
-from cancerjev.storage.readers import read_dossier_record
+from cancerjev.storage.readers import read_candidate_state, read_dossier_record
 from tests.integration.test_deep_slice import (
     _candidate_chain,
     _completed_slice,
@@ -117,15 +121,86 @@ def test_comparison_records_actual_and_baseline_decisions_and_is_reproducible(
     assert wide["baseline_admitted"] == (
         payload["candidate"]["source_state_id"]
         in rankings[BASELINE_POLICY_VERSION]["top_state_ids"])
-    # The baseline leg is derived from the final persisted revision, not asserted:
-    # the declared rule replayed over the recorded contradiction count must be the
-    # recorded baseline decision.
+    # The baseline leg is derived from the first action revision (E1), the revision
+    # the declared baseline rule produces: the rule replayed over the recorded
+    # contradiction count must be the recorded baseline decision.
     chain = _candidate_chain(runtime, repository, {"candidate_id": summary["candidate_id"]})
-    contradicted = sum(1 for check in chain[-1].evidence.checks
+    baseline_entry = chain[1]
+    contradicted = sum(1 for check in baseline_entry.evidence.checks
                        if check.outcome == CHECK_CONTRADICTED)
     derived = baseline_next_move(contradicted)
     assert derived["move"] == comparison["investigation"]["baseline_next_move"]
     assert derived["reason_code"] == comparison["investigation"]["baseline_reason_code"]
+    assert comparison["investigation"]["baseline_revision"] == {
+        "evidence_state_id": baseline_entry.evidence_state_id,
+        "evidence_hash": baseline_entry.record.evidence_hash,
+        "revision_index": 1,
+        "action_id": "CHECK_EVIDENCE_INTEGRITY_V1",
+    }
+
+
+def test_investigation_baseline_consumes_e1_not_the_final_revision(runtime, monkeypatch):
+    run_id, summary, repository = _completed_slice(
+        runtime, monkeypatch, jev_adapter=_followup_adapter(), deep_followup_authorized=True)
+    [payload] = _final_result_payloads(repository, runtime[2], run_id)
+    chain = _candidate_chain(runtime, repository, {"candidate_id": summary["candidate_id"]})
+    assert [item.evidence.revision_index for item in chain] == [0, 1, 2]
+
+    investigation = payload["baseline_comparison"]["investigation"]
+    assert investigation["baseline_revision_rule"] == "FIRST_ACTION_REVISION"
+    assert investigation["baseline_revision"] == {
+        "evidence_state_id": chain[1].evidence_state_id,
+        "evidence_hash": chain[1].record.evidence_hash,
+        "revision_index": 1,
+        "action_id": "CHECK_EVIDENCE_INTEGRITY_V1",
+    }
+    assert investigation["observed_final_revision"]["evidence_state_id"] == \
+        chain[2].evidence_state_id
+    assert investigation["observed_final_revision"]["revision_index"] == 2
+    assert investigation["baseline_next_move"] == "COMPLETE"
+    assert investigation["actual_final_move"] == "ABSTAIN"
+    assert investigation["comparison"] == "DIFFERENT"
+    assert investigation["extra_follow_up_dispatches"] == 1
+    assert investigation["hypotheses_generated"] == 0
+    assert investigation["stopping_changed"] is True
+    assert "follow_up_changed" not in investigation, "the baseline never dispatches; the flag is tautological"
+    assert "hypothesis_generation_changed" not in investigation
+    assert "evidence_revisions_attributable_to_jev_route" not in investigation, \
+        "every dispatch is made by the recorded Python policy, never attributed to Jev"
+
+
+def test_baseline_leg_uses_e1_even_when_only_a_later_revision_contradicts(runtime, monkeypatch):
+    run_id, summary, repository = _completed_slice(
+        runtime, monkeypatch, jev_adapter=_followup_adapter(), deep_followup_authorized=True)
+    artifacts = runtime[2]
+    candidate = repository.get_candidate(summary["candidate_id"])
+    chain = _candidate_chain(runtime, repository, candidate)
+    assert [item.evidence.revision_index for item in chain] == [0, 1, 2]
+    contradicted = replace(
+        chain[2].evidence,
+        checks=(replace(chain[2].evidence.checks[0], outcome=CheckOutcome.CONTRADICTED,
+                        reason="synthetic contradiction"),))
+    synthetic_chain = [
+        chain[0], chain[1],
+        SimpleNamespace(evidence=contradicted, evidence_state_id=chain[2].evidence_state_id,
+                        record=chain[2].record),
+    ]
+    final_result, comparison = derive_stage8(
+        run_id=run_id, candidate=candidate, investigation_status="ABSTAINED",
+        final_move="ABSTAIN", stop_reason="DEEP_JUDGMENT_UNAVAILABLE", error_code=None,
+        steps=tuple(summary["steps"]), decisions=tuple(summary["decisions"]), hypothesis=None,
+        stored_state=read_candidate_state(repository, artifacts, candidate["candidate_id"]),
+        chain=synthetic_chain,
+        executions=repository.followup_executions_for(candidate["candidate_id"]),
+        dossier_id="dossier-test", promoted_by_policy=False, rankings={}, mode="LIVE")
+
+    assert final_result["final_evidence_revision"]["checks"]["contradicted"] == 1
+    investigation = comparison["investigation"]
+    assert investigation["observed_final_revision"]["revision_index"] == 2
+    assert investigation["baseline_revision"]["revision_index"] == 1, \
+        "the baseline leg consumes the first action revision, not the final one"
+    assert investigation["baseline_next_move"] == "COMPLETE", \
+        "a contradiction found only after E1 cannot flip the declared baseline"
 
 
 def test_multi_candidate_run_finalizes_each_candidate_then_completes_the_run(
