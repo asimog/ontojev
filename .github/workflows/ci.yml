@@ -19,7 +19,7 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked --extra dev
-      - run: uv run --no-sync python -m ruff check cancerjev apps tests
+      - run: uv run --no-sync python -m ruff check cancerjev apps deploy tests
       - run: uv run --no-sync python -m mypy
       - run: uv run --no-sync python -m tests.repository_facts check
       - run: uv run --no-sync python -m pytest
