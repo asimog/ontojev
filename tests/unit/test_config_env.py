@@ -12,6 +12,8 @@ from cancerjev.config import (
     Settings,
     load_local_env,
 )
+from cancerjev.domain.discovery import CNV_CASE_SHARD_SIZE
+from cancerjev.gdc.endpoints import MAX_CNV_CASE_SHARD_SIZE
 
 
 def test_loads_values_and_ignores_comments_blanks_and_invalid_names(tmp_path, monkeypatch):
@@ -97,6 +99,20 @@ def test_lowered_caps_and_timeouts_are_accepted_and_effective(monkeypatch):
     assert not hasattr(settings, "gdc_max_requests"), "obsolete cost knobs cannot reduce scientific scope"
     assert settings.gdc_per_response_bytes == 1024
     assert settings.jev_max_states == 2
+
+
+def test_declared_cnv_case_shard_size_defaults_and_is_bounded(monkeypatch):
+    """The operational case-shard size is declared, never ad hoc or unbounded."""
+    monkeypatch.setenv("CANCERJEV_NO_DOTENV", "1")
+    assert Settings.from_env().cnv_case_shard_size == CNV_CASE_SHARD_SIZE == 25
+    monkeypatch.setenv("CANCERJEV_CNV_CASE_SHARD_SIZE", "60")
+    assert Settings.from_env().cnv_case_shard_size == 60
+    monkeypatch.setenv("CANCERJEV_CNV_CASE_SHARD_SIZE", "0")
+    with pytest.raises(ValueError):
+        Settings.from_env()
+    monkeypatch.setenv("CANCERJEV_CNV_CASE_SHARD_SIZE", str(MAX_CNV_CASE_SHARD_SIZE + 1))
+    with pytest.raises(ValueError):
+        Settings.from_env()
 
 
 def test_llm_settings_exist_without_holding_credentials(monkeypatch):

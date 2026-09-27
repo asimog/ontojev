@@ -47,6 +47,7 @@ files = [
   "cancerjev/research/campaign.py",
   "cancerjev/research/live.py", "cancerjev/research/state_store.py",
   "cancerjev/research/systematic.py", "cancerjev/research/nextmove.py",
+  "cancerjev/research/resumed_evidence.py",
   "cancerjev/research/pathways.py", "cancerjev/research/program.py",
   "cancerjev/research/campaign_selection.py", "cancerjev/research/release_monitor.py",
   "cancerjev/research/replication.py",

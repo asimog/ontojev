@@ -5,6 +5,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from cancerjev.domain.discovery import CNV_CASE_SHARD_SIZE
+from cancerjev.gdc.endpoints import MAX_CNV_CASE_SHARD_SIZE
 from cancerjev.gdc.transport import BudgetCaps
 
 ENV_LOCAL_FILENAME = ".env.local"
@@ -81,6 +83,12 @@ class Settings:
     gdc_timeout_seconds: float = 30.0
     gdc_cache_enabled: bool = True
     cnv_raw_eviction: bool = True
+    # Declared operational CNV case-shard size (default: the measured 25-case size).
+    # A declared run may change it within MAX_CNV_CASE_SHARD_SIZE to partition the
+    # same complete cohort frame differently (fewer/larger or more/smaller shards);
+    # scientific membership is unaffected and the terminal merge still requires
+    # every shard of the declared frame.
+    cnv_case_shard_size: int = CNV_CASE_SHARD_SIZE
     jev_model: str = "jev-1.13.0"
     jev_max_states: int = 1000
     jev_timeout_seconds: float = 30.0
@@ -106,6 +114,9 @@ class Settings:
             ),
             gdc_cache_enabled=os.getenv("CANCERJEV_GDC_CACHE", "1") not in {"0", "false", "False"},
             cnv_raw_eviction=os.getenv("CANCERJEV_CNV_RAW_EVICTION", "1") not in {"0", "false", "False"},
+            cnv_case_shard_size=_bounded_int(
+                "CANCERJEV_CNV_CASE_SHARD_SIZE", CNV_CASE_SHARD_SIZE, MAX_CNV_CASE_SHARD_SIZE,
+            ),
             jev_model=os.getenv("CANCERJEV_JEV_MODEL", "jev-1.13.0"),
             jev_max_states=_bounded_int("CANCERJEV_JEV_MAX_STATES", 1000, JEV_MAX_STATES_HARD_CAP),
             jev_timeout_seconds=_bounded_seconds(

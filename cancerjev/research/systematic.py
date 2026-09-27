@@ -19,7 +19,6 @@ from typing import Any
 
 from cancerjev.config import Settings
 from cancerjev.domain.capability import CohortCapability, Modality
-from cancerjev.domain.discovery import CNV_CASE_SHARD_SIZE
 from cancerjev.domain.measurements import Acquisition
 from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.gdc.budget import campaign_caps
@@ -36,6 +35,7 @@ from cancerjev.research.cnv_discovery import (
     plan_cnv_case_shards,
     run_cnv_shard_merge,
     run_cnv_shard_scan,
+    scope_cnv_scan_to_universe,
 )
 from cancerjev.research.cutover import UNION_SELECTION_RULE_ID, compose_discovery_states
 from cancerjev.research.discovery import run_mutation_discovery
@@ -45,6 +45,7 @@ from cancerjev.research.investigation import (
     VALIDATION_DISPATCH_AUTHORIZATION,
     run_autonomous_candidate_queue,
 )
+from cancerjev.research.resumed_evidence import ResumedEvidence
 from cancerjev.research.seams import HypothesisGenerator, PublishJson, run_stage
 from cancerjev.research.specs import ResearchSpec
 from cancerjev.research.state_store import persist_state
@@ -150,13 +151,24 @@ def run_systematic_campaign(*, run_id: str, profile: CampaignProfile, spec: Rese
                             max_states: int | None = None,
                             activation: str = AUTONOMOUS_ACTIVATION,
                             llm_generator: HypothesisGenerator | None = None,
+                            resumed_evidence: ResumedEvidence | None = None,
                             ) -> SystematicCampaignResult:
-    """Execute the canonical Campaign spine under one declared activation."""
+    """Execute the canonical Campaign spine under one declared activation.
+
+    With ``resumed_evidence`` (validation activation only) the three lane results
+    are consumed from their published artifacts instead of being re-acquired;
+    the union, selection, Wide and candidate stages below run identically.
+    """
     expected_ownership = (
         ExecutionOwnership.SYSTEM_AUTONOMOUS if activation == AUTONOMOUS_ACTIVATION
         else ExecutionOwnership.VALIDATION_RUN)
     repository.require_run_ownership(run_id, expected_ownership)
     validate_campaign_binding(profile, spec, capability, activation=activation)
+    if resumed_evidence is not None and activation != VALIDATION_ACTIVATION:
+        raise LiveRunError(
+            "CAMPAIGN_RESUME_REQUIRES_VALIDATION",
+            "the evidence-resume continuation runs only under validation activation",
+        )
     # One Campaign-global budget: every lane transport and every candidate
     # follow-up shares this exact RunBudget object, so the declared Campaign
     # ceiling is total rather than per-lane. Per-acquisition-shard allowances
@@ -175,37 +187,61 @@ def run_systematic_campaign(*, run_id: str, profile: CampaignProfile, spec: Rese
         return GDCTransport(repository, artifacts, campaign_budget, run_id, lane_emit,
                             cache_enabled=settings.gdc_cache_enabled)
 
-    mutation = run_stage(
-        emit, run_id, "STATE_GENERATION",
-        lambda: run_mutation_discovery(run_id, lane_transport(), repository, artifacts,
-                                       lane_emit, spec),
-    )
-    expression = run_stage(
-        emit, run_id, "STATE_GENERATION",
-        lambda: run_expression_discovery(run_id, lane_transport(), repository, artifacts,
-                                         lane_emit, spec),
-    )
-    cnv_transport = lane_transport()
-    shards = run_stage(
-        emit, run_id, "STATE_GENERATION",
-        lambda: plan_cnv_case_shards(cnv_transport, spec, case_shard_size=CNV_CASE_SHARD_SIZE),
-    )
-    for shard_index in range(len(shards)):
+    resumed = resumed_evidence
+    if resumed is None or resumed.mutation is None:
+        mutation = run_stage(
+            emit, run_id, "STATE_GENERATION",
+            lambda: run_mutation_discovery(run_id, lane_transport(), repository, artifacts,
+                                           lane_emit, spec),
+        )
+    else:
+        mutation = resumed.mutation
+    if resumed is None or resumed.expression is None:
+        expression = run_stage(
+            emit, run_id, "STATE_GENERATION",
+            lambda: run_expression_discovery(run_id, lane_transport(), repository, artifacts,
+                                             lane_emit, spec),
+        )
+    else:
+        expression = resumed.expression
+    if resumed is None or resumed.cnv is None:
+        cnv_transport = lane_transport()
+        shards = run_stage(
+            emit, run_id, "STATE_GENERATION",
+            lambda: plan_cnv_case_shards(cnv_transport, spec,
+                                         case_shard_size=settings.cnv_case_shard_size),
+        )
+        for shard_index in range(len(shards)):
 
-        def scan_shard(index: int = shard_index) -> Any:
-            return run_cnv_shard_scan(
-                run_id, cnv_transport, repository, artifacts, lane_emit, spec,
-                shard_index=index, case_shard_size=CNV_CASE_SHARD_SIZE,
-                evict_raw=settings.cnv_raw_eviction)
+            def scan_shard(index: int = shard_index) -> Any:
+                return run_cnv_shard_scan(
+                    run_id, cnv_transport, repository, artifacts, lane_emit, spec,
+                    shard_index=index, case_shard_size=settings.cnv_case_shard_size,
+                    evict_raw=settings.cnv_raw_eviction)
 
-        run_stage(emit, run_id, "STATE_GENERATION", scan_shard)
-    cnv = run_stage(
-        emit, run_id, "STATE_GENERATION",
-        lambda: run_cnv_shard_merge(
-            run_id, repository, artifacts, lane_emit, spec, expected_shards=len(shards),
-            case_shard_size=CNV_CASE_SHARD_SIZE,
-            universe_ids=frozenset(mutation.universe.ordered_ids)),
-    )
+            run_stage(emit, run_id, "STATE_GENERATION", scan_shard)
+        cnv = run_stage(
+            emit, run_id, "STATE_GENERATION",
+            lambda: run_cnv_shard_merge(
+                run_id, repository, artifacts, lane_emit, spec, expected_shards=len(shards),
+                case_shard_size=settings.cnv_case_shard_size,
+                universe_ids=frozenset(mutation.universe.ordered_ids)),
+        )
+        cnv_shard_count = len(shards)
+    else:
+        cnv = scope_cnv_scan_to_universe(
+            resumed.cnv, frozenset(mutation.universe.ordered_ids))
+        cnv_shard_count = cnv.shard_count
+    if resumed is not None:
+        releases = {mutation.release, expression.release, cnv.release}
+        if len(releases) != 1:
+            raise LiveRunError(
+                "EVIDENCE_RESUME_RELEASE_MISMATCH",
+                f"lane releases differ after binding: {sorted(releases)}",
+            )
+        emit(run_id, "EVIDENCE_RESUMED", f"evidence-resumed:{run_id}",
+             "Campaign spine resumed from published lane evidence artifacts.",
+             stage="STATE_GENERATION", data=resumed.payload())
     states = run_stage(
         emit, run_id, "STATE_GENERATION",
         lambda: compose_discovery_states(mutation, expression, cnv, spec),
@@ -246,7 +282,7 @@ def run_systematic_campaign(*, run_id: str, profile: CampaignProfile, spec: Rese
     return SystematicCampaignResult(
         run_id=run_id, profile_id=profile.profile_id, spec_id=spec.spec_id,
         mutation_survivors=tuple(mutation.survivor_ids),
-        expression_genes=len(expression.entries), cnv_shards=len(shards),
+        expression_genes=len(expression.entries), cnv_shards=cnv_shard_count,
         cnv_calls=len(cnv.calls),
         state_ids=tuple(record.state_id for record in records),
         union_selection_rule=UNION_SELECTION_RULE_ID, coverage=coverage,

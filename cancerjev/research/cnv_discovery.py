@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 from uuid import uuid4
 
@@ -186,9 +187,11 @@ def run_cnv_shard_scan(
     evaluated here. Pages are validated strictly, aggregated page by page while
     later pages download, and the shard evidence is published only under a terminal
     page ledger. With ``evict_raw`` (the canonical campaign behavior) the committed
-    shard's raw page payloads and cache rows are then deleted, so the on-disk
-    footprint stays bounded to the derived evidence plus the shard in flight; the
-    terminal ledger keeps every page's request/response hash as provenance.
+    shard's raw page payload files are then evicted while the cache index rows stay
+    immutable, so the on-disk footprint stays bounded to the derived evidence plus
+    the shard in flight; an evicted payload reads as a cache miss and refetches
+    live, and the terminal ledger keeps every page's request/response hash as
+    provenance.
     """
     if type(case_shard_size) is not int or not 1 <= case_shard_size <= MAX_CNV_CASE_SHARD_SIZE:
         raise LiveRunError("INVALID_CNV_SHARD_SIZE", f"case shard size must be 1..{MAX_CNV_CASE_SHARD_SIZE}")
@@ -428,35 +431,52 @@ def run_cnv_shard_merge(
             bytes_read=0, latency_ms=None, http_status=None, cache_hit=True,
         ))
     merged = merge_cnv_shard_evidence(tuple(shards), expected_shards=expected_shards)
-    excluded: tuple[str, ...] = ()
-    if universe_ids is not None:
-        excluded = tuple(sorted(evidence.gene_id for evidence in merged
-                                if evidence.gene_id not in universe_ids))
-        merged = tuple(evidence for evidence in merged if evidence.gene_id in universe_ids)
     calls = tuple(
         CnvProjectCall(evidence, *cnv_lane_disposition(evidence)) for evidence in merged)
-    warnings: tuple[str, ...] = ()
-    if excluded:
-        warnings = (
-            f"CNV_UNIVERSE_EXCLUSION: {len(excluded)} merged CNV gene(s) outside the tested universe "
-            f"were excluded from the calls",
-        )
     result = CnvProjectScanResult(
         research_spec.spec_id, research_spec.cohort.cohort_id, research_spec.cohort.project_id,
         seen_release or "UNVERIFIED_RELEASE", CNV_SCAN_SELECTION_RULE, case_shard_size,
-        expected_shards, cnv_scan_summary_method(), calls, tuple(sources), warnings,
+        expected_shards, cnv_scan_summary_method(), calls, tuple(sources), (),
         CNV_SCAN_LIMITATIONS)
+    excluded_outside_universe = 0
+    if universe_ids is not None:
+        before = len(result.calls)
+        result = scope_cnv_scan_to_universe(result, universe_ids)
+        excluded_outside_universe = before - len(result.calls)
     artifact = artifacts.publish(
         f"runs/{run_id}/cnv-discovery/project-scan-result.json",
         write_cnv_project_scan(result), "application/json", "cnv-project-scan-result")
     repository.register_artifact(artifact, run_id)
     emit("CNV_PROJECT_SCAN_COMPLETED", f"cnv-project-scan:completed:{uuid4()}",
-         f"Merged CNV scan completed for {len(calls)} observed gene(s).",
-         data={"genes": len(calls), "retained": len(result.retained_ids),
+         f"Merged CNV scan completed for {len(result.calls)} observed gene(s).",
+         data={"genes": len(result.calls), "retained": len(result.retained_ids),
                "jev_review": len(result.jev_review_ids), "shards": expected_shards,
-               "excluded_outside_universe": len(excluded),
+               "excluded_outside_universe": excluded_outside_universe,
                "release": result.release,
                "artifact_id": artifact.artifact_id, "artifact_sha256": artifact.sha256},
          artifact_refs=[artifact.ref()],
          registrations=[repository.artifact_registration(artifact, run_id)])
     return result
+
+
+def scope_cnv_scan_to_universe(
+    result: CnvProjectScanResult, universe_ids: frozenset[str],
+) -> CnvProjectScanResult:
+    """Drop merged CNV calls outside the tested universe, recording the count.
+
+    The published shard and merge artifacts stay untouched; only the in-memory
+    result is scoped, so a CNV call can never nominate a gene the union cannot
+    evidence. The canonical campaign applies this to a fresh merge; the declared
+    evidence-resume continuation applies the same function to an already-merged
+    result, so both routes produce identically scoped calls.
+    """
+    excluded = tuple(sorted(call.evidence.gene_id for call in result.calls
+                            if call.evidence.gene_id not in universe_ids))
+    if not excluded:
+        return result
+    calls = tuple(call for call in result.calls if call.evidence.gene_id in universe_ids)
+    warnings = result.warnings + (
+        f"CNV_UNIVERSE_EXCLUSION: {len(excluded)} merged CNV gene(s) outside the tested universe "
+        f"were excluded from the calls",
+    )
+    return replace(result, calls=calls, warnings=warnings)

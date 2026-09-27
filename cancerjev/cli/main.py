@@ -92,6 +92,19 @@ def parser() -> argparse.ArgumentParser:
         "--validation", action="store_true",
         help="explicit operator validation run: identical science, no autonomy, no readiness effect",
     )
+    campaign.add_argument(
+        "--resume-mutation-run", default=None,
+        help="continuation: source run holding the published mutation discovery result (other lanes "
+             "without a source run are acquired normally; at least one resume source is required)",
+    )
+    campaign.add_argument(
+        "--resume-expression-run", default=None,
+        help="continuation: source run holding the published expression discovery result",
+    )
+    campaign.add_argument(
+        "--resume-cnv-run", default=None,
+        help="continuation: source run holding the merged CNV project scan result",
+    )
     discover = commands.add_parser(
         "discover",
         help="bounded Stage 4 systematic mutation discovery over the complete protein-coding gene universe",
@@ -464,8 +477,14 @@ def _autonomous_jev_service(settings: Settings, repository: Repository,
 def _campaign_run(settings: Settings, repository: Repository, artifacts: ArtifactStore, *,
                   profile: Any, spec: Any, capability: Any, activation: Any, ownership: Any,
                   worker_id: str, transport_factory: Any = None, jev_service: Any = None,
-                  llm_generator: Any = None) -> bool:
-    """One canonical Campaign run under a declared activation and ownership."""
+                  llm_generator: Any = None,
+                  resume_sources: dict[str, str] | None = None) -> bool:
+    """One canonical Campaign run under a declared activation and ownership.
+
+    ``resume_sources`` names the published lane artifacts a validation continuation
+    consumes instead of re-acquiring mutation, expression and CNV evidence.
+    """
+    from cancerjev.research.resumed_evidence import load_resumed_evidence
     from cancerjev.research.systematic import run_systematic_campaign
 
     service = (jev_service if jev_service is not None
@@ -479,14 +498,17 @@ def _campaign_run(settings: Settings, repository: Repository, artifacts: Artifac
         # hypothesis stage unavailable/abstaining without failing the Campaign.
         llm_generator = OpenRouterGenerator(model=settings.llm_model,
                                             timeout=settings.llm_timeout_seconds)
+    scope = {"budget_policy": policy_payload(), "purpose": "SYSTEMATIC_CAMPAIGN",
+             "profile_id": profile.profile_id, "spec_id": spec.spec_id,
+             "project_id": profile.project_id, "research_spec": spec.as_dict(),
+             "execution": "SYSTEMATIC_MODALITY_UNION", "activation": activation,
+             "readiness_effect": "NONE", "hypothesis_generation": generator_label,
+             "enabled_modalities": [modality.value for modality in profile.enabled_modalities]}
+    if resume_sources is not None:
+        scope["evidence_source"] = dict(resume_sources)
     with _started_run(
         repository, worker_id=worker_id,
-        scope={"budget_policy": policy_payload(), "purpose": "SYSTEMATIC_CAMPAIGN",
-               "profile_id": profile.profile_id, "spec_id": spec.spec_id,
-               "project_id": profile.project_id, "research_spec": spec.as_dict(),
-               "execution": "SYSTEMATIC_MODALITY_UNION", "activation": activation,
-               "readiness_effect": "NONE", "hypothesis_generation": generator_label,
-               "enabled_modalities": [modality.value for modality in profile.enabled_modalities]},
+        scope=scope,
         started_message=f"Canonical {activation.lower()} campaign run started.",
         started_data={"profile_id": profile.profile_id, "spec_id": spec.spec_id,
                       "execution": "SYSTEMATIC_MODALITY_UNION", "activation": activation,
@@ -503,12 +525,18 @@ def _campaign_run(settings: Settings, repository: Repository, artifacts: Artifac
             content = payload if isinstance(payload, bytes) else canonical_json(payload)
             return artifacts.publish(path, content, "application/json", purpose)
 
+        resumed = (load_resumed_evidence(
+            repository=repository, artifacts=artifacts, spec=spec,
+            mutation_run=resume_sources.get("mutation_run"),
+            expression_run=resume_sources.get("expression_run"),
+            cnv_run=resume_sources.get("cnv_run"))
+            if resume_sources is not None else None)
         result = run_systematic_campaign(
             run_id=run_id, profile=profile, spec=spec, capability=capability, settings=settings,
             repository=repository, artifacts=artifacts, emit=emit, publish_json=publish_json,
             jev_service=service, transport_factory=transport_factory,
             max_states=settings.jev_max_states, activation=activation,
-            llm_generator=llm_generator)
+            llm_generator=llm_generator, resumed_evidence=resumed)
         totals = repository.gdc_run_totals(run_id)
         emit(run_id, "RUN_COMPLETED", "run:completed",
              f"Systematic {activation.lower()} campaign completed with "
@@ -541,12 +569,15 @@ def _run_campaign_systematic(settings: Settings, repository: Repository, artifac
 
 def _run_campaign_validation(settings: Settings, repository: Repository, artifacts: ArtifactStore, *,
                              transport_factory: Any = None, jev_service: Any = None,
-                             llm_generator: Any = None, capability: Any = None) -> bool:
+                             llm_generator: Any = None, capability: Any = None,
+                             resume_sources: dict[str, str] | None = None) -> bool:
     """Explicit operator validation run: identical canonical science, no autonomy.
 
     The profile stays EXPERIMENTAL; the run is VALIDATION_RUN-owned, it can never be
     dispatched by the Program, it reports readiness_effect NONE, and its dossier is
-    the live evidence a later explicit promotion decision reviews.
+    the live evidence a later explicit promotion decision reviews. With
+    ``resume_sources`` the spine continues from published lane artifacts instead of
+    re-acquiring them (bounded-process continuation).
     """
     from cancerjev.research.campaign import LUAD_CAMPAIGN_V1, require_validation_activation
     from cancerjev.research.specs import research_spec_by_id
@@ -565,7 +596,8 @@ def _run_campaign_validation(settings: Settings, repository: Repository, artifac
         settings, repository, artifacts, profile=profile, spec=spec, capability=capability,
         activation=VALIDATION_ACTIVATION, ownership=ExecutionOwnership.VALIDATION_RUN,
         worker_id="campaign-validation-worker", transport_factory=transport_factory,
-        jev_service=jev_service, llm_generator=llm_generator)
+        jev_service=jev_service, llm_generator=llm_generator,
+        resume_sources=resume_sources)
 
 
 def _preflight_capability(settings: Settings, repository: Repository, artifacts: ArtifactStore,
@@ -828,7 +860,18 @@ def main(argv: list[str] | None = None) -> None:
             with ResearchOwnership(settings.lock_path):
                 for run_id in repository.recover_interrupted():
                     print(f"[RECOVERY] preserved and stopped interrupted run {run_id}", flush=True)
-                if not _run_campaign_validation(settings, repository, artifacts):
+                resume_sources = None
+                if getattr(args, "resume_mutation_run", None) or getattr(
+                        args, "resume_expression_run", None) or getattr(args, "resume_cnv_run", None):
+                    resume_sources = {
+                        key: value for key, value in {
+                            "mutation_run": getattr(args, "resume_mutation_run", None),
+                            "expression_run": getattr(args, "resume_expression_run", None),
+                            "cnv_run": getattr(args, "resume_cnv_run", None),
+                        }.items() if value is not None
+                    }
+                if not _run_campaign_validation(settings, repository, artifacts,
+                                                resume_sources=resume_sources):
                     raise SystemExit(1)
         except OwnershipError as exc:
             raise SystemExit(str(exc)) from exc

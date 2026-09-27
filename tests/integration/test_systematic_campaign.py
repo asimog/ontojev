@@ -19,8 +19,10 @@ from cancerjev.domain.capability import ScientificReadiness
 from cancerjev.domain.events import canonical_json
 from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.jev.service import JevService
+from cancerjev.research.acquisition import LiveRunError
 from cancerjev.research.campaign import LUAD_CAMPAIGN_V1, CampaignActivationError
 from cancerjev.research.cutover import UNION_SELECTION_RULE_ID
+from cancerjev.research.resumed_evidence import load_resumed_evidence
 from cancerjev.research.specs import LUAD_RESEARCH_V1
 from cancerjev.research.systematic import (
     AUTONOMOUS_ACTIVATION,
@@ -49,7 +51,7 @@ VALIDATED_TEST_PROFILE = replace(
 def _execute(runtime, *, max_states=None, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS,
              default_transport: bool = False, budget_sink: list | None = None,
              profile=None, activation: str = AUTONOMOUS_ACTIVATION,
-             transport_options: dict | None = None):
+             transport_options: dict | None = None, resumed_evidence=None):
     settings, repository, artifacts = runtime
     run_id = repository.create_run(
         "campaign-worker", mode="LIVE", fixture_id=None, fixture_version=None,
@@ -78,7 +80,7 @@ def _execute(runtime, *, max_states=None, ownership=ExecutionOwnership.SYSTEM_AU
         jev_service=JevService(settings, repository, artifacts,
                                adapter_factory=lambda: StubAdapter()),
         transport_factory=(None if default_transport else factory),
-        max_states=max_states, activation=activation)
+        max_states=max_states, activation=activation, resumed_evidence=resumed_evidence)
     return run_id, transport, events, result
 
 
@@ -111,6 +113,136 @@ def test_canonical_campaign_runs_every_modality_and_the_union(runtime):
     assert "gene_expression_values" in requested
     assert "cnv_occurrences" in requested
     assert repository.get_run(run_id)["status"] == "PENDING", "the CLI owns the run terminal state"
+
+
+def test_declared_case_shard_size_partitions_the_declared_frame(runtime):
+    """The canonical campaign honors the declared operational case-shard size.
+
+    A declared run may declare fewer/larger shards; the plan and the terminal merge
+    still cover the same complete cohort frame, so completeness semantics are unchanged.
+    """
+    settings, repository, artifacts = runtime
+    declared = replace(settings, cnv_case_shard_size=60)
+    _, _, events, result = _execute((declared, repository, artifacts))
+    types = [event["type"] for event in events]
+
+    assert result.cnv_shards == 2, "100 cases partition into two 60-case shards"
+    assert types.count("CNV_SHARD_SCAN_COMPLETED") == result.cnv_shards
+    assert "CNV_PROJECT_SCAN_COMPLETED" in types, \
+        "the terminal merge still requires every shard of the declared frame"
+
+
+def _complete_run(repository, run_id: str) -> None:
+    """Production lane runs reach a terminal state through the CLI; mirror that here."""
+    repository.append_event(run_id, event_type="RUN_STARTED", idempotency_key="run:started",
+                            message="Source lane evidence run started.",
+                            data={"mode": "LIVE", "purpose": "SYSTEMATIC_CAMPAIGN"})
+    repository.append_event(run_id, event_type="RUN_COMPLETED", idempotency_key="run:completed",
+                            message="Source lane evidence run completed.",
+                            data={"status": "COMPLETED", "coverage": "COMPLETE_FOR_SCOPE"})
+
+
+def test_evidence_resume_continuation_reproduces_the_canonical_spine(runtime):
+    """The declared continuation consumes published lane artifacts and reaches the
+    identical union, selection and Wide outcome without re-acquiring evidence."""
+    _, repository, artifacts = runtime
+    source_run_id, _, _, source = _execute(runtime)
+    _complete_run(repository, source_run_id)
+    resumed = load_resumed_evidence(
+        repository=repository, artifacts=artifacts, mutation_run=source_run_id,
+        expression_run=source_run_id, cnv_run=source_run_id, spec=LUAD_RESEARCH_V1)
+
+    run_id, transport, events, result = _execute(
+        runtime, resumed_evidence=resumed, ownership=ExecutionOwnership.VALIDATION_RUN,
+        activation=VALIDATION_ACTIVATION, profile=LUAD_CAMPAIGN_V1)
+    types = [event["type"] for event in events]
+    resumed_event = next(event for event in events if event["type"] == "EVIDENCE_RESUMED")
+
+    assert {lane["run_id"] for lane in resumed_event["data"]["lanes"]} == {source_run_id}
+    assert result.mutation_survivors == source.mutation_survivors
+    assert result.expression_genes == source.expression_genes
+    assert result.cnv_shards == source.cnv_shards
+    assert result.cnv_calls == source.cnv_calls
+    assert result.pre_wide.payload() == source.pre_wide.payload()
+
+    def union_of(state_ids):
+        union = {}
+        for state_id in state_ids:
+            state = read_state_record(repository, artifacts, state_id).state
+            union[state.entity.gene_id] = tuple(state.nominations)
+        return union
+
+    assert union_of(result.state_ids) == union_of(source.state_ids) == EXPECTED_DEFAULT_UNION
+    assert result.state_ids != source.state_ids, "the continuation persists its own run-owned states"
+    assert result.wide is not None and source.wide is not None
+    assert len(result.wide["promoted"]) == len(source.wide["promoted"])
+    assert (result.wide["jev"]["admission"]["decision"]
+            == source.wide["jev"]["admission"]["decision"])
+    requested = {request.endpoint.name for request in transport.requests}
+    assert "cnv_occurrences" not in requested, "the continuation re-acquires no CNV shards"
+    for lane_event in ("DISCOVERY_STARTED", "EXPRESSION_DISCOVERY_STARTED",
+                       "CNV_DISCOVERY_STARTED", "CNV_SHARD_SCAN_COMPLETED"):
+        assert lane_event not in types, f"the continuation re-acquires no lane evidence ({lane_event})"
+    assert "STATISTICAL_STATE_CREATED" in types
+
+
+def test_evidence_resume_may_continue_a_subset_of_lanes(runtime):
+    """A continuation may resume the long lanes and re-acquire the rest: the live
+    route resumes mutation+CNV and re-runs expression under the current policy."""
+    _, repository, artifacts = runtime
+    source_run_id, _, _, source = _execute(runtime)
+    _complete_run(repository, source_run_id)
+    resumed = load_resumed_evidence(
+        repository=repository, artifacts=artifacts, mutation_run=source_run_id,
+        cnv_run=source_run_id, spec=LUAD_RESEARCH_V1)
+
+    run_id, transport, events, result = _execute(
+        runtime, resumed_evidence=resumed, ownership=ExecutionOwnership.VALIDATION_RUN,
+        activation=VALIDATION_ACTIVATION, profile=LUAD_CAMPAIGN_V1)
+    types = [event["type"] for event in events]
+    resumed_event = next(event for event in events if event["type"] == "EVIDENCE_RESUMED")
+
+    assert resumed_event["data"]["resumed_lanes"] == ["mutation", "cnv"]
+    assert "EXPRESSION_DISCOVERY_STARTED" in types, "the undeclared lane is acquired normally"
+    assert "DISCOVERY_STARTED" not in types
+    assert "CNV_SHARD_SCAN_COMPLETED" not in types
+    assert result.mutation_survivors == source.mutation_survivors
+    assert result.expression_genes == source.expression_genes
+    assert result.cnv_calls == source.cnv_calls
+    union = {}
+    for state_id in result.state_ids:
+        state = read_state_record(repository, artifacts, state_id).state
+        union[state.entity.gene_id] = tuple(state.nominations)
+    assert union == EXPECTED_DEFAULT_UNION
+
+
+def test_evidence_resume_requires_validation_activation(runtime):
+    """An autonomous activation can never resume evidence: the chunked operator
+    route is a validation continuation, never a Program dispatch."""
+    _, repository, artifacts = runtime
+    source_run_id, _, _, _ = _execute(runtime)
+    _complete_run(repository, source_run_id)
+    resumed = load_resumed_evidence(
+        repository=repository, artifacts=artifacts, mutation_run=source_run_id,
+        expression_run=source_run_id, cnv_run=source_run_id, spec=LUAD_RESEARCH_V1)
+
+    with pytest.raises(LiveRunError) as excinfo:
+        _execute(runtime, resumed_evidence=resumed)
+
+    assert excinfo.value.code == "CAMPAIGN_RESUME_REQUIRES_VALIDATION"
+
+
+def test_evidence_resume_refuses_a_missing_source(runtime):
+    """A missing or non-terminal source run fails closed with a typed reason."""
+    _, repository, artifacts = runtime
+    with pytest.raises(LiveRunError) as excinfo:
+        load_resumed_evidence(
+            repository=repository, artifacts=artifacts,
+            mutation_run="00000000-0000-4000-8000-000000000000",
+            expression_run="00000000-0000-4000-8000-000000000000",
+            cnv_run="00000000-0000-4000-8000-000000000000", spec=LUAD_RESEARCH_V1)
+
+    assert excinfo.value.code == "EVIDENCE_RESUME_SOURCE_MISSING"
 
 
 def test_raw_shard_eviction_never_changes_what_jev_and_the_engine_see(runtime):

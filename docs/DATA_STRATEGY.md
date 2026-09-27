@@ -212,6 +212,8 @@ Never use Shard-local top-N selection as a substitute for global reduction unles
 
 Implemented now: the systematic universe enumerates every reported protein-coding gene to a stable provider total under the complete-universe method and a declared defect guard ceiling (a sanity check, never a sampler); gene pages, occurrence-scan pages and expression gene batches register in an operational shard ledger, a reduction finalizes only when every required shard is terminal, and historical prefix-universe results remain readable and labelled.
 
+The CNV case-shard size is a declared operational setting (`CANCERJEV_CNV_CASE_SHARD_SIZE`, default 25 cases, hard cap 250). A declared verification may partition the same complete cohort frame into small shards — the Phase 7 verification processes the 585-case frame as 74 declared 8-case shards, one bounded process per shard, then merges every shard — without changing scientific membership: the terminal merge still requires every shard of the declared frame, and a partial frame is never labelled complete.
+
 ## 10. Streaming
 
 Streaming accumulation is allowed when mathematically equivalent to the complete-data calculation.

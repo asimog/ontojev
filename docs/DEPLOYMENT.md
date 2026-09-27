@@ -22,7 +22,7 @@ Researcher/comparator work stays on the explicit path: `python -m cancerjev run 
 
 `CANCERJEV_DATA_DIR` (default `./data`) owns everything persistent:
 
-- `cancerjev.db` (+ `-wal`, `-shm`) — SQLite schema 7: runs, events, artifacts, scientific rows;
+- `cancerjev.db` (+ `-wal`, `-shm`) — SQLite schema 8: runs, events, artifacts, scientific rows;
 - `artifacts/...` — immutable content-addressed evidence files referenced by rows;
 - `research.lock` — exclusive ownership lock for research-workspace mutation;
 - `program/state/...` — append-only durable program-state artifacts (operational);
@@ -107,6 +107,34 @@ Wide/Deep Jev evidence and dossier an explicit promotion decision reviews. It is
 bounded by the declared `gdc-campaign-v1` Campaign budget (25,000 requests /
 4 GiB, shared by every lane and follow-up) and requires the `TYPESAFE_API_KEY`
 variable; a missing key fails closed before any work.
+
+For the bounded per-shard verification the operator processes one declared
+8-case shard per process (`discover-cnv --live --case-shard N
+--case-shard-size 8`; 74 shards over the 585-case frame, each process bounded
+end-to-end ≈4–10 min), then merges every shard (`cnv-merge --shards 74
+--case-shard-size 8` with one `--source-run` per shard in shard order). The
+merge fails closed unless every declared shard exists; there is no shard-count
+cap. The full canonical Campaign remains the only route that produces the
+union and Wide/Deep/Stage 8 artifacts, and it cannot be chunked into per-shard
+processes.
+
+Once every declared shard is merged, the union/admission spine continues without
+re-acquiring lane evidence:
+
+```
+python -m cancerjev campaign --validation \
+  --resume-mutation-run <mutation-source-run> \
+  --resume-expression-run <expression-source-run> \
+  --resume-cnv-run <merge-run>
+```
+
+The continuation consumes the published mutation, expression and merged CNV
+results of terminal runs; spec, cohort, project and release identities must
+agree, and the merged CNV result must cover every declared shard exactly once.
+It records the consumed artifact ids/hashes in an `EVIDENCE_RESUMED` event and
+runs the same union, pre-Wide selection, Wide/Deep Jev, Stage 8 and dossier
+stages under a new `VALIDATION_RUN`. It re-acquires no lane evidence and cannot
+run under autonomous activation.
 
 Long runs must be started detached (tmux) with output under `/data`; a bare
 SSH command dies with the client and leaves the run `RUNNING` until crash
