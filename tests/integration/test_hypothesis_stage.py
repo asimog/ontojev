@@ -168,6 +168,13 @@ def test_template_generation_is_labelled_bounded_and_judged_once(runtime, monkey
     assert types.index("HYPOTHESIS_EVALUATED") < types.index("DOSSIER_CREATED")
     assert repository.get_run(run_id)["provider_usage"]["llm_calls"] == 0
 
+    final_event = next(event for event in _events(repository, run_id)
+                       if event["type"] == "FINAL_CANDIDATE_RESULT_RECORDED")
+    row = repository.artifact(final_event["artifact_refs"][0]["artifact_id"])
+    final_result = json.loads(runtime[2].read(row["relative_path"], row["sha256"]))
+    assert final_result["baseline_comparison"]["investigation"]["hypotheses_generated"] == 2, \
+        "the comparison records the observed hypothesis count, not a generated flag"
+
 
 def test_operator_requested_hypotheses_record_their_reason(runtime, monkeypatch):
     adapter = _hypothesis_adapter(stopping=0.8)

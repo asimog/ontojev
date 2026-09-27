@@ -149,7 +149,6 @@ def _revision_summary(revision: Any) -> dict[str, Any]:
         "total": revision.summary.total, "verified": revision.summary.verified,
         "contradicted": revision.summary.contradicted,
         "not_observed": revision.summary.not_observed,
-        "has_action": revision.action is not None,
     }
 
 
@@ -279,7 +278,8 @@ def derive_stage8(*, run_id: str, candidate: dict[str, Any], investigation_statu
     baseline_revision_summary = (
         _revision_summary(baseline_entry.evidence) if baseline_entry is not None else None)
     extra_dispatches = max(len(steps) - 1, 0) if steps else 0
-    hypotheses_generated = 1 if (hypothesis or {}).get("status") == "GENERATED" else 0
+    generated = (hypothesis or {}).get("status") == "GENERATED"
+    hypotheses_generated = len((hypothesis or {}).get("hypothesis_ids") or []) if generated else 0
 
     wide_comparison = _wide_comparison(rankings, candidate["source_state_id"],
                                        promoted_by_policy=promoted_by_policy)
@@ -324,11 +324,8 @@ def derive_stage8(*, run_id: str, candidate: dict[str, Any], investigation_statu
             "cohort_id": population.frame.cohort_id if population else None,
             "examined_cases": len(population.frame.examined_ids) if population else None,
         },
-        "final_evidence_revision": None if final_revision is None else {
-            "evidence_state_id": chain[-1].evidence_state_id,
-            "evidence_hash": chain[-1].record.evidence_hash,
-            "revision_index": final_revision.revision_index,
-            "action_id": final_revision.action.action_id if final_revision.action else None,
+        "final_evidence_revision": None if not chain else {
+            **_revision_identity(chain[-1]),
             "checks": final_revision_summary,
         },
         "investigation_status": investigation_status,

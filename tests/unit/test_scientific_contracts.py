@@ -76,6 +76,7 @@ from cancerjev.gdc.parsers import (
     ProviderGene,
     ProviderSelection,
 )
+from cancerjev.research.deep import _baseline_observations as deep_baseline_observations
 from cancerjev.research.specs import LUAD_RESEARCH_V1
 from cancerjev.science.methods import (
     MUTATION_DISTINCT_CASE_COUNT_METHOD,
@@ -474,21 +475,32 @@ def test_baseline_observation_identity_follows_the_state_measurement():
     state = build_state()
     affected = state.projects[0].mutation.affected_cases
     assert isinstance(affected, ObservedCount)
-    row = baseline_observations(state)[0]
-    assert (row.method_id, row.method_version) == (affected.method.method_id, affected.method.version)
-    assert row.limitations == affected.method.limitations
+    mutation_row = deep_baseline_observations(state)[0]
+    assert (mutation_row.method_id, mutation_row.method_version) == (
+        affected.method.method_id, affected.method.version)
+    assert mutation_row.limitations == affected.method.limitations
 
     canonical_project = replace(
         state.projects[0],
         mutation=replace(state.projects[0].mutation,
                          affected_cases=replace(affected,
                                                 method=MUTATION_DISTINCT_CASE_COUNT_METHOD)))
-    canonical = replace(state, projects=(canonical_project,))
-    row = baseline_observations(canonical)[0]
-    assert row.method_id == "MUTATION_AFFECTED_CASE_COUNT_V2"
-    assert row.method_version == "2"
-    assert not any("DEPRECATED" in item for item in row.limitations), \
+    mutation_row = deep_baseline_observations(replace(state, projects=(canonical_project,)))[0]
+    assert mutation_row.method_id == "MUTATION_AFFECTED_CASE_COUNT_V2"
+    assert mutation_row.method_version == "2"
+    assert not any("DEPRECATED" in item for item in mutation_row.limitations), \
         "a V2 measurement must never carry the V1 deprecation"
+
+    unavailable_project = replace(
+        state.projects[0],
+        mutation=replace(state.projects[0].mutation,
+                         affected_cases=UnavailableMeasurement(
+                             UnavailableStatus.NOT_OBSERVED, "GENE_BUCKET_ABSENT", Unit.CASES,
+                             state.projects[0].mutation.frame)))
+    mutation_row = deep_baseline_observations(replace(state, projects=(unavailable_project,)))[0]
+    assert mutation_row.availability == "NOT_OBSERVED"
+    assert mutation_row.method_id == "MUTATION_AFFECTED_CASE_COUNT_V2", \
+        "an unavailable value was never produced by V1"
 
 
 @pytest.mark.parametrize("outcome", [CheckOutcome.VERIFIED, CheckOutcome.CONTRADICTED])
