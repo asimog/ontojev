@@ -3,9 +3,10 @@
 The real executor runs the real mutation, expression and CNV lanes, the terminal
 CNV merge, the deterministic modality union, canonical state persistence and the
 Wide handoff. Assertions protect the canonical spine: every lane executes, the
-union is reached, states use the one canonical representation, the legacy
-GDC_FAST_SEARCH path is not the autonomous science path, the pre-Wide boundary
-never truncates, and replay stays deterministic.
+union is reached with exact membership and nominations, states use the one
+canonical representation, the legacy GDC_FAST_SEARCH path is not the autonomous
+science path, the pre-Wide boundary never truncates, and replay stays
+deterministic.
 """
 
 from __future__ import annotations
@@ -29,8 +30,14 @@ from cancerjev.research.systematic import (
 from cancerjev.storage.ownership import OwnershipError
 from cancerjev.storage.readers import read_state_record
 from tests.helpers import canned_capability
-from tests.integration.replay import ReplayTransport
+from tests.integration.replay import GENES, ReplayTransport
 from tests.jev.stub_adapter import StubAdapter
+
+GENE_ONE, GENE_TWO = GENES
+EXPECTED_DEFAULT_UNION = {
+    GENE_ONE: (("cnv", "RETAIN"), ("mutation", "RETAINED")),
+    GENE_TWO: (("mutation", "RETAINED"),),
+}
 
 VALIDATED_TEST_PROFILE = replace(
     LUAD_CAMPAIGN_V1, profile_id="LUAD_CAMPAIGN_SYSTEMATIC_TEST",
@@ -41,12 +48,14 @@ VALIDATED_TEST_PROFILE = replace(
 
 def _execute(runtime, *, max_states=None, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS,
              default_transport: bool = False, budget_sink: list | None = None,
-             profile=None, activation: str = AUTONOMOUS_ACTIVATION):
+             profile=None, activation: str = AUTONOMOUS_ACTIVATION,
+             transport_options: dict | None = None):
     settings, repository, artifacts = runtime
     run_id = repository.create_run(
         "campaign-worker", mode="LIVE", fixture_id=None, fixture_version=None,
         scope={"purpose": "SYSTEMATIC_CAMPAIGN"}, ownership=ownership)
-    transport = ReplayTransport(artifacts, run_id, repository=repository)
+    transport = ReplayTransport(artifacts, run_id, repository=repository,
+                                **(transport_options or {}))
     events: list[dict] = []
 
     def emit(target_run_id, event_type, key, message, **kwargs):
@@ -74,7 +83,7 @@ def _execute(runtime, *, max_states=None, ownership=ExecutionOwnership.SYSTEM_AU
 
 
 def test_canonical_campaign_runs_every_modality_and_the_union(runtime):
-    _, repository, _ = runtime
+    _, repository, artifacts = runtime
     run_id, transport, events, result = _execute(runtime)
     types = [event["type"] for event in events]
 
@@ -83,7 +92,12 @@ def test_canonical_campaign_runs_every_modality_and_the_union(runtime):
     assert result.state_ids, "the modality union produced states"
     assert result.union_selection_rule == UNION_SELECTION_RULE_ID
     assert result.wide is not None, "the canonical path reaches Wide evaluation"
-    assert len(result.state_ids) >= 2, "both mutation survivors are union states"
+    union = {}
+    for state_id in result.state_ids:
+        state = read_state_record(repository, artifacts, state_id).state
+        union[state.entity.gene_id] = tuple(state.nominations)
+    assert union == EXPECTED_DEFAULT_UNION, \
+        "the persisted union is exactly the per-modality nominations, never a superset"
 
     for expected in ("DISCOVERY_STARTED", "DISCOVERY_COMPLETED",
                      "EXPRESSION_DISCOVERY_STARTED", "EXPRESSION_DISCOVERY_COMPLETED",
