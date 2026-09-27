@@ -154,5 +154,8 @@ stale ownership markers and disk-space concerns without modifying evidence.
   unavailable, never a smaller population labelled complete.
 - A run that fails reaches `FAILED`/`STOPPED` in the same invocation; crash
   recovery only handles processes that died without reaching either state.
-- Wide evaluation is bounded by `pre-wide-policy-v1`: the complete union stays
-  persisted, cuts record explicit reasons, and ambiguous boundaries fail closed.
+- Wide evaluation is bounded by `pre-wide-policy-v2`: the complete union stays
+  persisted, a cut allocates the ceiling over declared strata (mutation,
+  expression, cnv, unattributed) with per-stratum quotas, is resolved
+  deterministically by measured ordering then `state_hash`, and records every
+  excluded state with its stratum and reason.

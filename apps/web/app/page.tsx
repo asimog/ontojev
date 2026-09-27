@@ -10,7 +10,7 @@ const SPINE = [
   { n: "03", title: "Expression discovery", kind: "", body: "Case-labelled UQFPKM summaries and descriptive tails over the full universe with declared RETAIN / DROP / JEV_REVIEW dispositions." },
   { n: "04", title: "CNV shard sweep", kind: "", body: "Independent deterministic case shards over the project occurrence index; the terminal merge requires every shard." },
   { n: "05", title: "Modality union", kind: "", body: "RETAIN and preserved-review nominations compose into one canonical StatisticalState per gene — no parallel state model." },
-  { n: "06", title: "Pre-Wide policy", kind: "policy", body: "Measured evidence bounds the Jev population. The full union stays persisted; cuts record explicit reasons; boundary ties fail closed." },
+  { n: "06", title: "Pre-Wide policy", kind: "policy", body: "Measured evidence bounds the Jev population under declared modality strata with per-stratum quotas. The full union stays persisted; cuts record every excluded state with its stratum and reason." },
   { n: "07", title: "Wide Jev judgment", kind: "jev", body: "Noul/Choice questions judge coherence and uncertainty over typed projections only. Python policy admits; JEV_REVIEW states are never promotable." },
   { n: "08", title: "Candidate to dossier", kind: "", body: "Deep Jev, registered deterministic follow-ups, immutable EvidenceState revisions, bounded hypotheses and Stage 8 with a no-Jev comparison." },
 ];

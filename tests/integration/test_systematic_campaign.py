@@ -141,11 +141,12 @@ def test_pre_wide_boundary_cuts_by_measured_evidence_and_never_truncates(runtime
     cut_run, _, cut_events, cut_result = _execute(runtime, max_states=1)
     assert cut_result.pre_wide.considered >= 2
     assert len(cut_result.pre_wide.states) == 1
-    assert cut_result.pre_wide.reason_code == "CUT_AT_MEASURED_ORDERING"
+    assert cut_result.pre_wide.reason_code == "CUT_AT_DECLARED_STRATA_POLICY"
     excluded = {entry["state_id"] for entry in cut_result.pre_wide.excluded}
     assert excluded, "the cut records the excluded states explicitly"
-    assert all(entry["reason"] == "BELOW_PRE_WIDE_CUTOFF"
+    assert all(entry["reason"] == "BELOW_DECLARED_STRATUM_ALLOCATION"
                for entry in cut_result.pre_wide.excluded)
+    assert all(entry["stratum"] for entry in cut_result.pre_wide.excluded)
     assert cut_result.pre_wide.states[0].state_id not in excluded
 
     persisted = repository.list_table("statistical_states", cut_run)
@@ -155,9 +156,12 @@ def test_pre_wide_boundary_cuts_by_measured_evidence_and_never_truncates(runtime
                 if event["type"] == "PRE_WIDE_SELECTION_RECORDED"]
     assert len(recorded) == 1
     data = recorded[0]["data"]
-    assert data["policy_version"] == "pre-wide-policy-v1"
+    assert data["policy_version"] == "pre-wide-policy-v2"
     assert data["considered"] == cut_result.pre_wide.considered
     assert data["selected"] == 1 and data["excluded"] == len(excluded)
+    assert data["strata"]
+    assert data["strata"] == cut_result.pre_wide.payload()["strata"], \
+        "the event record must mirror the persisted policy payload"
     evaluations = repository.list_table("jev_evaluations", cut_run)
     selected_state_id = cut_result.pre_wide.states[0].state_id
     assert [row for row in evaluations if row["input_ref_id"] == selected_state_id]

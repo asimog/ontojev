@@ -7,7 +7,12 @@ from typing import Any, cast
 
 from cancerjev.domain.envelopes import StateRecord
 from cancerjev.domain.measurements import Acquisition, ObservedCount
-from cancerjev.domain.scientific import StatisticalState
+from cancerjev.domain.scientific import (
+    CnvOccurrenceResult,
+    CnvProjectFinding,
+    ExpressionSummaryResult,
+    StatisticalState,
+)
 from cancerjev.jev.contracts import EvaluationRecord
 
 BASELINE_POLICY_VERSION = "baseline-wide-v2"
@@ -17,9 +22,17 @@ ADMISSION_MIN_WARRANTS = 0.60
 ADMISSION_MIN_UNCERTAINTY = 0.50
 ADMISSION_MIN_QUALITY = 0.40
 ADMISSION_MAX_CONFOUND = 0.50
-PRE_WIDE_POLICY_VERSION = "pre-wide-policy-v1"
+PRE_WIDE_POLICY_VERSION = "pre-wide-policy-v2"
+PRE_WIDE_STRATA = ("mutation", "expression", "cnv", "unattributed")
+PRE_WIDE_STRATUM_SHARES = {
+    "mutation": 0.50,
+    "expression": 0.30,
+    "cnv": 0.15,
+    "unattributed": 0.05,
+}
 PRE_WIDE_ORDERING_DESCRIPTION = (
-    "affected_cases desc, mutation_observed desc, coverage_imbalance asc"
+    "declared strata (mutation, expression, cnv, unattributed) with per-stratum quotas; within a "
+    "stratum: affected_cases desc, mutation_observed desc, coverage_imbalance asc, state_hash asc"
 )
 
 _ADMISSION_THRESHOLDS = {
@@ -91,6 +104,35 @@ def measured_dimensions(record: StateRecord) -> dict[str, object]:
         "mutation_observed": state.affected_cases is not None,
         "coverage_imbalance": state.coverage_imbalance,
     }
+
+
+def state_stratum(record: StateRecord) -> str:
+    """Declared pre-Wide stratum from recorded modality nominations, never identity.
+
+    Canonical union states carry their modality nominations, so a state nominated
+    only by expression or CNV is stratified there even though the complete V2 scan
+    yields an observed mutation count (often zero) for every gene. Historical
+    states without nominations fall back to measured lane presence. Names, ranks,
+    counts and input order never decide the stratum.
+    """
+    state = record.state
+    nominations = getattr(state, "nominations", None) or ()
+    modalities = {modality for modality, _ in nominations}
+    if modalities:
+        for stratum in PRE_WIDE_STRATA[:3]:
+            if stratum in modalities:
+                return stratum
+        return "unattributed"
+    if len(state.projects) != 1:
+        return "unattributed"
+    project = state.projects[0]
+    if isinstance(project.mutation.affected_cases, ObservedCount):
+        return "mutation"
+    if isinstance(project.expression, ExpressionSummaryResult):
+        return "expression"
+    if isinstance(project.cnv, (CnvOccurrenceResult, CnvProjectFinding)):
+        return "cnv"
+    return "unattributed"
 
 
 def baseline_ranking(states: list[StateRecord]) -> dict[str, Any]:

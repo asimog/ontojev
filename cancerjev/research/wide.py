@@ -25,11 +25,14 @@ from cancerjev.research.ranking import (
     JEV_POLICY_VERSION,
     PRE_WIDE_ORDERING_DESCRIPTION,
     PRE_WIDE_POLICY_VERSION,
+    PRE_WIDE_STRATA,
+    PRE_WIDE_STRATUM_SHARES,
     PROMOTION_LIMIT,
     baseline_ranking,
     jev_ranking,
     measured_dimensions,
     measured_ordering_key,
+    state_stratum,
 )
 from cancerjev.research.seams import PublishJson
 from cancerjev.storage.artifacts import PublishedArtifact
@@ -46,6 +49,7 @@ class PreWideSelection:
     ceiling: int | None
     excluded: tuple[dict[str, Any], ...]
     reason_code: str
+    strata: tuple[dict[str, Any], ...] = ()
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -54,57 +58,103 @@ class PreWideSelection:
             "ceiling": self.ceiling,
             "considered": self.considered,
             "selected": len(self.states),
+            "strata": [dict(entry) for entry in self.strata],
             "excluded": [dict(entry) for entry in self.excluded],
             "reason_code": self.reason_code,
         }
 
 
+def _require_pre_wide_policy() -> None:
+    """Fail closed if the declared stratum policy itself is inconsistent."""
+    shares = PRE_WIDE_STRATUM_SHARES
+    if tuple(shares) != PRE_WIDE_STRATA:
+        raise LiveRunError("INVALID_PRE_WIDE_POLICY",
+                           "declared stratum shares do not cover the declared strata")
+    if any(share < 0 for share in shares.values()) or abs(sum(shares.values()) - 1.0) > 1e-9:
+        raise LiveRunError("INVALID_PRE_WIDE_POLICY",
+                           "declared stratum shares must be non-negative and sum to one")
+
+
+def _pre_wide_quotas(ceiling: int) -> dict[str, int]:
+    """Deterministic integer allocation of the ceiling over the declared strata."""
+    quotas = {stratum: int(ceiling * PRE_WIDE_STRATUM_SHARES[stratum])
+              for stratum in PRE_WIDE_STRATA}
+    remainder = ceiling - sum(quotas.values())
+    for stratum in PRE_WIDE_STRATA:
+        if remainder == 0:
+            break
+        quotas[stratum] += 1
+        remainder -= 1
+    return quotas
+
+
 def select_pre_wide_states(states: list[StateRecord], *,
                            ceiling: int | None) -> PreWideSelection:
-    """Bound the Wide population with explicit measured ordering, never list order.
+    """Bound the Wide population under the declared strata policy, never list order.
 
     This is the explicit typed boundary between the complete modality union and
     Wide evaluation. The complete union is already persisted; the population
     entering Jev is all of it while it fits the declared ceiling.
 
-    When a cut is required, states are ordered only by the declared measured
-    evidence (affected cases, mutation observation, coverage imbalance) already
-    present in the state contract: no Jev judgment, no validation labels, no
-    gene-id/database/filesystem/input order. If the ceiling falls inside a group
-    of states sharing the boundary key, no scientifically valid deterministic
-    choice exists and the run fails closed instead of truncating.
+    When a cut is required, the ceiling is allocated across the declared strata
+    (mutation, expression, cnv, unattributed) with declared shares, so no observed
+    modality is structurally excluded. Inside each stratum, states are ordered only
+    by the declared measured evidence (affected cases, mutation observation,
+    coverage imbalance), then by state_hash as the declared deterministic
+    tie-break: no Jev judgment, validation label, gene-id/database/filesystem/
+    input order. Unused reservations spill forward to later strata in declared
+    order; only capacity no later stratum can take is filled from leftover states
+    in declared stratum order. Every excluded state is recorded with its stratum
+    and measured dimensions. Only an invalid declared policy fails closed.
     """
     if ceiling is not None and ceiling < 1:
         raise LiveRunError("INVALID_PRE_WIDE_CEILING", f"ceiling must be positive, got {ceiling}")
-    ordered = sorted(states, key=lambda record: (measured_ordering_key(record), record.state_id))
-    if ceiling is None or len(ordered) <= ceiling:
+    _require_pre_wide_policy()
+    if ceiling is None or len(states) <= ceiling:
+        ordered = sorted(states, key=lambda record: (measured_ordering_key(record), record.state_id))
+        counts: dict[str, int] = {stratum: 0 for stratum in PRE_WIDE_STRATA}
+        for record in ordered:
+            counts[state_stratum(record)] += 1
+        strata = tuple(
+            {"stratum": stratum, "quota": None, "considered": counts[stratum],
+             "selected": counts[stratum]}
+            for stratum in PRE_WIDE_STRATA)
         return PreWideSelection(PRE_WIDE_POLICY_VERSION, tuple(ordered), len(ordered), ceiling,
-                                (), "WITHIN_CEILING")
+                                (), "WITHIN_CEILING", strata)
+    grouped: dict[str, list[StateRecord]] = {stratum: [] for stratum in PRE_WIDE_STRATA}
+    for record in states:
+        grouped[state_stratum(record)].append(record)
+    for stratum in PRE_WIDE_STRATA:
+        grouped[stratum].sort(key=lambda record: (measured_ordering_key(record), record.state_hash,
+                                                  record.state_id))
+    quotas = _pre_wide_quotas(ceiling)
     selected: list[StateRecord] = []
-    index = 0
-    while index < len(ordered) and len(selected) < ceiling:
-        key = measured_ordering_key(ordered[index])
-        group_end = index
-        while group_end < len(ordered) and measured_ordering_key(ordered[group_end]) == key:
-            group_end += 1
-        group = ordered[index:group_end]
-        capacity = ceiling - len(selected)
-        if len(group) > capacity:
-            raise LiveRunError(
-                "PRE_WIDE_ORDERING_AMBIGUOUS",
-                f"{len(group)} union states share the boundary ordering key with only "
-                f"{capacity} Wide slot(s) left; there is no scientifically valid deterministic "
-                "way to choose among them",
-            )
-        selected.extend(group)
-        index = group_end
+    taken = {stratum: 0 for stratum in PRE_WIDE_STRATA}
+    carry = 0
+    for stratum in PRE_WIDE_STRATA:
+        allowance = quotas[stratum] + carry
+        take = min(allowance, len(grouped[stratum]))
+        selected.extend(grouped[stratum][:take])
+        taken[stratum] = take
+        carry = allowance - take
+    remaining = ceiling - len(selected)
+    for stratum in PRE_WIDE_STRATA:
+        if remaining == 0:
+            break
+        extra = grouped[stratum][taken[stratum]:taken[stratum] + remaining]
+        selected.extend(extra)
+        taken[stratum] += len(extra)
+        remaining -= len(extra)
+    strata = tuple(
+        {"stratum": stratum, "quota": quotas[stratum], "considered": len(grouped[stratum]),
+         "selected": taken[stratum]}
+        for stratum in PRE_WIDE_STRATA)
     excluded = tuple(
-        {"state_id": record.state_id, "state_hash": record.state_hash,
-         "reason": "BELOW_PRE_WIDE_CUTOFF", **measured_dimensions(record)}
-        for record in ordered[index:]
-    )
-    return PreWideSelection(PRE_WIDE_POLICY_VERSION, tuple(selected), len(ordered), ceiling,
-                            excluded, "CUT_AT_MEASURED_ORDERING")
+        {"state_id": record.state_id, "state_hash": record.state_hash, "stratum": stratum,
+         "reason": "BELOW_DECLARED_STRATUM_ALLOCATION", **measured_dimensions(record)}
+        for stratum in PRE_WIDE_STRATA for record in grouped[stratum][taken[stratum]:])
+    return PreWideSelection(PRE_WIDE_POLICY_VERSION, tuple(selected), len(states), ceiling,
+                            excluded, "CUT_AT_DECLARED_STRATA_POLICY", strata)
 
 
 def record_pre_wide_selection(*, run_id: str, selection: PreWideSelection,
@@ -115,15 +165,15 @@ def record_pre_wide_selection(*, run_id: str, selection: PreWideSelection,
     artifact = publish_json(run_id, f"runs/{run_id}/wide/pre_wide_selection.json",
                             canonical_json(payload), "pre-wide-selection")
     registration = repository.artifact_registration(artifact, run_id)
+    policy = selection.payload()
     emit(
         run_id, "PRE_WIDE_SELECTION_RECORDED", "jev:pre-wide:recorded",
         f"Pre-Wide policy selected {len(selection.states)} of {selection.considered} state(s) "
         f"({selection.reason_code}).",
         stage="JEV_WIDE",
-        data={"policy_version": selection.policy_version, "reason_code": selection.reason_code,
-              "ordering": PRE_WIDE_ORDERING_DESCRIPTION, "ceiling": selection.ceiling,
-              "considered": selection.considered, "selected": len(selection.states),
-              "excluded": len(selection.excluded),
+        # The event mirrors the persisted policy record; "excluded" is overridden with its count
+        # because the event index stays compact while the artifact carries every excluded state.
+        data={**policy, "excluded": len(selection.excluded),
               "artifact_id": artifact.artifact_id, "artifact_sha256": artifact.sha256},
         artifact_refs=[artifact.ref()], registrations=[registration],
     )
