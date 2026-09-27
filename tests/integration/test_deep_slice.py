@@ -18,6 +18,8 @@ from cancerjev.research.deep import (
     FollowUpResult,
     dispatch_recorded_move,
     load_candidate_evidence,
+    plan_deep_slice,
+    stable_id,
 )
 from cancerjev.research.live import LiveOrchestrator
 from cancerjev.science.actions import ActionError
@@ -85,6 +87,43 @@ def _completed_slice(runtime, monkeypatch, *, jev_adapter=None, **kwargs):
     summaries = completed["data"]["deep"]["candidates"]
     assert len(summaries) == 1
     return run_id, summaries[0], repository
+
+
+def test_replanning_resumes_the_stored_chain_without_a_gap_or_a_recomputed_parent(runtime, monkeypatch):
+    """I-01/I-02: a plan resumed over an E0-only history writes index 1 and links the
+    stored E0 hash. Pre-fix it wrote index 2 parented to E0, and only a later chain
+    read rejected the gap."""
+    from cancerjev.domain.events import canonical_json
+
+    run_id, summary, repository = _completed_slice(
+        runtime, monkeypatch, deep_action_id="NOT_A_REGISTERED_ACTION")
+    artifacts = runtime[2]
+    candidate = repository.get_candidate(summary["candidate_id"])
+    chain = read_revision_chain(repository, artifacts, candidate["candidate_id"])
+    assert [stored.iteration for stored in chain] == [0], \
+        "the abstained plan created only the baseline revision"
+    assert chain[0].evidence_state_id == stable_id(
+        run_id, f"evidence:{candidate['candidate_id']}:0")
+
+    def emit(target_run_id, event_type, key, message, **kwargs):
+        return repository.append_event(target_run_id, event_type=event_type,
+                                       idempotency_key=key, message=message, **kwargs)
+
+    def publish_json(target_run_id, path, payload, purpose):
+        content = payload if isinstance(payload, bytes) else canonical_json(payload)
+        return artifacts.publish(path, content, "application/json", purpose)
+
+    plan = plan_deep_slice(
+        run_id=run_id, candidate=candidate, repository=repository, artifacts=artifacts,
+        emit=emit, publish_json=publish_json,
+        requested_action_id="CHECK_EVIDENCE_INTEGRITY_V1")
+
+    assert plan.iteration_number == 1, "the next index resumes the stored chain, never a gap"
+    assert plan.baseline_evidence_id == chain[0].evidence_state_id
+    assert plan.baseline_evidence_hash == chain[0].record.evidence_hash, \
+        "the parent link uses the stored E0 hash, never an in-memory recomputation"
+    assert plan.evidence_state_id == stable_id(
+        run_id, f"evidence:{candidate['candidate_id']}:1")
 
 
 def _operator_slice(runtime, monkeypatch, **kwargs):

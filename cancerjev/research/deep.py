@@ -622,13 +622,26 @@ def plan_deep_slice(*, run_id: str, candidate: dict[str, Any], repository: Repos
     if len(completed) >= FOLLOWUP_LIMIT:
         return _abstain(run_id, emit, evidence, baseline_id, action_id, baseline_hash, baseline_present,
                         eligibilities, "FOLLOWUP_LIMIT_REACHED", f"limit {FOLLOWUP_LIMIT} reached")
-    iteration = len(existing_revisions) + 1
+    # The next index and the parent link come from the stored chain, never from a
+    # count guess or an in-memory re-derivation: a plan resumed with an existing
+    # E0 writes index 1 (not 2) and links the stored E0 hash, and a plan over a
+    # longer chain resumes the latest revision instead of forking at E0.
+    if existing_revisions:
+        latest = existing_revisions[-1]
+        parent_evidence_id = str(latest["evidence_state_id"])
+        parent_evidence_hash = str(latest["evidence_hash"])
+        iteration = int(latest["iteration"]) + 1
+    else:
+        parent_evidence_id = baseline_id
+        parent_evidence_hash = baseline_hash
+        iteration = 1
     if iteration > EVIDENCE_ITERATION_LIMIT:
         return _abstain(run_id, emit, evidence, baseline_id, action_id, baseline_hash, baseline_present,
                         eligibilities, "EVIDENCE_ITERATION_LIMIT_REACHED",
                         f"limit {EVIDENCE_ITERATION_LIMIT} revisions reached")
-    return DeepPlan(candidate=evidence, baseline_evidence_id=baseline_id,
-                    baseline_evidence_hash=baseline_hash, baseline_already_present=baseline_present,
+    return DeepPlan(candidate=evidence, baseline_evidence_id=parent_evidence_id,
+                    baseline_evidence_hash=parent_evidence_hash,
+                    baseline_already_present=baseline_present,
                     eligibilities=eligibilities, selected_action_id=action_id, abstain_reason=None,
                     abstain_detail=None, iteration_number=iteration,
                     execution_id=stable_id(run_id, f"followup:{candidate['candidate_id']}:{action_id}:{iteration}"),
