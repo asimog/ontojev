@@ -20,9 +20,15 @@ dev = ["httpx>=0.28,<1", "pytest>=8.4,<9", "pytest-timeout>=2.4,<3", "ruff>=0.12
 
 [tool.mypy]
 python_version = "3.12"
+# Strict typing covers every tracked production module. The repository-facts
+# check (python -m tests.repository_facts check) fails when a tracked module
+# under cancerjev/, apps/ or deploy/ is missing from this list, when an entry
+# no longer exists, or when a documented exclusion goes stale. There are no
+# standing exclusions: package __init__.py markers and __main__.py are typed.
 files = [
-  "cancerjev/__init__.py", "cancerjev/config.py",
-  "cancerjev/domain/measurements.py", "cancerjev/domain/scientific.py",
+  "cancerjev/__init__.py", "cancerjev/__main__.py", "cancerjev/config.py",
+  "cancerjev/domain/__init__.py", "cancerjev/domain/measurements.py",
+  "cancerjev/domain/scientific.py",
   "cancerjev/domain/evidence.py", "cancerjev/domain/_json.py", "cancerjev/domain/codecs.py",
   "cancerjev/domain/envelopes.py", "cancerjev/domain/hypotheses.py",
   "cancerjev/domain/actions.py", "cancerjev/domain/discovery.py",
@@ -30,8 +36,9 @@ files = [
   "cancerjev/domain/maturity.py", "cancerjev/domain/pathway.py",
   "cancerjev/domain/program.py", "cancerjev/domain/functional.py", "cancerjev/domain/runs.py",
   "cancerjev/domain/events.py", "cancerjev/domain/states.py", "cancerjev/domain/dossier.py",
-  "cancerjev/gdc/endpoints.py", "cancerjev/gdc/parsers.py",
+  "cancerjev/gdc/__init__.py", "cancerjev/gdc/endpoints.py", "cancerjev/gdc/parsers.py",
   "cancerjev/gdc/transport.py", "cancerjev/gdc/budget.py", "cancerjev/gdc/capture.py",
+  "cancerjev/research/__init__.py",
   "cancerjev/research/specs.py", "cancerjev/research/acquisition.py",
   "cancerjev/research/discovery.py", "cancerjev/research/expression_discovery.py",
   "cancerjev/research/cnv_discovery.py", "cancerjev/research/cutover.py",
@@ -50,25 +57,32 @@ files = [
   "cancerjev/research/hypotheses.py", "cancerjev/research/dossier.py",
   "cancerjev/research/investigation.py", "cancerjev/research/fixtures.py",
   "cancerjev/research/orchestrator.py", "cancerjev/research/followup.py",
-  "cancerjev/research/evaluation.py",
-  "cancerjev/science/errors.py", "cancerjev/science/mutation.py",
+  "cancerjev/research/evaluation.py", "cancerjev/research/hypothesis_policy.py",
+  "cancerjev/science/__init__.py", "cancerjev/science/errors.py",
+  "cancerjev/science/mutation.py",
   "cancerjev/science/expression.py", "cancerjev/science/descriptors.py", "cancerjev/science/methods.py",
   "cancerjev/science/actions.py",
-  "cancerjev/jev/contracts.py", "cancerjev/jev/projection.py",
+  "cancerjev/jev/__init__.py", "cancerjev/jev/contracts.py", "cancerjev/jev/projection.py",
   "cancerjev/jev/posture.py", "cancerjev/jev/service.py",
   "cancerjev/jev/typesafe_adapter.py", "cancerjev/jev/questions.py",
   "cancerjev/jev/context.py",
-  "cancerjev/llm/openrouter.py",
-  "cancerjev/dossier/renderer.py",
-  "cancerjev/storage/readers.py", "cancerjev/storage/database.py",
+  "cancerjev/llm/__init__.py", "cancerjev/llm/openrouter.py",
+  "cancerjev/dossier/__init__.py", "cancerjev/dossier/renderer.py",
+  "cancerjev/storage/__init__.py", "cancerjev/storage/readers.py",
+  "cancerjev/storage/database.py",
   "cancerjev/storage/artifacts.py", "cancerjev/storage/repositories.py",
   "cancerjev/storage/ownership.py", "cancerjev/storage/doctor.py",
   "cancerjev/observability.py",
-  "cancerjev/cli/console.py", "cancerjev/cli/main.py",
+  "cancerjev/cli/__init__.py", "cancerjev/cli/console.py", "cancerjev/cli/main.py",
+  "apps/__init__.py", "apps/api/__init__.py", "deploy/__init__.py",
   "deploy/serve.py",
   "apps/api/serializers.py", "apps/api/routes.py", "apps/api/main.py",
 ]
 strict = true
+# Re-verified at P1-15 against mypy 2.3.1: errors are reported only for modules
+# in `files`; normal and silent both leave imported-but-unlisted modules
+# unreported. The files invariant above is therefore the guarantee, and silent
+# stays to keep third-party plugin noise out of the gate.
 follow_imports = "silent"
 cache_dir = ".venv/mypy-cache"
 
@@ -85,6 +99,7 @@ testpaths = ["tests"]
 addopts = '-q -m "not live and not live_gdc and not live_jev and not live_llm and not live_acceptance"'
 markers = [
   "fast: everyday gate of focused contract/invariant tests plus one core offline replay",
+  "local_process: test spawns a declared local subprocess; exempt from the offline subprocess guard",
   "live: opt-in live provider tests (disabled by default)",
   "live_gdc: opt-in bounded live GDC contract probe",
   "live_jev: opt-in live TypeSafe/Jev evaluation",

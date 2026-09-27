@@ -6,6 +6,12 @@ versions) may be stated in prose-bearing documentation. Facts are collected
 directly from the code that owns them; the checked markdown block must equal
 the rendered block or the offline test fails.
 
+``check`` also verifies the strict-mypy coverage invariant: every tracked
+production Python module under ``cancerjev/``, ``apps/`` and ``deploy/`` must
+be listed in ``[tool.mypy] files`` unless it is named in the explicit,
+documented exclusion list. Mypy reports errors only for modules in that list,
+so an unlisted module silently escapes strict typing.
+
 Commands (run from the repository root with the project venv active):
 
     python tests/repository_facts.py check   # exit 1 with stale facts, if any
@@ -18,7 +24,9 @@ chain, acquires nothing, and never contacts a provider.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 from cancerjev import __version__ as PACKAGE_VERSION
@@ -102,8 +110,58 @@ from cancerjev.storage.database import SCHEMA_VERSION as SQLITE_SCHEMA_VERSION
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 FACTS_DOCUMENT = REPOSITORY_ROOT / "docs" / "REPOSITORY_FACTS.md"
+PYPROJECT = REPOSITORY_ROOT / "pyproject.toml"
 BEGIN_MARKER = "<!-- repository-facts:begin (generated; python tests/repository_facts.py render) -->"
 END_MARKER = "<!-- repository-facts:end -->"
+# Production roots whose tracked Python modules must stay in the strict-mypy
+# list. The literal ``cancerjev/**/*.py`` pathspec misses modules directly under
+# ``cancerjev/`` (git ``**`` needs a directory level), so the check enumerates
+# every tracked ``.py`` under these roots instead.
+PRODUCTION_ROOTS = ("cancerjev", "apps", "deploy")
+# Decision (P1-15): no standing exclusions. Every tracked production module,
+# including package ``__init__.py`` markers and ``__main__.py``, is strictly
+# typed. A future exclusion must be added here with its reason in
+# ``MYPY_EXCLUSION_REASONS`` in the same change.
+MYPY_EXCLUDED_MODULES: tuple[str, ...] = ()
+MYPY_EXCLUSION_REASONS: dict[str, str] = {}
+
+
+def tracked_production_modules() -> tuple[str, ...]:
+    """Every tracked production Python module, enumerated from git."""
+    completed = subprocess.run(
+        ["git", "ls-files", "-z", "--", *PRODUCTION_ROOTS],
+        cwd=REPOSITORY_ROOT, capture_output=True, text=True, check=True)
+    return tuple(sorted(path for path in completed.stdout.split("\0") if path.endswith(".py")))
+
+
+def configured_mypy_modules() -> tuple[str, ...]:
+    """The ``[tool.mypy] files`` list as configured."""
+    with PYPROJECT.open("rb") as stream:
+        pyproject = tomllib.load(stream)
+    files = pyproject["tool"]["mypy"]["files"]
+    if not isinstance(files, list) or not all(isinstance(entry, str) for entry in files):
+        raise ValueError("[tool.mypy] files must be a list of paths")
+    return tuple(files)
+
+
+def check_mypy_coverage(*, modules: tuple[str, ...] | None = None,
+                        listed: tuple[str, ...] | None = None,
+                        excluded: tuple[str, ...] | None = None) -> list[str]:
+    """Return strict-mypy coverage problems; empty means every module is covered."""
+    production = set(tracked_production_modules() if modules is None else modules)
+    configured = set(configured_mypy_modules() if listed is None else listed)
+    exclusions = set(MYPY_EXCLUDED_MODULES if excluded is None else excluded)
+    problems: list[str] = []
+    for module in sorted(production - exclusions - configured):
+        problems.append(f"{module}: tracked production module missing from [tool.mypy] files")
+    for entry in sorted(configured - production):
+        problems.append(f"{entry}: [tool.mypy] files entry is not a tracked production module")
+    for exclusion in sorted(exclusions - production):
+        problems.append(f"{exclusion}: documented mypy exclusion is not a tracked production module")
+    for exclusion in sorted(exclusions):
+        if exclusion not in MYPY_EXCLUSION_REASONS:
+            problems.append(f"{exclusion}: mypy exclusion has no documented reason")
+    return problems
 
 
 def collect_facts() -> dict[str, object]:
@@ -247,11 +305,13 @@ def main(argv: list[str]) -> int:
         return 0
     if command == "check":
         problems = check_document()
+        problems.extend(check_mypy_coverage())
         if problems:
-            print(f"STALE REPOSITORY FACTS in {FACTS_DOCUMENT.name}:")
+            print("REPOSITORY FACTS OR STRICT-MYPY COVERAGE IS STALE:")
             for problem in problems:
                 print(f"  - {problem}")
-            print("run: python tests/repository_facts.py render")
+            print("run: python tests/repository_facts.py render "
+                  "(facts only; mypy coverage is fixed in pyproject.toml)")
             return 1
         print("repository facts are current")
         return 0

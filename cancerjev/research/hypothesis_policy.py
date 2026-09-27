@@ -69,7 +69,7 @@ def _choice(answers: dict[str, Any], question_id: str) -> str | None:
 def decide_hypothesis_test(*, hypotheses: list[dict[str, Any]],
                            evaluations: list[dict[str, Any]],
                            dispatchable_action_ids: list[str],
-                           evidence_producing_action_ids: list[str] | frozenset[str] = (),
+                           evidence_producing_action_ids: list[str] | frozenset[str] = frozenset(),
                            ) -> HypothesisDecision:
     """One declared decision from recorded hypothesis critique and registered actions."""
     by_id = {str(item.get("hypothesis_id")): item for item in evaluations}
