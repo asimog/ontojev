@@ -264,7 +264,9 @@ Independent bounded units; each may land as its own commit with its own tests.
 - `OJ-AUD-P1-13`, extra modalities, open-file acquisition, pathway wiring, survival/DE methods, question-set expansion, frontend redesign: triggers **unmet** (no named source decision/licence/adapter/consumer).
 - Backlog scheduling started at the highest-risk items that need no new data: `F-02` (CNV category spelling double-count, fixed `1747cfd`) and `I-01`/`I-02` (deep revision-chain gap and recomputed parent hash). Science-policy items that change nomination semantics (`E-02` one-sided asymmetry review) are blocked on the Phase 9 calibration records, not silently re-tuned.
 
-**Consciously not scheduled:** live provider verification of deep `from/size` pagination (`C-04`), per-response release comparison (`C-03`), and any acquisition expansion are deferred until a run or method requires them.
+**Provider contract verification (landed 2026-09-27, operator head-slice run).** `python -m cancerjev probe` now also captures the declared LUAD occurrence scan shallow (`from=0`, 1,000 records) and deep (`from=150,000`, 1,000 records) pages, compares every capture's release header against the first observed value, and returns the totals in the summary; the transport emits `GDC_RELEASE_DRIFT` when a header changes. Live evidence (16 requests, 2.36 MB): TCGA-LUAD occurrence total **177,330** on both pages, deep page HTTP 200 returning 1,000 hits with a 1,141,712-byte body, and stable `x-gdc-data_release = "Data Release 46.0 - August 10, 2026"` / `x-gdc-commit = 8f7c2a51…` headers across all captures. This closes `C-04` (deep `from/size` provider behavior verified live) and `C-03` (per-response release comparison now implemented and observed stable).
+
+**Consciously not scheduled:** any acquisition expansion is deferred until a run or method requires it.
 
 ---
 

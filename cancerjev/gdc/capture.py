@@ -25,6 +25,7 @@ from cancerjev.gdc.endpoints import (
     mutated_cases_count_request,
     projects_mapping_request,
     projects_request,
+    ssm_occurrence_page_request,
     status_request,
     top_mutated_genes_request,
 )
@@ -113,8 +114,24 @@ def run_contract_probe(
     reference_project: str = "TCGA-BRCA",
     frame_project: str = "TCGA-CHOL",
     frame_size: int = 250,
+    deep_project: str = "TCGA-LUAD",
+    deep_offset: int = 150_000,
 ) -> dict[str, Any]:
-    """Bounded probe of the admitted endpoint surface (~14 requests)."""
+    """Bounded probe of the admitted endpoint surface (~16 requests).
+
+    Includes the deep ``from`` pagination check (C-04) on the declared campaign
+    project and a per-response release-header comparison (C-03) across every
+    capture; both outcomes are returned in the summary and the capture metadata.
+    """
+    release_headers: dict[str, str | None] = {}
+
+    def capture(name: str, request: GDCRequest) -> GDCResponse:
+        response = transport.request(request)
+        sink.record(name, request, response)
+        release_headers[name] = (response.headers.get("x-gdc-data_release")
+                                 or response.headers.get("x-gdc-commit"))
+        return response
+
     probe_names = {
         "status": status_request(),
         "projects_small": projects_request(size=3),
@@ -131,12 +148,10 @@ def run_contract_probe(
     }
     responses: dict[str, GDCResponse] = {}
     for name, request in probe_names.items():
-        response = transport.request(request)
-        sink.record(name, request, response)
-        responses[name] = response
+        responses[name] = capture(name, request)
 
-    frame_response = transport.request(cases_request(frame_project, size=frame_size))
-    sink.record("cases_frame", cases_request(frame_project, size=frame_size), frame_response)
+    frame_request = cases_request(frame_project, size=frame_size)
+    frame_response = capture("cases_frame", frame_request)
     frame_hits = _json_body(frame_response)["data"]["hits"]
     frame_case_ids = [hit["case_id"] for hit in frame_hits][:frame_size]
     gene_ids = ["ENSG00000141510"]
@@ -145,8 +160,16 @@ def run_contract_probe(
         ("expression_gene_selection", expression_gene_selection_request(frame_case_ids, gene_ids)),
         ("expression_values", expression_values_request(frame_case_ids, gene_ids)),
     ):
-        response = transport.request(request)
-        sink.record(name, request, response)
+        capture(name, request)
+
+    shallow_request = ssm_occurrence_page_request(deep_project, offset=0, size=1_000)
+    shallow = capture("occurrence_shallow", shallow_request)
+    deep_request = ssm_occurrence_page_request(deep_project, offset=deep_offset, size=1_000)
+    deep = capture("occurrence_deep", deep_request)
+    shallow_total = int(_json_body(shallow)["data"]["pagination"]["total"])
+    deep_body = _json_body(deep)
+    deep_total = int(deep_body["data"]["pagination"]["total"])
+    observed_headers = {value for value in release_headers.values() if value is not None}
 
     index = sink.finalize()
     return {
@@ -154,4 +177,11 @@ def run_contract_probe(
         "bytes": index["total_body_bytes"],
         "release": release,
         "frame_cases": len(frame_case_ids),
+        "occurrence_project": deep_project,
+        "occurrence_total": shallow_total,
+        "deep_offset": deep_offset,
+        "deep_hits": len(deep_body["data"]["hits"]),
+        "deep_total_matches": shallow_total == deep_total,
+        "release_headers": release_headers,
+        "release_header_stable": len(observed_headers) <= 1,
     }

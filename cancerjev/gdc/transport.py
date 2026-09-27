@@ -189,6 +189,7 @@ class GDCTransport:
         self.port = port
         self.connection_factory = connection_factory
         self._release_identity: str | None = None
+        self._release_header: str | None = None
 
     def _cache_contract(self) -> str:
         run = self.repository.get_run(self.run_id)
@@ -197,6 +198,36 @@ class GDCTransport:
                  "ownership": run["execution_ownership"] if run else None,
                  "mode": run["mode"] if run else None}
         return f"{TRANSPORT_CONTRACT_VERSION}:release-owner-v2:{_sha256(canonical_json(scope))}"
+
+    RELEASE_HEADER_NAMES = ("x-gdc-data_release", "x-gdc-commit")
+
+    def _observe_release_header(self, *, request_id: str, spec: EndpointSpec,
+                                headers: dict[str, str]) -> None:
+        """Compare every response's release header against the first observed value.
+
+        The lane release is pinned from one /status call; this is the per-response
+        check (C-03). The first header value observed in the run is the reference,
+        so the comparison makes no assumption about header formatting versus the
+        body release string; a change mid-run is recorded as a drift event instead
+        of passing silently.
+        """
+        observed = next((headers[name] for name in self.RELEASE_HEADER_NAMES if name in headers),
+                        None)
+        if observed is None:
+            return
+        if self._release_header is None:
+            self._release_header = observed
+            return
+        if observed != self._release_header:
+            self.emit(
+                "GDC_RELEASE_DRIFT", f"gdc:{request_id}:release-drift",
+                f"GDC {spec.method} {spec.path} reported release header {observed!r} after "
+                f"{self._release_header!r}.",
+                stage=None, level="warning",
+                data={"request_id": request_id, "endpoint": spec.path,
+                      "reference_release_header": self._release_header,
+                      "observed_release_header": observed},
+            )
 
     def request(self, request: GDCRequest) -> GDCResponse:
         spec = request.endpoint
@@ -382,6 +413,7 @@ class GDCTransport:
             response_artifact_id=artifact.artifact_id, response_hash=body_sha,
             completeness="COMPLETE", error=None, finished_at=utc_now(),
         )
+        self._observe_release_header(request_id=request_id, spec=spec, headers=headers)
         if spec.path != "/status" and self.cache_enabled:
             self.repository.gdc_cache_put(
             request_hash=request_hash, method=spec.method, endpoint=spec.path,

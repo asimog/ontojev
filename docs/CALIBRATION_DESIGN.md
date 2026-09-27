@@ -1,9 +1,6 @@
 # Calibration and evaluation design (preregistered, Gate 6)
 
-Status at HEAD: **design only**. No calibration record exists, so every threshold
-in `research/calibration.py` is a declared policy parameter, not a validated
-scientific cutoff. `EvidenceLevel.STATISTICALLY_SUPPORTED` stays blocked until
-records exist for a selected claim family. Status semantics are machine-checked:
+Status at HEAD: **records exist for the mutation family only**. `python -m cancerjev calibrate` computes the declared mutation metrics on the frozen DR46 reconciliation panel (17-gene complete occurrence captures) with a deterministic gene bootstrap (seed `20260927`, 200 replicates) and writes strict records to `data/calibration/`; the four mutation thresholds report `CALIBRATED` at the current policy version, the other 17 thresholds stay `UNCALIBRATED` until their declared corpus/metric is computed (the Wide admission family additionally requires blinded held-out labels). `EvidenceLevel.STATISTICALLY_SUPPORTED` stays blocked until records exist for a selected claim family. Status semantics are machine-checked:
 
 - `UNCALIBRATED` — no record for this threshold exists.
 - `CALIBRATED` — a schema-valid record for the threshold's **current** policy

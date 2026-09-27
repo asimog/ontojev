@@ -157,6 +157,17 @@ def parser() -> argparse.ArgumentParser:
     )
     doctor.add_argument("--prune-stale-temp", action="store_true",
                         help="after reporting, delete only recognized stale temporary files")
+    calibrate = commands.add_parser(
+        "calibrate",
+        help="generate predeclared calibration records from a frozen corpus slice "
+             "(operator artifacts; the runtime never writes them)",
+    )
+    calibrate.add_argument(
+        "--corpus", default="tests/reconciliation/fixtures/reconciliation_dr46",
+        help="frozen corpus directory the declared metric is computed on")
+    calibrate.add_argument(
+        "--out", default=None,
+        help="record output directory (default: <data-dir>/calibration)")
     return root
 
 
@@ -239,10 +250,19 @@ def _probe(settings: Settings, repository: Repository, artifacts: ArtifactStore,
             "RUN_COMPLETED", "run:completed",
             f"Contract probe completed with {summary['captures']} captures.",
             data={"status": "COMPLETED", "reason_code": "CONTRACT_PROBE_COMPLETE", "coverage": "COMPLETE_FOR_SCOPE",
-                  "captures": summary["captures"], "bytes": totals["bytes"], "gdc_attempts": totals["attempts"]},
+                  "captures": summary["captures"], "bytes": totals["bytes"], "gdc_attempts": totals["attempts"],
+                  "occurrence_project": summary["occurrence_project"],
+                  "occurrence_total": summary["occurrence_total"],
+                  "deep_offset": summary["deep_offset"], "deep_hits": summary["deep_hits"],
+                  "deep_total_matches": summary["deep_total_matches"],
+                  "release_header_stable": summary["release_header_stable"]},
         )
         print(f"[PROBE] captures written to {directory} ({summary['captures']} requests, {summary['bytes']} bytes)",
               flush=True)
+        print(f"[PROBE] {summary['occurrence_project']} occurrence total={summary['occurrence_total']} "
+              f"deep from={summary['deep_offset']} hits={summary['deep_hits']} "
+              f"total_match={summary['deep_total_matches']} "
+              f"release_header_stable={summary['release_header_stable']}", flush=True)
 
 
 def _capability(settings: Settings, repository: Repository, artifacts: ArtifactStore,
@@ -787,6 +807,20 @@ def main(argv: list[str] | None = None) -> None:
     if args.command in {"discover", "discover-expression", "discover-cnv"} and not live:
         raise SystemExit(f"{args.command} requires --live (systematic discovery is a real bounded open-access GDC task).")
     settings = Settings.from_env()
+    if args.command == "calibrate":
+        from cancerjev.research.calibration import calibration_status, load_calibration_record
+        from cancerjev.research.calibration_records import write_mutation_records
+
+        out = Path(args.out) if args.out else settings.data_dir / "calibration"
+        written = write_mutation_records(corpus=Path(args.corpus), out=out)
+        records = tuple(load_calibration_record(path) for path in written)
+        status = calibration_status(records)
+        for threshold_id, value in sorted(status.items()):
+            print(f"[CALIBRATION] {threshold_id}: {value}", flush=True)
+        remaining = sum(1 for value in status.values() if value != "CALIBRATED")
+        print(f"[CALIBRATION] wrote {len(written)} record(s) to {out}; "
+              f"{remaining} threshold(s) not calibrated on this corpus", flush=True)
+        return
     if args.command == "doctor":
         from cancerjev.storage.doctor import prune_stale_temp_artifacts, run_doctor
 

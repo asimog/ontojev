@@ -15,6 +15,7 @@
 | Worker | `python -m cancerjev worker --live` | Long-running autonomous program loop; owns the research lock only around each cycle. |
 | One-shot program cycle | `python -m cancerjev program` | One durable cycle: observe release, select, dispatch, persist, heartbeat. |
 | Doctor | `python -m cancerjev doctor [--prune-stale-temp]` | Read-only integrity report; optional bounded temp cleanup. |
+| Calibrate | `python -m cancerjev calibrate [--corpus <dir>] [--out <dir>]` | Operator-only: writes preregistered calibration records computed on a frozen corpus slice (default: the DR46 reconciliation panel) to `<data-dir>/calibration`; the runtime never writes records. |
 
 Researcher/comparator work stays on the explicit path: `python -m cancerjev run --live [--jev] [--researcher ...]`.
 
