@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from cancerjev.domain.events import canonical_json
 from cancerjev.domain.evidence import CheckSummary
-from cancerjev.jev.contracts import EvaluationRecord, read_answers
+from cancerjev.jev.contracts import EvaluationRecord, QuestionApplicability, read_answers
 from cancerjev.jev.questions import DEEP_LIMITATION_ROSTER, DEEP_QUESTIONS
 from cancerjev.research.nextmove import (
     DEEP_POLICY_VERSION,
@@ -46,9 +46,18 @@ def _choice_answer(choice: str) -> dict:
     }
 
 
+def _applicability(*inapplicable: str) -> tuple[QuestionApplicability, ...]:
+    return tuple(
+        QuestionApplicability(definition.question_id, definition.question_id not in inapplicable,
+                              "recorded applicability rule", definition.applicability_rule)
+        for definition in DEEP_QUESTIONS
+    )
+
+
 def _evaluation_record(*, reliable: float = 0.9, sufficient: float = 0.8,
                        warranted: float = 0.2, stopping: float = 0.8,
                        limitation: str = "NONE", error_code: str | None = None,
+                       inapplicable: tuple[str, ...] = (),
                        ) -> EvaluationRecord:
     raw = {
         "revision_reliable": {"kind": "noul", "probability_yes": reliable},
@@ -62,6 +71,7 @@ def _evaluation_record(*, reliable: float = 0.9, sufficient: float = 0.8,
         evaluation_id="evaluation-1", input_ref_id="revision-1", answers=answers,
         error_code=error_code, artifact_id="evaluation-artifact",
         serialized=canonical_json({"answers": answers.boundary_representation()}),
+        applicability=_applicability(*inapplicable),
     )
 
 
@@ -213,6 +223,21 @@ def test_typed_judgment_is_built_from_a_validated_evaluation_record():
     decision = decide_next_move(checks=_checks(), judgment=judgment,
                                 eligible_action_ids=[ACTION, OTHER_ACTION])
     assert (decision["move"], decision["reason_code"]) == ("FOLLOW_UP", "FOLLOW_UP_WARRANTED")
+
+
+def test_inapplicable_answered_judgment_is_unavailable_and_cannot_change_the_trajectory():
+    record = _evaluation_record(reliable=0.9, warranted=0.9, stopping=0.1,
+                                inapplicable=("revision_reliable",))
+    judgment = DeepJudgment.from_evaluation(record, ACTION)
+    assert judgment.reliable is None, "an inapplicable answer is unavailable whatever the model answered"
+    assert judgment.warranted == 0.9
+
+    decision = decide_next_move(checks=_checks(), judgment=judgment,
+                                eligible_action_ids=[ACTION, OTHER_ACTION])
+    assert (decision["move"], decision["reason_code"]) == (
+        "ABSTAIN", "DEEP_JUDGMENT_UNAVAILABLE")
+    assert decision["dimensions"]["revision_reliable"] is None
+    assert decision["dimensions"]["next_step_warranted"] == 0.9
 
 
 def test_failed_evaluation_record_abstains_instead_of_fabricating_dimensions():

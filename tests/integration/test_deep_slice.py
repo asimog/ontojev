@@ -288,7 +288,9 @@ def test_recorded_follow_up_is_dispatched_once_when_authorized(runtime, monkeypa
     assert "dispatch" not in summary["steps"][1], "the ABSTAIN terminal move is not dispatched"
     assert summary["final_move"] == "ABSTAIN"
     assert summary["status"] == "ABSTAINED"
-    assert summary["stop_reason"] == "NO_FURTHER_REGISTERED_ACTION"
+    assert summary["stop_reason"] == "DEEP_JUDGMENT_UNAVAILABLE"
+    assert summary["decisions"][1]["dimensions"]["revision_reliable"] is None, \
+        "the faithfulness revision records no applicable integrity observation"
     assert summary["candidate_status"] == "CANDIDATE_COMPLETE"
 
     candidate = repository.get_candidate(summary["candidate_id"])
@@ -470,8 +472,13 @@ def test_several_eligible_actions_are_resolved_by_the_declared_policy(runtime, m
     completed = next(event for event in _events(repository, run_id)
                      if event["type"] == "RUN_COMPLETED")
     summary = completed["data"]["deep"]["candidates"][0]
-    assert summary["status"] == "COMPLETED"
+    assert summary["status"] == "ABSTAINED"
+    assert summary["final_move"] == "ABSTAIN"
+    assert summary["stop_reason"] == "DEEP_JUDGMENT_UNAVAILABLE"
     assert summary["first_step"]["action_id"] == "OCCURRENCE_DETAIL_EVIDENCE_V1"
+    assert summary["decisions"][0]["dimensions"]["revision_reliable"] is None, \
+        "the occurrence-detail revision records no integrity observation, so its reliability " \
+        "question is inapplicable and cannot authorize a further step"
     candidate = repository.get_candidate(summary["candidate_id"])
     revision = _candidate_chain(runtime, repository, candidate)[-1].evidence
     assert revision.action is not None

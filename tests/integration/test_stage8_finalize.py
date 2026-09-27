@@ -71,7 +71,7 @@ def test_abstain_preserves_its_actual_reason_code(runtime, monkeypatch):
         runtime, monkeypatch, jev_adapter=_followup_adapter(), deep_followup_authorized=True)
     [payload] = _final_result_payloads(repository, runtime[2], run_id)
     assert payload["final_move"] == "ABSTAIN"
-    assert payload["stop_reason"] == "NO_FURTHER_REGISTERED_ACTION"
+    assert payload["stop_reason"] == "DEEP_JUDGMENT_UNAVAILABLE"
     assert payload["investigation_status"] == "ABSTAINED"
 
 

@@ -42,18 +42,47 @@ class DeepJudgment:
 
     @classmethod
     def from_evaluation(cls, evaluation: EvaluationRecord, action_id: str) -> DeepJudgment:
-        answers = evaluation.answers
+        """Build the typed judgment from validated answers and their applicability.
+
+        An answer whose recorded applicability says the question does not apply to
+        the revision is treated as unavailable whatever the model answered, so an
+        inapplicable answer can never change the trajectory.
+        """
         return cls(
-            answers.probability("revision_reliable") if answers else None,
-            answers.probability("evidence_sufficient_for_next_step") if answers else None,
-            answers.probability("next_step_warranted") if answers else None,
-            answers.probability("stopping_more_honest") if answers else None,
-            answers.choice("dominant_limitation") if answers else None,
+            _evaluation_probability(evaluation, "revision_reliable"),
+            _evaluation_probability(evaluation, "evidence_sufficient_for_next_step"),
+            _evaluation_probability(evaluation, "next_step_warranted"),
+            _evaluation_probability(evaluation, "stopping_more_honest"),
+            _evaluation_choice(evaluation, "dominant_limitation"),
             evaluation.error_code, action_id,
         )
 
 
+def _evaluation_probability(evaluation: EvaluationRecord, question_id: str) -> float | None:
+    if not evaluation.is_applicable(question_id):
+        return None
+    answers = evaluation.answers
+    return answers.probability(question_id) if answers is not None else None
+
+
+def _evaluation_choice(evaluation: EvaluationRecord, question_id: str) -> str | None:
+    if not evaluation.is_applicable(question_id):
+        return None
+    answers = evaluation.answers
+    return answers.choice(question_id) if answers is not None else None
+
+
+def _boundary_applicable(judgment: dict[str, Any], question_id: str) -> bool:
+    applicability = judgment.get("applicability")
+    if not isinstance(applicability, dict):
+        return False
+    entry = applicability.get(question_id)
+    return isinstance(entry, dict) and entry.get("applicable") is True
+
+
 def _probability(judgment: dict[str, Any], question_id: str) -> float | None:
+    if not _boundary_applicable(judgment, question_id):
+        return None
     answer = (judgment.get("answers") or {}).get(question_id)
     if not isinstance(answer, dict) or answer.get("kind") != "noul":
         return None
@@ -62,6 +91,8 @@ def _probability(judgment: dict[str, Any], question_id: str) -> float | None:
 
 
 def _choice(judgment: dict[str, Any], question_id: str) -> str | None:
+    if not _boundary_applicable(judgment, question_id):
+        return None
     answer = (judgment.get("answers") or {}).get(question_id)
     if not isinstance(answer, dict) or answer.get("kind") != "choice":
         return None
@@ -71,7 +102,11 @@ def _choice(judgment: dict[str, Any], question_id: str) -> str | None:
 
 def next_move(*, checks: dict[str, Any], judgment: dict[str, Any],
               eligible_action_ids: list[str]) -> dict[str, Any]:
-    """Historical dictionary boundary; production uses the typed judgment entrypoint."""
+    """Historical dictionary boundary; production uses the typed judgment entrypoint.
+
+    The same applicability rule as the typed path applies here until Phase 6 removes
+    this boundary: an answer without a recorded applicable rule is unavailable.
+    """
     contradicted = int(checks.get("checks_contradicted") or 0)
     return decide_next_move(
         checks=CheckSummary(contradicted, 0, contradicted, 0),

@@ -78,8 +78,12 @@ def test_autonomous_run_completes_with_a_policy_selected_measured_revision(runti
                      if event["type"] == "RUN_COMPLETED")
     summary = completed["data"]["deep"]["candidates"][0]
 
-    assert summary["status"] == "COMPLETED"
+    assert summary["status"] == "ABSTAINED"
+    assert summary["final_move"] == "ABSTAIN"
+    assert summary["stop_reason"] == "DEEP_JUDGMENT_UNAVAILABLE"
     assert summary["first_step"]["action_id"] == "OCCURRENCE_DETAIL_EVIDENCE_V1"
+    assert summary["decisions"][0]["dimensions"]["revision_reliable"] is None, \
+        "an inapplicable reliability answer cannot authorize continuation"
     candidate = repository.get_candidate(summary["candidate_id"])
     chain = _candidate_chain(runtime, repository, candidate)
     assert [stored.evidence.revision_index for stored in chain] == [0, 1, 2][:len(chain)]
