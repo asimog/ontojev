@@ -47,12 +47,6 @@ def observe_release(transport: AcquisitionTransport) -> ReleaseObservation:
     return ReleaseObservation(release=release, release_commit=status.commit, source=source)
 
 
-def release_changed(previous: ReleaseObservation, current: ReleaseObservation) -> bool:
-    """A release or its pinned commit changed; biology is never inferred here."""
-    return (previous.release != current.release
-            or previous.release_commit != current.release_commit)
-
-
 def release_identity(observation: ReleaseObservation) -> str:
     """Declared release identity: exactly the release label and its pinned commit.
 

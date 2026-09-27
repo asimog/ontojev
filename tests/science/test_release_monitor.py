@@ -10,7 +10,6 @@ from cancerjev.research.release_monitor import (
     ReleaseObservation,
     observation_hash,
     observe_release,
-    release_changed,
     release_identity,
 )
 from tests.integration.replay import ReplayTransport
@@ -42,15 +41,14 @@ def test_observation_is_one_request_with_typed_provenance(runtime):
     assert len(transport.requests) == 1
 
 
-def test_release_change_detection_is_structural_only():
+def test_observation_hash_covers_the_pinned_release_fields():
     base = _observation()
 
-    assert release_changed(base, base) is False
-    assert release_changed(base, replace(base, release_commit="c" * 40)) is True
-    assert release_changed(base, replace(base, release="Data Release 47.0")) is True
     assert observation_hash(base) == observation_hash(_observation())
     assert observation_hash(base) != observation_hash(
         replace(base, release="Data Release 47.0"))
+    assert observation_hash(base) != observation_hash(
+        replace(base, release_commit="c" * 40))
 
 
 def test_release_identity_is_the_label_and_commit_never_the_response_body():
