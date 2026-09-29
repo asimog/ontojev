@@ -145,6 +145,7 @@ def run_block(repository: Repository, artifacts: ArtifactStore, run_id: str,
             timings["acquisition_analysis_seconds"] = time.monotonic() - started
             # Publication through the canonical store is checked before control
             # references it. Model output cannot enter this path.
+            deferred = False
             for evidence_id in evidence_ids:
                 row = repository.artifact(evidence_id)
                 if row is None or row["run_id"] != run_id:
@@ -154,10 +155,11 @@ def run_block(repository: Repository, artifacts: ArtifactStore, run_id: str,
                     summary = scientific_evidence_summary(repository, artifacts, evidence_id)
                     if summary["project_id"] != offer.project_id:
                         raise ValueError("executor returned evidence for another cohort")
+                    deferred = deferred or summary.get("status") == "DEFERRED"
             result = result.model_copy(update={
                 "evidence_ids": tuple(dict.fromkeys((*result.evidence_ids, *evidence_ids))),
-                "consecutive_no_progress": 0,
-                "operational_state": "READY",
+                "consecutive_no_progress": state.consecutive_no_progress + 1 if deferred else 0,
+                "operational_state": "CONTINUE_NEXT_RUN" if deferred else "READY",
             })
     except DirectorError as exc:
         result = state.model_copy(update={"operational_state": "PROVIDER_UNAVAILABLE",

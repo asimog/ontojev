@@ -137,7 +137,7 @@ class ScientificArtifactRef(FrozenModel):
 class ScientificStageResult(FrozenModel):
     """Continuation receipt pointing to canonical science, never another state model."""
 
-    version: Literal["lab-scientific-stage-v1"] = "lab-scientific-stage-v1"
+    version: Literal["lab-scientific-stage-v1", "lab-scientific-stage-v2"] = "lab-scientific-stage-v2"
     method: Literal["CAMPAIGN_CNV_MERGE_V1", "CAMPAIGN_COMPOSE_V1", "CAMPAIGN_WIDE_V1",
                     "CAMPAIGN_INVESTIGATE_V1"]
     question_id: Identifier
@@ -148,6 +148,18 @@ class ScientificStageResult(FrozenModel):
     outputs: tuple[ScientificArtifactRef, ...]
     state_ids: tuple[Identifier, ...] = ()
     candidate_ids: tuple[Identifier, ...] = ()
+    status: Literal["COMPLETE", "DEFERRED"] = "COMPLETE"
+    deferred_state_ids: tuple[Identifier, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_outcome(self) -> Self:
+        if self.deferred_state_ids:
+            if (self.method != "CAMPAIGN_WIDE_V1" or self.status != "DEFERRED"
+                    or self.candidate_ids or not set(self.deferred_state_ids) <= set(self.state_ids)):
+                raise ValueError("invalid deferred Wide outcome")
+        elif self.status == "DEFERRED":
+            raise ValueError("deferred outcome requires unfinished states")
+        return self
 
 
 class CandidateRunBinding(FrozenModel):

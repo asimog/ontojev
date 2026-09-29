@@ -184,7 +184,8 @@ def record_pre_wide_selection(*, run_id: str, selection: PreWideSelection,
 def run_wide_evaluation(*, run_id: str, states: list[StateRecord], coverage: str,
                         repository: Repository, jev_service: JevService, emit: Callable[..., Any],
                         publish_json: PublishJson,
-                        max_states: int | None = None) -> dict[str, Any]:
+                        max_states: int | None = None,
+                        require_complete: bool = False) -> dict[str, Any]:
     emit(
         run_id, "JEV_WIDE_STARTED", "jev:wide:started",
         f"Wide Jev evaluation started for {len(states)} states.",
@@ -244,7 +245,8 @@ def run_wide_evaluation(*, run_id: str, states: list[StateRecord], coverage: str
         },
         artifact_refs=[baseline_artifact.ref(), jev_artifact.ref()],
     )
-    promoted = _promote(run_id, states, evaluations, jev, emit, repository)
+    promotion_deferred = require_complete and bool(deferred or skipped_state_ids)
+    promoted = [] if promotion_deferred else _promote(run_id, states, evaluations, jev, emit, repository)
     emit(
         run_id, "JEV_WIDE_COMPLETED", "jev:wide:completed",
         f"Wide Jev evaluation completed: {len(evaluations)} evaluations, admission {jev['admission']['decision']}, "
@@ -255,9 +257,11 @@ def run_wide_evaluation(*, run_id: str, states: list[StateRecord], coverage: str
             "coverage": coverage, "admission_decision": jev["admission"]["decision"],
             "promotion_limit": jev["admission"]["promotion_limit"],
             "skipped_states": len(skipped_state_ids),
+            "promotion_deferred": promotion_deferred,
         },
     )
-    return {"baseline": baseline, "jev": jev, "promoted": promoted}
+    return {"baseline": baseline, "jev": jev, "promoted": promoted,
+            "deferred_state_ids": [*deferred, *skipped_state_ids]}
 
 
 def _publish_ranking(run_id: str, filename: str, ranking: dict[str, Any],

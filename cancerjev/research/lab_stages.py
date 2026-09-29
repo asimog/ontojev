@@ -140,6 +140,11 @@ class CampaignLabStages:
                                for r in receipts.values()):
                         offers.append(self.offer(question.question_id, question.project_id, WIDE, receipt.release, (identity,)))
                 if receipt.method == WIDE:
+                    if receipt.status == "DEFERRED" and not any(
+                            r.method == WIDE and tuple(ref.artifact_id for ref in r.inputs) == (identity,)
+                            for r in receipts.values()):
+                        offers.append(self.offer(question.question_id, question.project_id,
+                                                 WIDE, receipt.release, (identity,)))
                     for candidate_id in receipt.candidate_ids:
                         candidate = self.repository.get_candidate(candidate_id)
                         if candidate is None:
@@ -194,6 +199,7 @@ class CampaignLabStages:
         spec = cohort_spec(offer.project_id)
         state_ids: tuple[str, ...] = ()
         candidate_ids: tuple[str, ...] = ()
+        deferred_state_ids: tuple[str, ...] = ()
         output_ids: list[str] = []
         if offer.method == MERGE:
             rows = [self.repository.artifact(ref.artifact_id) for ref in inputs]
@@ -247,9 +253,10 @@ class CampaignLabStages:
             wide = run_wide_evaluation(run_id=self.run_id, states=local,
                 coverage="PARTIAL" if any(r.state.quality.acquisition != Acquisition.COMPLETE for r in local)
                 else "COMPLETE_FOR_SCOPE", repository=self.repository, jev_service=service,
-                emit=self.emit, publish_json=self.publish)
+                emit=self.emit, publish_json=self.publish, require_complete=True)
             state_ids = tuple(record.state_id for record in local)
             candidate_ids = tuple(item["candidate_id"] for item in wide["promoted"])
+            deferred_state_ids = tuple(wide["deferred_state_ids"])
             output_ids.extend(row["artifact_id"] for row in self.repository.artifacts_for_run(self.run_id)
                               if row["purpose"] in {"statistical-state", "wide-ranking", "pre-wide-selection"})
         elif offer.method == INVESTIGATE:
@@ -306,7 +313,9 @@ class CampaignLabStages:
             method=offer.method, question_id=offer.question_id, project_id=offer.project_id,
             spec_hash=digest(spec.as_dict()), release=release, inputs=inputs,
             outputs=tuple(artifact_ref(self.repository, self.artifacts, identity) for identity in output_ids),
-            state_ids=state_ids, candidate_ids=candidate_ids))
+            state_ids=state_ids, candidate_ids=candidate_ids,
+            status="DEFERRED" if deferred_state_ids else "COMPLETE",
+            deferred_state_ids=deferred_state_ids))
         artifact = self.publish(self.run_id, f"runs/{self.run_id}/lab/scientific-stage.json",
                                 result.model_dump(mode="json"), "lab-scientific-stage")
         self.repository.register_artifact(artifact, self.run_id)

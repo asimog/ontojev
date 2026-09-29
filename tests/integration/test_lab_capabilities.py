@@ -63,7 +63,7 @@ def test_inactive_questions_do_not_hide_active_scientific_offers(runtime, inacti
     assert {offer.method for offer in offers} >= {expected_cnv, MUTATION.method, EXPRESSION.method}
 
 
-def execute(runtime, method):
+def execute(runtime, method, adapter=None):
     settings, _, _ = runtime
     # Reopen stores and reconstruct every adapter; continuation uses no in-memory science.
     repository = Repository(Database(settings.database_path))
@@ -74,11 +74,51 @@ def execute(runtime, method):
     transport = ReplayTransport(ShardArtifactStore(settings.data_dir, run_id), run_id,
                                 repository=repository)
     capabilities = ScientificLabCapabilities(repository, artifacts, run_id, transport, clock,
-        JevService(settings, repository, artifacts, adapter_factory=lambda: StubAdapter()))
+        JevService(settings, repository, artifacts, adapter_factory=lambda: adapter or StubAdapter()))
     director = SelectCapability(method)
     state = run_block(repository, artifacts, run_id, director, capabilities, clock)
     repository.append_event(run_id, event_type="RUN_COMPLETED", idempotency_key="complete", message="Replay complete.")
     return run_id, state, director.projection
+
+
+@pytest.mark.parametrize("admit, failures", [(True, 1), (True, 100), (False, 1)])
+def test_partial_wide_retries_without_repeating_successful_provider_calls(runtime, admit, failures):
+    settings, repository, artifacts = runtime
+    block(runtime, ReplayDirector(decision()))
+    for method in (EXPRESSION.method, MUTATION.method, *(CNV_LAB_METHOD,) * 4, MERGE, COMPOSE):
+        execute(runtime, method)
+
+    class FailInitially(StubAdapter):
+        def evaluate(self, state, definitions):
+            self.fail = self.calls < failures
+            return super().evaluate(state, definitions)
+
+    override = {} if admit else {"evidence_quality_adequate": {"kind": "noul", "probability_yes": 0.0}}
+    failed_adapter = FailInitially(override=override)
+    failed_run, first, _ = execute(runtime, WIDE, failed_adapter)
+    # Restart after a failed evaluation; this must still offer Wide.
+    recovered_adapter = StubAdapter(override=override)
+    recovered_run, second, _ = execute(runtime, WIDE, recovered_adapter)
+    failed = read_stage(repository, artifacts, first.evidence_ids[-1])
+    recovered = read_stage(repository, artifacts, second.evidence_ids[-1])
+    expected_failures = min(failures, len(failed.state_ids))
+    assert failed.status == "DEFERRED" and len(failed.deferred_state_ids) == expected_failures
+    assert failed.candidate_ids == ()
+    assert repository.list_table("candidates", failed_run) == []
+    assert recovered.status == "COMPLETE" and recovered.deferred_state_ids == ()
+    assert bool(recovered.candidate_ids) is admit
+    assert first.operational_state == "CONTINUE_NEXT_RUN" and first.consecutive_no_progress == 1
+    assert second.operational_state == "READY" and second.consecutive_no_progress == 0
+    assert recovered_adapter.calls == expected_failures
+    assert len(repository.list_table("candidates", recovered_run)) == len(recovered.candidate_ids)
+    assert {read_state_record(repository, artifacts, i).state_hash for i in failed.state_ids} == {
+        read_state_record(repository, artifacts, i).state_hash for i in recovered.state_ids}
+    run_id = repository.create_run("post-wide", scope={"purpose": "LAB"})
+    clock = RunClock()
+    transport = ReplayTransport(ShardArtifactStore(settings.data_dir, run_id), run_id,
+                                repository=repository)
+    capabilities = ScientificLabCapabilities(repository, artifacts, run_id, transport, clock)
+    assert WIDE not in {offer.method for offer in capabilities.preflight(second, clock)}
 
 
 @pytest.mark.parametrize("methods", [(MUTATION, EXPRESSION), (EXPRESSION, MUTATION)])

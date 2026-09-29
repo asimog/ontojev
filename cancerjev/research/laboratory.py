@@ -230,6 +230,7 @@ def scientific_evidence_summary(repository: Repository, artifacts: ArtifactStore
         return {"evidence_id": identity, "project_id": receipt.project_id,
                 "release": receipt.release, "method": receipt.method,
                 "state_ids": list(receipt.state_ids), "candidate_ids": list(receipt.candidate_ids),
+                "status": receipt.status, "deferred_state_ids": list(receipt.deferred_state_ids),
                 "source_kind": ("SCIENTIFIC_RESULT_WITH_JUDGMENTS" if receipt.method == INVESTIGATE else
                                 "JEV_SCIENTIFIC_JUDGMENT" if receipt.method == WIDE else "DETERMINISTIC_DERIVATION"),
                 "limitations": ["Computational evidence retains its original maturity and limitations."]}
