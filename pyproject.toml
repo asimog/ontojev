@@ -26,6 +26,9 @@ python_version = "3.12"
 # no longer exists, or when a documented exclusion goes stale. There are no
 # standing exclusions: package __init__.py markers and __main__.py are typed.
 files = [
+  "cancerjev/domain/laboratory.py", "cancerjev/research/laboratory.py",
+  "cancerjev/llm/ontocodex.py",
+  "cancerjev/research/lab_runtime.py",
   "cancerjev/__init__.py", "cancerjev/__main__.py", "cancerjev/config.py",
   "cancerjev/domain/__init__.py", "cancerjev/domain/measurements.py",
   "cancerjev/domain/scientific.py",

@@ -1,4 +1,6 @@
 __pycache__/
+.upstream/
+.lab/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/

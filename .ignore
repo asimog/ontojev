@@ -1,0 +1,8 @@
+data/
+.upstream/
+.venv/
+.pytest-tmp/
+node_modules/
+.next/
+__pycache__/
+.lab/

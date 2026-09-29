@@ -753,15 +753,17 @@ class Repository:
             row = connection.execute("SELECT * FROM artifacts WHERE relative_path=?", (relative_path,)).fetchone()
             return dict(row) if row else None
 
-    def latest_artifact_by_purpose(self, purpose: str) -> dict[str, Any] | None:
+    def latest_artifact_by_purpose(self, purpose: str, *,
+                                   ownership: ExecutionOwnership | None = None) -> dict[str, Any] | None:
         """Newest artifact of one purpose, ordered by its registering run's creation."""
         with self.database.read() as connection:
             row = connection.execute(
                 "SELECT artifacts.* FROM artifacts"
                 " LEFT JOIN research_runs ON research_runs.run_id=artifacts.run_id"
                 " WHERE artifacts.purpose=?"
+                + (" AND research_runs.execution_ownership=?" if ownership else "") +
                 " ORDER BY research_runs.created_at DESC, artifacts.artifact_id DESC LIMIT 1",
-                (purpose,),
+                (purpose, ownership.value) if ownership else (purpose,),
             ).fetchone()
             return dict(row) if row else None
 
