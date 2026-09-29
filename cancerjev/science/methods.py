@@ -758,13 +758,14 @@ def compute_statistical_state(
     *,
     gene: GeneRecord,
     frames: list[ProjectFrame],
-    coverage: ProjectCoverage,
+    coverage: ProjectCoverage | None,
     sources: tuple[OperationalSource, ...],
     warnings: list[str],
     scope_meta: dict[str, Any],
     discovery_meta: dict[str, Any],
     counts: GeneCaseCounts | None = None,
     scan_counts_by_project: Mapping[str, ScannedMutationCounts] | None = None,
+    question_gene_ids: tuple[str, ...] | None = None,
 ) -> StatisticalState:
     """Assemble the sole canonical StatisticalState from typed lane results.
 
@@ -772,11 +773,23 @@ def compute_statistical_state(
     attempt/artifact links arrive as typed source records. No provider ranking
     score and no operational id fills a measured field or scientific identity.
 
-    Exactly one mutation-count input is required: corrected V2 per-project scan
-    counts (the scientific path) or the legacy indexed bucket contract retained
-    for its contract tests.
+    Ordinarily exactly one mutation-count input is required: corrected V2
+    per-project scan counts or the legacy indexed bucket contract retained for
+    its contract tests. An explicit question_gene_ids panel instead admits an
+    expression-only state with unacquired mutation measurements. It never
+    converts an absent mutation input into a zero count.
     """
-    if (counts is None) == (scan_counts_by_project is None):
+    expression_only = question_gene_ids is not None
+    if expression_only:
+        assert question_gene_ids is not None
+        if (not 1 <= len(question_gene_ids) <= 4
+                or question_gene_ids != tuple(sorted(set(question_gene_ids)))
+                or gene.gene_id not in question_gene_ids
+                or tuple(discovery_meta["selected_gene_ids"]) != question_gene_ids
+                or counts is not None or scan_counts_by_project is not None or coverage is not None):
+            raise ScienceError("INVALID_QUESTION_EXPRESSION_SCOPE",
+                               "question expression requires an exact sorted panel of 1..4 genes and no mutation input")
+    elif coverage is None or (counts is None) == (scan_counts_by_project is None):
         raise ScienceError("INVALID_MUTATION_INPUT",
                            "exactly one of counts or scan_counts_by_project is required")
     ordered = sorted(frames, key=lambda frame: frame.project_id)
@@ -803,8 +816,17 @@ def compute_statistical_state(
         if scan_counts_by_project is not None and scan_counts is None:
             raise ScienceError("MISSING_SCAN_COUNTS",
                                f"no occurrence-scan counts for project {frame.project_id}")
-        mutation_result = _mutation_result(frame, population_frame, gene, counts, coverage,
-                                           sources, release, scan_counts)
+        if expression_only:
+            unavailable = UnavailableMeasurement(
+                UnavailableStatus.NOT_OBSERVED, "MUTATION_NOT_ACQUIRED", Unit.CASES, population_frame)
+            mutation_result = MutationCountResult(
+                unavailable, unavailable, False, population_frame,
+                Quality(Acquisition.NOT_ACQUIRED, Sufficiency.NOT_ASSESSED,
+                        Compatibility.UNVERIFIED, ("Mutation was not acquired for this question.",)), entity)
+        else:
+            assert coverage is not None
+            mutation_result = _mutation_result(frame, population_frame, gene, counts, coverage,
+                                               sources, release, scan_counts)
         observation = expression_observation(
             project_id=frame.project_id, gene_id=gene.gene_id,
             case_ids=tuple(case.case_id for case in frame.cases),
@@ -821,7 +843,7 @@ def compute_statistical_state(
         affected = mutation_result.affected_cases
         if isinstance(affected, ObservedCount):
             observed_affected[frame.project_id] = affected.value
-        hit = frame.discovery_hits.get(gene.gene_id)
+        hit = None if expression_only else frame.discovery_hits.get(gene.gene_id)
         discovery = (ProviderDiscoveryMetadata(hit.rank, hit.score, "MUTATION_DISCOVERY_V1",
                                                "selection metadata only")
                      if hit is not None else None)
@@ -835,44 +857,59 @@ def compute_statistical_state(
 
     dominance, dominance_availability = project_dominance(observed_affected)
     state_warnings = list(warnings)
-    if scan_counts_by_project is not None:
+    if expression_only:
+        acquisition_complete = all(
+            isinstance(project.expression, ExpressionSummaryResult)
+            and project.expression.quality.acquisition is Acquisition.COMPLETE
+            for project in project_states)
+    elif scan_counts_by_project is not None:
+        assert coverage is not None
         acquisition_complete = coverage.complete
     else:
         assert counts is not None
+        assert coverage is not None
         acquisition_complete = counts.complete and coverage.complete
         if not counts.complete:
             state_warnings.append(f"mutation counts partial: {', '.join(counts.partial_reasons)}")
     sufficiency = scientific_sufficiency(evidence_rows, acquisition_complete)
     projects_with_mutation = len(observed_affected)
-    if not coverage.complete:
+    if coverage is not None and not coverage.complete:
         state_warnings.append(f"mutation coverage partial: {', '.join(coverage.partial_reasons)}")
 
     acquisition_scope = _acquisition_scope(scope_meta)
     selected_ids = tuple(discovery_meta["selected_gene_ids"])
     if not selected_ids:
         raise ScienceError("MISSING_TESTED_UNIVERSE", "discovery metadata has no selected genes")
+    selection_rule = ("QUESTION_SELECTED_GENE_PANEL_V1" if expression_only
+                      else discovery_meta["ranking_rule"])
+    selection_bias = (
+        "Genes were selected for a research question before expression acquisition; this is a "
+        "complete declared panel, not an unbiased or genome-wide discovery universe. Selection "
+        "may reflect prior knowledge or an LLM hypothesis, neither of which is measured evidence."
+        if expression_only else SELECTION_BIAS)
     universe = TestedUniverse(
-        ordered_ids=selected_ids, source="GDC_MUTATION_DISCOVERY", release=release,
-        filter_description=discovery_meta["ranking_rule"], order="PROVIDER_RANK_ASC",
-        offset=0, requested_limit=acquisition_scope.candidate_gene_limit,
+        ordered_ids=selected_ids, source=("QUESTION_SELECTED_GENE_PANEL" if expression_only
+                                         else "GDC_MUTATION_DISCOVERY"), release=release,
+        filter_description=selection_rule, order="GENE_ID_ASC" if expression_only else "PROVIDER_RANK_ASC",
+        offset=0, requested_limit=(len(selected_ids) if expression_only else acquisition_scope.candidate_gene_limit),
         reported_total=len(selected_ids), complete=True,
     )
     tested_context = TestedContext(
-        examined_genes_hash=discovery_meta["examined_genes_hash"],
-        examined_genes_n=discovery_meta["examined_genes_n"],
-        rank_in_lane=discovery_meta["rank_in_lane"],
-        selection_rule=discovery_meta["ranking_rule"], selection_bias=SELECTION_BIAS,
-        discovered_in_project_count=discovery_meta["observed_in_project_count"],
+        examined_genes_hash=(universe.membership_hash if expression_only else discovery_meta["examined_genes_hash"]),
+        examined_genes_n=(len(selected_ids) if expression_only else discovery_meta["examined_genes_n"]),
+        rank_in_lane=(selected_ids.index(gene.gene_id) + 1 if expression_only else discovery_meta["rank_in_lane"]),
+        selection_rule=selection_rule, selection_bias=selection_bias,
+        discovered_in_project_count=(0 if expression_only else discovery_meta["observed_in_project_count"]),
         selection_artifact_id=discovery_meta.get("examined_genes_ref"),
     )
     research = ResearchState(
         spec_id=scope_meta["spec_id"], domain=scope_meta["domain"], cohort=cohort,
         project_id=scope_meta["project_id"],
         cohort_selection_rule=scope_meta["cohort_selection_rule"],
-        gene_selection_rule=scope_meta["gene_selection_rule"],
+        gene_selection_rule=selection_rule if expression_only else scope_meta["gene_selection_rule"],
         examined_case_frame=scope_meta.get("examined_case_frame", "ALL_CASES_PAGINATED"),
         acquisition=acquisition_scope,
-        modalities=("mutation_counts", "expression_summary"),
+        modalities=(("expression_summary",) if expression_only else ("mutation_counts", "expression_summary")),
         programs=tuple(sorted({frame.project_record.program_name for frame in ordered
                                if frame.project_record.program_name})),
         projects=project_ids,
