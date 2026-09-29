@@ -353,6 +353,30 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: StoredS
         else "no LLM was configured for this run; hypothesis text is deterministic template output",
     )
     sections[RESEARCH_ONLY_SECTION] = _section("OBSERVED", narrative=notice)
+    for section_id, evaluations in (
+        ("jev_wide_judgments", [wide_evaluation] if wide_evaluation else []),
+        ("jev_deep_judgments", [deep_evaluation] if deep_evaluation else []),
+        ("hypothesis_jev_reviews", hypothesis_evaluations),
+    ):
+        sections[section_id]["evaluations"] = [
+            {"evaluation_id": item.get("evaluation_id"),
+             "role": "SCIENTIFIC_EVALUATION", "epistemic_kind": "JEV_JUDGMENT",
+             "contract": item.get("decision_contract"),
+             "contract_availability": "RECORDED" if item.get("decision_contract") else "NOT_RECORDED",
+             "question_set_version": item.get("question_set_version"),
+             "question_hash": item.get("question_hash"),
+             "projection_id": item.get("projection_id"),
+             "projection_hash": item.get("projection_hash"),
+             "projection_version": item.get("projection_version"),
+             "input_ref_kind": item.get("input_ref_kind"),
+             "input_ref_id": item.get("input_ref_id"),
+             "answers": item.get("answers"), "error": item.get("error"),
+             "uncertainty": item.get("uncertainty_diagnostics"),
+             "relationship": "Recorded semantic judgment informing admission, follow-up or hypothesis critique; not measured biological support."}
+            for item in evaluations
+            if item.get("purpose") in {"WIDE", "DEEP", "HYPOTHESIS"}
+            and item.get("judgment_role", "SCIENTIFIC_EVALUATION") == "SCIENTIFIC_EVALUATION"
+        ]
     dossier_id = stable_id(run_id, f"dossier:{candidate['candidate_id']}")
     return {
         "schema_version": DOSSIER_SCHEMA_VERSION,

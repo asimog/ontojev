@@ -4,7 +4,18 @@ import { useEffect, useState } from "react";
 import { apiUrl, apiWithMeta } from "@/lib/api";
 import { formatLabel } from "@/lib/format";
 
-type Section = { availability: string; reason: string | null; narrative: string | null };
+type Judgment = {
+  evaluation_id: string;
+  role: string;
+  projection_hash: string | null;
+  question_set_version: string | null;
+  relationship: string;
+  contract: { contract_id: string; evaluation_status: string; questions: Array<{ id: string; instructions: string }> } | null;
+  answers: Record<string, unknown> | null;
+  error: unknown;
+  uncertainty: unknown;
+};
+type Section = { availability: string; reason: string | null; narrative: string | null; evaluations?: Judgment[] };
 type Dossier = {
   dossier_id: string;
   run_id: string;
@@ -94,6 +105,19 @@ function SectionPanel({ name, section }: { name: string; section: Section }) {
     <section className="panel">
       <div className="row spread"><h2>{formatLabel(name)}</h2><span className="availability">{section.availability}</span></div>
       <p>{section.narrative ?? section.reason}</p>
+      {section.evaluations?.map((judgment) => <details key={judgment.evaluation_id}>
+        <summary>{judgment.contract?.contract_id ?? "Historical Jev judgment"} · {judgment.question_set_version}</summary>
+        <p>{judgment.relationship}</p>
+        <p className="fine">{formatLabel(judgment.role)} · {judgment.contract?.evaluation_status ?? "Evaluation status not recorded"}</p>
+        {judgment.contract?.questions.map((question) => <div key={question.id}>
+          <p><strong>{formatLabel(question.id)}</strong>: {question.instructions}</p>
+          <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify(judgment.answers?.[question.id] ?? { status: "Unavailable" }, null, 2)}</pre>
+        </div>)}
+        <details><summary>Projection and uncertainty</summary>
+          <p className="mono" style={{ overflowWrap: "anywhere" }}>Projection SHA-256: {judgment.projection_hash ?? "not recorded"}</p>
+          <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify({ uncertainty: judgment.uncertainty, error: judgment.error }, null, 2)}</pre>
+        </details>
+      </details>)}
     </section>
   );
 }

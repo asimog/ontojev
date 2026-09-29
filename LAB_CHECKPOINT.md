@@ -3,13 +3,13 @@
 - Baseline HEAD: `c8e03b2a0c2e3ba8c59f13c44ab062806e255c99`.
 - Objective: evolve the existing Program/Campaign system into the autonomous lung-cancer laboratory described in the supplied specification.
 - Completed implementation: typed OntoCodex protocol, isolated Codex/OpenRouter adapter, immutable portfolio revisions in existing storage, ownership filtering, bounded control block, failure/no-progress handling.
-- Current HEAD before pending milestone: `7b7ec10`.
-- Current milestone: bounded acquisition, supervisor, Observatory, and first Jev refinement; verified and ready for GitHub delivery.
+- Last pushed milestone: `7e21bc6` (bounded acquisition, supervisor, Observatory, Jev contracts).
+- Current milestone: strict Jev replay identity and scientific dossier provenance; full offline suite passed (896 tests), Ruff, strict mypy, frontend typecheck/build passed.
 - Decisions: models cannot write measurements; interpretations cite Python-registered evidence. No historical `data/` was inspected. Provider/model configuration reuses the existing configured model and supports an OntoCodex override. The installed harness is `codex-cli 0.157.1`.
 - Verification: repository ruff and strict mypy passed (110 modules); full offline suite 894 passed, 4 deselected; frontend typecheck and production build passed; repository facts current. Real Codex 0.157.1/OpenRouter/configured DeepSeek returned a validated CREATE_QUESTION. Initial malformed live outputs were safely rejected; explicit action rules and schema in the prompt resolved the failures.
 - Upstream references fetched: gdc-docs `157cef9dac084ce30720f0ad507cd54017263be7`; gdcdatamodel2 `9c6a046b96c130ea131d2ce2c9160381edd2fcc1`; gdc-workflow-overview `2412e93b3d7de8afb74ad6e28566e5a6b2e0ad1e`.
 - Live verification: real Codex/OpenRouter/DeepSeek and Jev control calls succeeded; run `4b9cd955-3148-4829-913c-a50253a86d93` acquired one complete CNV shard in 140 seconds, 7,045,161 GDC bytes, persisted evidence/provenance and removed its raw workspace. Prior run stopped at the 48-page transport default; the declared lab page budget and preflight admission now agree. API and Observatory visually verified on ports 8100/3100.
 - Jev refinement attachment integrated: compact decision registry, scientific/control roles, experimental evaluation status, uncertainty/tie diagnostics, opt-in Noul/Choice shadow acquisition experiments, baseline replay evaluator. Wide/Deep questions are preserved pending comparative evidence; shortcomings are explicitly recorded, not called validated. New experimental answers do not influence direct OntoCodex baseline.
 - Blockers: none external. Full requested transformation and Jev refinement are not complete.
-- Next: supervised ten-minute runs; reuse strict CNV shard execution, persist reproducibility information before cleanup, wire Observatory, then expand scientific methods and Jev/dossier integration.
-
+- Next: improve cumulative evidence context and no-progress detection, then expand scientific methods and integrate laboratory state with the existing scientific workflow.
+- Continuation evidence: run `4a1f0121-6561-43ce-a84e-8a4ef4a83c43` acquired a second disjoint shard after restart. One live Choice replay agreed with direct OntoCodex (485 ms); no independent labels or repeat measurements, so no accuracy or superiority claim. Replay files are local in `.lab/replays/`.

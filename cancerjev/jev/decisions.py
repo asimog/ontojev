@@ -128,3 +128,19 @@ def acquisition_choice_questions(offer_ids: tuple[str, ...]) -> tuple[QuestionDe
          "NONE": "None offers a justified next acquisition; direct scientific reasoning is needed."},
         "eligible_preflight_offers",
     ),)
+
+
+def acquisition_relevance_questions(count: int) -> tuple[QuestionDefinition, ...]:
+    if not 1 <= count <= 6:
+        raise ValueError("relevance decision requires 1..6 offers")
+    return tuple(QuestionDefinition(
+            question_id=f"offer_{index}", primitive="NOUL", version=1,
+            instructions=(f"Does offers[{index}].evidence_provided address a stated uncertainty "
+                          "in its associated research question, given the offer's limitations? "
+                          "Judge relevance, not feasibility, truth, novelty, clinical utility or "
+                          "evidence maturity. More cases of the same modality do not resolve "
+                          "missing evidence from another modality."),
+            criteria={"true": "The offered descriptive evidence directly informs a stated uncertainty.",
+                      "false": "The question needs evidence the offer does not provide, or relevance is unsupported."},
+            applicability_rule="offered_experiment",
+        ) for index, _ in enumerate(range(count)))

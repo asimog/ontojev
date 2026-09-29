@@ -367,6 +367,11 @@ def test_each_statement_is_judged_once_and_bound_to_its_evidence(runtime, monkey
     versions = dossier["sections"]["jev_model_question_versions"]["narrative"]
     assert "deep-v1" in versions
     assert "jev-1.13.0" in versions
+    provenance = dossier["sections"]["hypothesis_jev_reviews"]["evaluations"]
+    assert {item["evaluation_id"] for item in provenance} == {row["evaluation_id"] for row in evaluations}
+    assert all(item["role"] == "SCIENTIFIC_EVALUATION" for item in provenance)
+    assert all(item["contract"]["contract_id"] == "HYPOTHESIS_CRITIQUE_V1" for item in provenance)
+    assert all(item["projection_hash"] and item["answers"] for item in provenance)
     assert dossier["sections"]["jev_deep_judgments"]["availability"] == "OBSERVED"
 
 

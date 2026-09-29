@@ -40,6 +40,11 @@ QuestionDefinition fields), validated `answers`, and optionally
 `labels`. It reports agreement, repeat stability, uncertainty diagnostics and
 labelled Brier score. Unlabelled runs report no accuracy/calibration claim.
 Equivalent-state groups must be independently declared by the evaluator.
+Choice acquisition rows also require the ordered `offer_ids`. Replay checks
+questions against the registered definitions and compares offer identities across
+reordered options. Arbitrary questions cannot borrow a registered contract name.
+Costs and latencies must be finite and nonnegative. Missing choices do not count
+as stable repetitions.
 
 Acceptance requires a named evaluation corpus and comparison supporting the
 boundary's intended use. Passing a replay or software test alone does not

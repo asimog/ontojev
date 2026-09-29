@@ -27,7 +27,12 @@ from cancerjev.jev.contracts import (
     ValidatedAnswers,
     read_answers,
 )
-from cancerjev.jev.decisions import CONTRACTS, acquisition_choice_questions, uncertainty
+from cancerjev.jev.decisions import (
+    CONTRACTS,
+    acquisition_choice_questions,
+    acquisition_relevance_questions,
+    uncertainty,
+)
 from cancerjev.jev.projection import (
     EVIDENCE_INCLUDED_FIELDS,
     EVIDENCE_PROJECTION_VERSION,
@@ -125,17 +130,7 @@ class JevService:
                           if q.question_id in {o.question_id for o in offers}],
             "offers": [o.model_dump(mode="json") for o in offers],
         }
-        definitions = tuple(QuestionDefinition(
-            question_id=f"offer_{index}", primitive="NOUL", version=1,
-            instructions=(f"Does offers[{index}].evidence_provided address a stated uncertainty "
-                          "in its associated research question, given the offer's limitations? "
-                          "Judge relevance, not feasibility, truth, novelty, clinical utility or "
-                          "evidence maturity. More cases of the same modality do not resolve "
-                          "missing evidence from another modality."),
-            criteria={"true": "The offered descriptive evidence directly informs a stated uncertainty.",
-                      "false": "The question needs evidence the offer does not provide, or relevance is unsupported."},
-            applicability_rule="offered_experiment",
-        ) for index, _ in enumerate(offers))
+        definitions = acquisition_relevance_questions(len(offers))
         if comparative:
             definitions = acquisition_choice_questions(tuple(offer.offer_id for offer in offers))
         contract = CONTRACTS["LAB_CHOICE" if comparative else "LAB_RELEVANCE"]
