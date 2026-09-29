@@ -26,3 +26,5 @@
 - Working-tree verification: Ruff, strict mypy, repository facts, full offline pytest (907 passed, 4 deselected), frontend typecheck/build. The strengthened cross-run binding regression is also checked separately.
 - Existing user modifications were preserved and are excluded from this milestone's commit.
 - Remaining: fine-grained mutation/expression checkpoints, separately selected Candidate substeps, isolated capability-gap engineering and activation, replication adapters, exhaustive interrupted-publication recovery, and live scientific/deployment validation. See `docs/LAB_CAMPAIGN_BRIDGE.md`.
+
+Final delivery verification for code commit `dfeed0fdc81ee2541052f08521de8fec5f22601e`: a clean detached checkout passed Ruff, strict mypy, repository facts and 901 offline tests (4 deselected). A separate 11-process replay reached portfolio revision 11, retained 10 evidence artifacts and produced one Stage 8 dossier. Docker was rebuilt from that exact clean checkout. The higher 907-test working-tree count includes six pre-existing uncommitted user tests.

@@ -95,3 +95,7 @@ This is a convergence milestone, not completion of every requested capability:
 
 Next implementation units should address these limits before enabling claims of
 complete autonomous deployment or long-running live Campaign coverage.
+
+## Delivery evidence
+
+The clean code commit `dfeed0fdc81ee2541052f08521de8fec5f22601e` passed Ruff, strict mypy, repository facts and 901 default offline tests. Frontend typecheck and production build passed. A separate replay used 11 fresh OS processes, reached portfolio revision 11 and produced a verified Stage 8 dossier from 10 retained evidence artifacts. The container built from the clean commit; the real installed CLI also completed a typed decision against a loopback Responses replay with external networking disabled. No live GDC, Jev, OpenRouter or Railway validation is claimed.
