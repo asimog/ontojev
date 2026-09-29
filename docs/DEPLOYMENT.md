@@ -36,11 +36,11 @@ Set `CANCERJEV_DATA_DIR=/data` and mount a persistent volume at `/data`. Set `CA
 1. Configure the durable root and provider environment; run the integrity report for an existing root.
 2. Start API/web and one worker, or the configured combined container.
 3. Check `/health`, `/api/system`, worker heartbeat and actual lab run outcomes separately.
-4. On restart, retain the same root. The supervisor acquires ownership, terminalizes interrupted runs and retries workspace cleanup before new work.
+4. On restart, retain the same root. The supervisor acquires ownership, verifies/adopts any publication-ready checkpoint, terminalizes interrupted runs and retries workspace cleanup before new work. Completed published operations preserve their admitted Candidates.
 
 A green `/health` proves API/storage reachability, not active research or scientific validity. `deploy.serve` currently does not monitor/restart its worker child after startup. M5 must address a healthy API with a dead worker. The supervisor bounds the research child but does not independently bound slow parent cleanup/finalization inside the nominal 600 seconds.
 
-Recovery is also not yet scientific-operation reconciliation: a crash between canonical writes, receipt and portfolio can leave unattached outputs. Investigate those artifacts before assuming a retry is harmless; M1 supplies the durable reconciliation protocol. `STOPPED`/`NO_PROGRESS` prevent further lab dispatch; do not manually edit immutable portfolio JSON to restart it.
+Registered publication-ready checkpoints recover the gap before portfolio commit without re-executing science. Corrupt checkpoint/output/provenance bytes block new dispatch. A crash inside a stage before that checkpoint can still leave unattached canonical outputs; M1 must finish reconciliation at those earlier boundaries. `STOPPED`/`NO_PROGRESS` prevent further lab dispatch; do not manually edit immutable portfolio JSON to restart it.
 
 ## Backup and restore
 

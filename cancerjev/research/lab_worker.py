@@ -20,7 +20,7 @@ from cancerjev.llm.ontocodex import CodexDirector
 from cancerjev.research.lab_acquisition import cleanup_shard
 from cancerjev.research.lab_capabilities import ScientificLabCapabilities
 from cancerjev.research.lab_runtime import RunClock, run_block
-from cancerjev.research.laboratory import load_lab, next_revision, save_lab
+from cancerjev.research.laboratory import load_lab, next_revision, recover_lab_publication, save_lab
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.database import Database
 from cancerjev.storage.ownership import ResearchOwnership
@@ -89,6 +89,7 @@ def run_lab(settings: Settings, *, max_runs: int = 1, seconds: float = RUN_SECON
         # Recovery and worker startup share a lock. A late child must observe
         # its recovered terminal run before it can initialize any provider.
         with ResearchOwnership(settings.data_dir / "lab-worker.lock"):
+            recover_lab_publication(repository, artifacts, stop_interrupted=True)
             repository.recover_interrupted()
             recover_workspaces(repository, artifacts)
         for _ in range(max_runs):
@@ -104,6 +105,7 @@ def run_lab(settings: Settings, *, max_runs: int = 1, seconds: float = RUN_SECON
             code = supervise([sys.executable, "-m", "cancerjev.research.lab_worker",
                               "--child", run_id, "--root", str(settings.data_dir),
                               "--seconds", str(seconds)], timeout=seconds - FINALIZATION_SECONDS)
+            recover_lab_publication(repository, artifacts, stop_interrupted=code != 0)
             cleanup = cleanup_shard(repository, artifacts, run_id)
             repository.append_event(run_id, event_type="LAB_RAW_CLEANUP",
                 idempotency_key="lab:supervisor-cleanup", message="Supervisor verified raw workspace cleanup.",

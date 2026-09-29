@@ -46,7 +46,7 @@ A Campaign's scientific scope is cohort + pinned release + versioned method/spec
 
 LabState holds questions, interpretations and evidence references. Canonical StatisticalState holds computed science; Candidate records bind admitted states; EvidenceState revisions retain investigation evidence. Interpretations remain attributed judgments and cannot overwrite measurements. Researcher and validation ownership remain isolated from autonomous scientific consumption.
 
-Stage receipts reference immutable input/output hashes. Execution checks terminal source runs. Wide creates local operational state bindings while preserving scientific hashes; cross-run Candidate investigation requires a binding to the original Wide receipt/state. These checks do not constitute an atomic commit across scientific outputs, receipt and portfolio; reconciliation after crashes remains M1.
+Stage receipts reference immutable input/output hashes. Execution checks terminal source runs. Wide creates local operational state bindings while preserving scientific hashes; cross-run Candidate investigation requires a binding to the original Wide receipt/state. A registered publication-ready checkpoint binds verified durable artifacts to the next portfolio revision. Recovery adopts it before generic interruption handling, preserving admitted Candidates without repeating science. This closes the final portfolio-publication gap, but does not make earlier within-stage writes atomic; that reconciliation remains M1.
 
 ## Budgets, storage and cleanup
 

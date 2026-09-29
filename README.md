@@ -4,7 +4,7 @@ OntoJev is an experimental autonomous computational cancer target-discovery syst
 
 The laboratory runtime is connected to the existing Campaign scientific pipeline. Its seven capabilities cover mutation discovery, expression discovery, CNV case shards, CNV merge, canonical state composition, Wide evaluation and Candidate investigation through Stage 8/dossier. The default worker uses this laboratory supervisor. Offline replay reaches a dossier across research runs.
 
-This is an implemented bridge, not a completed or scientifically validated autonomous laboratory. Whole mutation/expression lanes and Candidate investigations still need finer resumable units. Historical Wide receipt migration, publication crash windows, engineering automation and live evaluation remain. The remaining sequence is recovery → resumable science → director/Campaign context → engineering → deployment → live evaluation. See the [current code audit](docs/CODE_AUDIT.md) and [implementation plan](docs/IMPLEMENTATION_PLAN.md).
+This is an implemented bridge, not a completed or scientifically validated autonomous laboratory. Whole mutation/expression lanes and Candidate investigations still need finer resumable units. Historical Wide receipt migration, within-stage publication crash windows, engineering automation and live evaluation remain. The remaining sequence is recovery → resumable science → director/Campaign context → engineering → deployment → live evaluation. See the [current code audit](docs/CODE_AUDIT.md) and [implementation plan](docs/IMPLEMENTATION_PLAN.md).
 
 ## Current architecture
 

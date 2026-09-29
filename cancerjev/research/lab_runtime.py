@@ -23,6 +23,7 @@ from cancerjev.research.laboratory import (
     json_bytes,
     load_lab,
     next_revision,
+    prepare_lab_publication,
     save_lab,
     scientific_evidence_summary,
 )
@@ -186,6 +187,7 @@ def run_block(repository: Repository, artifacts: ArtifactStore, run_id: str,
         }), "application/json", "lab-coverage")
         repository.register_artifact(coverage, run_id)
         artifacts.read(coverage.relative_path, coverage.sha256)
+        prepare_lab_publication(repository, artifacts, run_id, result)
         save_lab(repository, artifacts, run_id, result)
     finally:
         started = time.monotonic()

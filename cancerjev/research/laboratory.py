@@ -8,8 +8,10 @@ from typing import Any
 from cancerjev.domain.laboratory import (
     AcquisitionOffer,
     CnvCoverageSummary,
+    LabPublication,
     LabState,
     ResearchDecision,
+    ScientificArtifactRef,
 )
 from cancerjev.domain.measurements import digest
 from cancerjev.domain.runs import ExecutionOwnership
@@ -17,6 +19,7 @@ from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
 
 LAB_STATE_PURPOSE = "research-portfolio"
+LAB_PUBLICATION_PURPOSE = "lab-publication-ready"
 NO_PROGRESS_LIMIT = 3
 
 
@@ -54,6 +57,74 @@ def save_lab(repository: Repository, artifacts: ArtifactStore, run_id: str,
     # Read through the registered identity before callers can dispose of inputs.
     LabState.model_validate_json(artifacts.read(artifact.relative_path, artifact.sha256))
     return artifact.artifact_id
+
+
+def prepare_lab_publication(repository: Repository, artifacts: ArtifactStore,
+                            run_id: str, state: LabState) -> None:
+    """Register a verified result before the portfolio write and raw cleanup."""
+    repository.require_run_ownership(run_id, ExecutionOwnership.SYSTEM_AUTONOMOUS)
+    refs = []
+    for row in repository.artifacts_for_run(run_id):
+        if row["purpose"] in {"gdc-response", LAB_STATE_PURPOSE, LAB_PUBLICATION_PURPOSE}:
+            continue
+        artifacts.read(row["relative_path"], row["sha256"], expected_size=row["size_bytes"])
+        refs.append(ScientificArtifactRef(artifact_id=row["artifact_id"],
+                                          sha256=row["sha256"], purpose=row["purpose"]))
+    publication = LabPublication(state=state, artifacts=tuple(sorted(refs, key=lambda ref: ref.artifact_id)))
+    artifact = artifacts.publish(f"runs/{run_id}/lab/publication-ready.json",
+                                 publication.model_dump_json().encode(), "application/json",
+                                 LAB_PUBLICATION_PURPOSE)
+    repository.append_event(run_id, event_type="LAB_PUBLICATION_READY", idempotency_key="lab:publication-ready",
+                            message="Verified result ready for portfolio publication.",
+                            data={"revision": state.revision}, artifact_refs=[artifact.ref()],
+                            registrations=[repository.artifact_registration(artifact, run_id)])
+
+
+def recover_lab_publication(repository: Repository, artifacts: ArtifactStore, *,
+                            stop_interrupted: bool = False) -> bool:
+    """Adopt a ready revision under exclusive ownership after its child exits.
+
+    A ready result is never executed again. Earlier, uncheckpointed scientific
+    writes are deliberately outside this recovery boundary.
+    """
+    row = repository.latest_artifact_by_purpose(
+        LAB_PUBLICATION_PURPOSE, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS)
+    if row is None:
+        return False
+    publication = LabPublication.model_validate_json(artifacts.read(
+        row["relative_path"], row["sha256"], expected_size=row["size_bytes"]))
+    pending = publication.state
+    current = load_lab(repository, artifacts)
+    if pending.revision < current.revision:
+        return False
+    run = repository.get_run(row["run_id"])
+    if run is None or run.get("purpose") != "LAB" or pending.last_run_id != row["run_id"]:
+        raise ValueError("publication checkpoint requires its owning laboratory run")
+    if pending.revision == current.revision and pending != current:
+        raise ValueError("publication checkpoint conflicts with committed portfolio")
+    for expected in publication.artifacts:
+        source = repository.artifact(expected.artifact_id)
+        if (source is None or source["run_id"] != row["run_id"] or source["sha256"] != expected.sha256
+                or source["purpose"] != expected.purpose or expected.purpose == "gdc-response"):
+            raise ValueError("publication artifact binding mismatch")
+        artifacts.read(source["relative_path"], source["sha256"], expected_size=source["size_bytes"])
+    evidence_summaries(repository, artifacts, pending)
+    coverage_summaries(repository, artifacts, pending)
+    adopted = pending.revision > current.revision
+    if adopted:
+        save_lab(repository, artifacts, row["run_id"], pending)
+        repository.append_event(row["run_id"], event_type="LAB_PUBLICATION_RECOVERED",
+                                idempotency_key="lab:publication-recovered",
+                                message="Verified result adopted without repeating science.",
+                                data={"revision": pending.revision})
+    if stop_interrupted and run["status"] in {"PENDING", "RUNNING"}:
+        # The operation is complete: generic interruption handling must not turn
+        # its admitted Candidates into terminal DEFERRED candidates.
+        repository.append_event(row["run_id"], event_type="RUN_STOPPED",
+                                idempotency_key="lab:published-interruption",
+                                message="Interrupted process stopped; verified publication retained.",
+                                data={"reason_code": "INTERRUPTED_AFTER_PUBLICATION", "coverage": "PARTIAL"})
+    return adopted
 
 
 def apply_decision(state: LabState, decision: ResearchDecision,

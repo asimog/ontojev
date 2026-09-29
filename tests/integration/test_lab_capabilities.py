@@ -121,6 +121,63 @@ def test_partial_wide_retries_without_repeating_successful_provider_calls(runtim
     assert WIDE not in {offer.method for offer in capabilities.preflight(second, clock)}
 
 
+@pytest.mark.parametrize("fault", ["before_portfolio", "after_file", "after_commit", "corrupt_output"])
+def test_supervisor_adopts_verified_publication_without_repeating_wide(runtime, monkeypatch, fault):
+    from cancerjev.research import lab_runtime, lab_worker
+
+    settings, repository, artifacts = runtime
+    block(runtime, ReplayDirector(decision()))
+    for method in (EXPRESSION.method, MUTATION.method, *(CNV_LAB_METHOD,) * 4, MERGE, COMPOSE):
+        execute(runtime, method)
+    before = load_lab(repository, artifacts)
+    save = lab_runtime.save_lab
+    append = Repository.append_event
+
+    def failed_save(*args, **kwargs):
+        if fault == "after_commit":
+            save(*args, **kwargs)
+        raise RuntimeError("publication interruption")
+
+    def interrupted_event(self, *args, **kwargs):
+        if kwargs.get("event_type") == "LAB_PORTFOLIO_REVISED":
+            raise RuntimeError("publication interruption")
+        return append(self, *args, **kwargs)
+
+    with monkeypatch.context() as interrupt:
+        if fault == "after_file":
+            interrupt.setattr(Repository, "append_event", interrupted_event)
+        else:
+            interrupt.setattr(lab_runtime, "save_lab", failed_save)
+        with pytest.raises(RuntimeError, match="publication interruption"):
+            execute(runtime, WIDE)
+    row = repository.latest_artifact_by_purpose("lab-scientific-stage")
+    wide = read_stage(repository, artifacts, row["artifact_id"])
+    assert wide.candidate_ids
+    candidates_before = repository.list_table("candidates", row["run_id"])
+    resumed = []
+
+    def next_child(command, *, timeout):
+        state = load_lab(repository, artifacts)
+        assert state.evidence_ids == (*before.evidence_ids, row["artifact_id"])
+        resumed.append(state)
+        return 1  # No scientific executor is run during this recovery check.
+
+    monkeypatch.setattr(lab_worker, "supervise", next_child)
+    if fault == "corrupt_output":
+        output = repository.artifact(wide.outputs[0].artifact_id)
+        (artifacts.data_dir / output["relative_path"]).write_bytes(b"corrupt")
+        with pytest.raises(OSError):
+            lab_worker.run_lab(settings)
+        assert resumed == []
+        assert load_lab(repository, artifacts).evidence_ids == before.evidence_ids
+        return
+    lab_worker.run_lab(settings)
+    lab_worker.run_lab(settings)
+    assert len(resumed) == 2
+    assert repository.list_table("candidates", row["run_id"]) == candidates_before
+    assert repository.artifact_at_path(f"runs/{row['run_id']}/lab/portfolio.json") is not None
+
+
 @pytest.mark.parametrize("methods", [(MUTATION, EXPRESSION), (EXPRESSION, MUTATION)])
 def test_director_selects_canonical_lanes_across_restart(runtime, methods):
     _, repository, artifacts = runtime

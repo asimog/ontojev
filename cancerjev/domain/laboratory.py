@@ -134,6 +134,14 @@ class ScientificArtifactRef(FrozenModel):
     purpose: Identifier
 
 
+class LabPublication(FrozenModel):
+    """Verified operational checkpoint for publishing one portfolio revision."""
+
+    version: Literal["lab-publication-v1"] = "lab-publication-v1"
+    state: LabState
+    artifacts: tuple[ScientificArtifactRef, ...]
+
+
 class ScientificStageResult(FrozenModel):
     """Continuation receipt pointing to canonical science, never another state model."""
 
