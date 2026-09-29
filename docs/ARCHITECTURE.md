@@ -58,6 +58,6 @@ CNV uses fixed case partitions once chosen. Mutation/expression are whole-lane b
 
 ## Remaining architecture
 
-The [audit](CODE_AUDIT.md) identifies question-window starvation, Wide retry suppression, publication crash windows, sparse director summaries and deployment liveness gaps. The [plan](IMPLEMENTATION_PLAN.md) adds bounded continuation, one Campaign lifecycle, isolated capability engineering and live/evaluation gates. No generic workflow engine, second scientific-state model or microservice split is required.
+The [audit](CODE_AUDIT.md) records the repaired question-window starvation and outstanding Wide retry suppression, publication crash windows, sparse director summaries and deployment liveness gaps. The [plan](IMPLEMENTATION_PLAN.md) adds bounded continuation, one Campaign lifecycle, isolated capability engineering and live/evaluation gates. No generic workflow engine, second scientific-state model or microservice split is required.
 
 Existing descriptive methods and typed maturity do not imply calibrated inference, replication or therapeutic validation. New sources/methods must meet the data and scientific contracts before becoming capabilities.

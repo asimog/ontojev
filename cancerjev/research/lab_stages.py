@@ -96,9 +96,8 @@ class CampaignLabStages:
                     for identity in state.evidence_ids
                     if (row := self.repository.artifact(identity)) and row["purpose"] == "lab-scientific-stage"}
         offers = []
-        for question in sorted(state.questions, key=lambda q: (-q.priority, q.question_id))[:2]:
-            if question.status in {"ANSWERED", "EXHAUSTED"}:
-                continue
+        for question in sorted((q for q in state.questions if q.status == "ACTIVE"),
+                               key=lambda q: (-q.priority, q.question_id))[:2]:
             spec = cohort_spec(question.project_id)
             # Each release is a separate experiment; old and new observations never pool.
             lanes: dict[str, dict[str, str]] = {}

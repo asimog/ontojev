@@ -168,7 +168,7 @@ class CnvLabAcquisition:
         basis = (f"MEASURED_RECENT_SHARDS: slowest of {len(rates)} at {RATE_SAFETY_FACTOR} safety factor; "
                  f"{rate:.1f} bytes/second including transfer and analysis" if rates else "INITIAL_CONSERVATIVE_ESTIMATE")
         offers: list[AcquisitionOffer] = []
-        active = sorted((q for q in state.questions if q.status not in {"ANSWERED", "EXHAUSTED"}),
+        active = sorted((q for q in state.questions if q.status == "ACTIVE"),
                         key=lambda q: (-q.priority, q.question_id))[:2]
         for question in active:
             spec = cohort_spec(question.project_id)

@@ -4,7 +4,7 @@
 
 ## Current behavior
 
-The director sees a compact persisted portfolio and preflighted offers, returns a typed decision, and Python validates scope, evidence and budget before execution. Questions currently support TCGA-LUAD and TCGA-LUSC. One block performs one decision and, where selected, one scientific capability.
+The director sees a compact persisted portfolio and preflighted offers, returns a typed decision, and Python validates scope, evidence and budget before execution. Questions currently support TCGA-LUAD and TCGA-LUSC. One block performs one decision and, where selected, one scientific capability. Only ACTIVE questions enter the two-question offer window; answered, exhausted, deferred and capability-gap questions cannot hide active work. A PRIORITIZE decision explicitly reactivates a question before acquisition.
 
 Seven capabilities are registered: mutation discovery, expression discovery, CNV case-shard acquisition, complete CNV merge, canonical StatisticalState composition, Wide Jev/admission, and Candidate investigation through Stage 8/dossier. See [Architecture](ARCHITECTURE.md) for code owners and the [code audit](CODE_AUDIT.md) for verification evidence. Hypothesis generation inside the existing Candidate arc is conditional on its configured provider; it is not an independent director-commissioned capability.
 
@@ -28,4 +28,4 @@ CNV coverage counts disjoint positive-query coverage, not a callable denominator
 
 The read-only `/lab` page shows questions, interpretations and run blocks. `/api/lab` and `/api/runs/{id}/lab` expose persisted decisions, acquisitions, scientific-stage receipts and portfolio state. They do not yet provide the complete question-to-Campaign-to-dossier navigation and scientific comparison planned in M5.
 
-Current defects include stage-offer starvation behind terminal questions, Wide receipt suppression of failed-evaluation retries and unreconciled publication gaps. `CAPABILITY_GAP` records missing functionality but does not launch engineering. The [audit](CODE_AUDIT.md) is the current findings record; the [implementation plan](IMPLEMENTATION_PLAN.md) is the sole active roadmap.
+Current defects include Wide receipt suppression of failed-evaluation retries and unreconciled publication gaps. `CAPABILITY_GAP` records missing functionality but does not launch engineering. The [audit](CODE_AUDIT.md) is the current findings record; the [implementation plan](IMPLEMENTATION_PLAN.md) is the sole active roadmap.

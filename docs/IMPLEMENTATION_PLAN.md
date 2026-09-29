@@ -1,6 +1,6 @@
 # Remaining implementation plan
 
-Current plan, 2026-09-29. Baseline: `da1120449c5ade6c578571047b66c442206fc30c` plus the local changes identified in the [code audit](CODE_AUDIT.md). This replaces the old repair-phase plan; historical phases remain in Git history. Writing this plan completes no implementation milestone.
+Current plan, 2026-09-29. Baseline: `da1120449c5ade6c578571047b66c442206fc30c` plus the local changes identified in the [code audit](CODE_AUDIT.md). This replaces the old repair-phase plan; historical phases remain in Git history. Implementation progress is recorded below; the milestone gates remain open until all their acceptance criteria pass.
 
 ## Already implemented
 
@@ -21,8 +21,12 @@ Each numbered unit below should be implemented and verified separately. Worker s
 
 ## M1 — Offer correctness and durable recovery
 
-1. Review/integrate existing `research/lab_worker.py` recovery-lock, child-admission and exit-status fixes with `tests/integration/test_lab_supervisor.py`. Review the local expression-only method change separately; do not mix scientific semantics into recovery repair.
-2. Fix A01/A02 in `research/lab_stages.py`, `research/wide.py` and typed outcomes in `domain/laboratory.py`: filter questions before limiting; distinguish failed/deferred Wide work from scientifically completed no-admission outcomes; retry unfinished states only.
+Progress (2026-09-29): supervisor recovery-lock ordering, active-child admission and honest post-publication failure reporting are integrated. A01 is fixed: all acquisition/stage offers filter ACTIVE questions before the two-question window. Regression coverage includes terminal, deferred and capability-gap questions ahead of active work, with partial and complete CNV partitions. A02 Wide retries and A03 operation reconciliation are still open; M1 is not complete. The pre-existing expression-only constructor is reviewed and retained separately; capability wiring remains M3.
+
+Verification: 915 default offline tests passed (4 deselected), Ruff passed, strict mypy passed for 112 modules, repository facts and documentation links passed. The expression-only constructor is committed separately (see Git history for its exact commit identity). No live calls or deployment were performed.
+
+1. **Integrated:** `research/lab_worker.py` recovery-lock, child-admission and exit-status fixes with `tests/integration/test_lab_supervisor.py`. The expression-only method change is retained in a separate scientific commit.
+2. **A01 fixed; A02 open.** Continue in `research/lab_stages.py`, `research/wide.py` and typed outcomes in `domain/laboratory.py`: retain the active-question eligibility fix; distinguish failed/deferred Wide work from scientifically completed no-admission outcomes; retry unfinished states only.
 3. Fix A03 in `lab_runtime.py`, `lab_stages.py`, `lab_worker.py`, `lab_acquisition.py` and `storage/repositories.py`. Persist operation identity, validated inputs and publication outcome; reconcile outputs before retry. Reuse events/artifacts, introducing a migration only for a demonstrated persistence need.
 
 **Acceptance:** owner-boundary regressions reproduce terminal-question starvation, transient Wide failure followed by success, and interruption after promotion, scientific output, receipt registration and portfolio publication. Restart retains one result per operation, complete provenance and truthful status. Failed cleanup retries without deleting canonical evidence. Extend `tests/integration/test_lab_capabilities.py`, supervisor and existing storage-recovery tests; follow the test-audit gate instead of duplicating helper-call assertions.

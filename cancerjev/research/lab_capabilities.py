@@ -108,7 +108,7 @@ class ScientificLabCapabilities(CnvLabAcquisition):
                   if not (used := sizes.get((offer.project_id, self.transport.release or "")))
                   or used == {self.plans[offer.offer_id][2]}]
         offers.extend(stage_offers)
-        questions = sorted((q for q in state.questions if q.status not in {"ANSWERED", "EXHAUSTED"}),
+        questions = sorted((q for q in state.questions if q.status == "ACTIVE"),
                            key=lambda q: (-q.priority, q.question_id))[:2]
         if not questions:
             return tuple(offers)

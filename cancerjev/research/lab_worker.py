@@ -14,6 +14,7 @@ from uuid import UUID
 
 from cancerjev.config import Settings
 from cancerjev.domain.laboratory import FINALIZATION_SECONDS, RUN_SECONDS
+from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.jev.service import JevService
 from cancerjev.llm.ontocodex import CodexDirector
 from cancerjev.research.lab_acquisition import cleanup_shard
@@ -85,12 +86,11 @@ def run_lab(settings: Settings, *, max_runs: int = 1, seconds: float = RUN_SECON
     repository, artifacts = Repository(database), ArtifactStore(settings.data_dir)
     completed: list[str] = []
     with ResearchOwnership(settings.lock_path):
-        # A worker can outlive a killed supervisor. Refuse recovery while it owns
-        # the child lock, so a restart cannot overlap its scientific writes.
+        # Recovery and worker startup share a lock. A late child must observe
+        # its recovered terminal run before it can initialize any provider.
         with ResearchOwnership(settings.data_dir / "lab-worker.lock"):
-            pass
-        repository.recover_interrupted()
-        recover_workspaces(repository, artifacts)
+            repository.recover_interrupted()
+            recover_workspaces(repository, artifacts)
         for _ in range(max_runs):
             state = load_lab(repository, artifacts)
             if state.operational_state in {"STOPPED", "NO_PROGRESS"}:
@@ -110,6 +110,10 @@ def run_lab(settings: Settings, *, max_runs: int = 1, seconds: float = RUN_SECON
                 data={"category": "raw_data", **cleanup})
             current = load_lab(repository, artifacts)
             reason: str = current.operational_state
+            if code != 0:
+                # The worker can fail after committing science. Keep that
+                # immutable revision, but report the process failure honestly.
+                reason = "CONTINUE_NEXT_RUN" if code == 124 else "OPERATION_FAILED"
             if current.last_run_id != run_id:
                 reason = "CONTINUE_NEXT_RUN" if code == 124 else "OPERATION_FAILED"
                 current = current.model_copy(update={"operational_state": reason,
@@ -138,16 +142,21 @@ def child_main() -> None:
     parser.add_argument("--seconds", type=float, required=True)
     args = parser.parse_args()
     run_id = str(UUID(args.child))
-    settings = replace(Settings.from_env(), data_dir=Path(args.root).resolve())
-    repository = Repository(Database(settings.database_path))
-    artifacts = ArtifactStore(settings.data_dir)
-    clock = RunClock(seconds=args.seconds)
-    director = CodexDirector.from_settings(settings)
-    acquisition = ScientificLabCapabilities.live(repository, artifacts, run_id, clock)
-    experiment = os.getenv("ONTOCODEX_JEV_EXPERIMENT", "off")
-    if experiment not in {"off", "relevance", "choice"}:
-        raise ValueError("ONTOCODEX_JEV_EXPERIMENT must be off, relevance or choice")
-    with ResearchOwnership(settings.data_dir / "lab-worker.lock"):
+    root = Path(args.root).resolve()
+    with ResearchOwnership(root / "lab-worker.lock"):
+        settings = replace(Settings.from_env(), data_dir=root)
+        repository = Repository(Database(settings.database_path))
+        run = repository.get_run(run_id)
+        if (run is None or run.get("purpose") != "LAB" or run["status"] != "RUNNING"
+                or run["execution_ownership"] != ExecutionOwnership.SYSTEM_AUTONOMOUS.value):
+            raise ValueError("worker requires an active autonomous laboratory run")
+        artifacts = ArtifactStore(settings.data_dir)
+        clock = RunClock(seconds=args.seconds)
+        director = CodexDirector.from_settings(settings)
+        acquisition = ScientificLabCapabilities.live(repository, artifacts, run_id, clock)
+        experiment = os.getenv("ONTOCODEX_JEV_EXPERIMENT", "off")
+        if experiment not in {"off", "relevance", "choice"}:
+            raise ValueError("ONTOCODEX_JEV_EXPERIMENT must be off, relevance or choice")
         run_block(repository, artifacts, run_id, director, acquisition, clock,
                   JevService(settings, repository, artifacts) if experiment != "off" else None,
                   comparative_jev=experiment == "choice")

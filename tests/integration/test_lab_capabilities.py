@@ -38,6 +38,31 @@ class SelectCapability(ReplayDirector):
         return decision("EXECUTE", question_id="q1", offer_id=offer["offer_id"])
 
 
+@pytest.mark.parametrize("inactive_status", ["ANSWERED", "EXHAUSTED", "DEFERRED", "CAPABILITY_GAP"])
+@pytest.mark.parametrize("completed_shards", [1, 4])
+def test_inactive_questions_do_not_hide_active_scientific_offers(runtime, inactive_status, completed_shards):
+    settings, repository, artifacts = runtime
+    block(runtime, ReplayDirector(decision()))
+    for _ in range(completed_shards):
+        _, state, _ = execute(runtime, CNV_LAB_METHOD)
+    active = state.questions[0].model_copy(update={"priority": 0})
+    inactive = tuple(active.model_copy(update={
+        "question_id": identity, "priority": 100, "status": inactive_status,
+    }) for identity in ("q2", "q3"))
+    state = state.model_copy(update={"questions": (*inactive, active)})
+    run_id = repository.create_run("offer-check", scope={"purpose": "LAB"})
+    clock = RunClock()
+    transport = ReplayTransport(ShardArtifactStore(settings.data_dir, run_id), run_id,
+                                repository=repository)
+    capabilities = ScientificLabCapabilities(repository, artifacts, run_id, transport, clock)
+
+    offers = capabilities.preflight(state, clock)
+
+    assert {offer.question_id for offer in offers} == {"q1"}
+    expected_cnv = MERGE if completed_shards == 4 else CNV_LAB_METHOD
+    assert {offer.method for offer in offers} >= {expected_cnv, MUTATION.method, EXPRESSION.method}
+
+
 def execute(runtime, method):
     settings, _, _ = runtime
     # Reopen stores and reconstruct every adapter; continuation uses no in-memory science.
