@@ -80,9 +80,12 @@ class DeadlineTransport:
         self.release: str | None = None
         self.expected_cases: tuple[str, ...] | None = None
         self.requests: list[dict[str, Any]] = []
+        self.operation_deadline: float | None = None
 
     def request(self, request: GDCRequest) -> GDCResponse:
         self.clock.reserve(35)
+        if self.operation_deadline is not None and time.monotonic() + 35 >= self.operation_deadline:
+            raise ContinueNextRun("operation deadline reached before next GDC request")
         if self.expected_cases is not None and request.path == "/cnv_occurrences":
             filters = json.loads(dict(request.params)["filters"])
             cases = tuple(filters["content"][1]["content"]["value"])

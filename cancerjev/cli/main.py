@@ -803,7 +803,7 @@ def main(argv: list[str] | None = None) -> None:
             and not getattr(args, "researcher", False):
         raise SystemExit("operator deep flags require --researcher (autonomous runs reject operator overrides).")
     if args.command == "worker" and not live:
-        raise SystemExit("worker runs the autonomous program loop against real open-access GDC; pass --live.")
+        raise SystemExit("worker runs the autonomous OntoCodex laboratory against real open-access GDC; pass --live.")
     if args.command == "campaign":
         if not getattr(args, "validation", False):
             raise SystemExit(
@@ -955,23 +955,16 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(str(exc)) from exc
         return
     if args.command == "worker":
-        # The long-running loop owns the research lock only around each mutation
-        # window; it sleeps outside the lock so researcher commands are never blocked
-        # between cycles. A failed cycle is recorded by the cycle run and the loop
-        # keeps its normal interval, so a failing operation is never hammered. Lock
-        # contention defers one cycle with a bounded retry; the worker never exits.
+        from cancerjev.research.lab_worker import run_lab
+
+        # One authoritative scheduler. run_lab owns the lock and bounded child;
+        # this process only restarts that same supervisor between run blocks.
         try:
             while True:
                 try:
-                    with ResearchOwnership(settings.lock_path):
-                        repository.recover_interrupted()
-                        repository.heartbeat("program-worker")
-                        try:
-                            _program(settings, repository, artifacts)
-                        except Exception as exc:  # noqa: BLE001 - the loop survives a failed cycle
-                            print(f"[WORKER] program cycle failed: {type(exc).__name__}: {exc}",
-                                  flush=True)
-                        repository.heartbeat("program-worker")
+                    repository.heartbeat("ontocodex")
+                    run_lab(settings)
+                    repository.heartbeat("ontocodex")
                 except OwnershipError:
                     defer_seconds = min(WORKER_LOCK_DEFERRAL_SECONDS,
                                         settings.run_interval_minutes * 60)
@@ -979,6 +972,8 @@ def main(argv: list[str] | None = None) -> None:
                           f"deferring this cycle for {defer_seconds} second(s)", flush=True)
                     time.sleep(defer_seconds)
                     continue
+                except Exception as exc:  # noqa: BLE001 - retry a failed supervisor cycle
+                    print(f"[WORKER] laboratory cycle failed: {type(exc).__name__}", flush=True)
                 print(f"[WORKER] sleeping {settings.run_interval_minutes} minute(s)", flush=True)
                 time.sleep(settings.run_interval_minutes * 60)
         except KeyboardInterrupt:

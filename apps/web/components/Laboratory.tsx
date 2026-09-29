@@ -80,6 +80,8 @@ export function LaboratoryRun({ runId }: { runId: string }) {
     <p className="fine">Immutable decision, preflight, Jev control judgments, provenance and portfolio revision.
       Control judgments and director interpretations are separate from measured evidence.</p>
     <StatusBanner error={error} updatedAt={updatedAt} />
+    {data?.documents.filter((item) => item.purpose === "lab-scientific-stage").map((item) =>
+      <ScientificResultSummary key={item.artifact_id} document={item.document} />)}
     {data?.documents.map((item) => <details key={item.artifact_id}>
       <summary>{item.purpose}</summary>
       {item.purpose === "jev-research-control" && <JevDecisionSummary document={item.document} />}
@@ -87,6 +89,29 @@ export function LaboratoryRun({ runId }: { runId: string }) {
       <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify(item.document, null, 2)}</pre>
     </details>)}
   </section>;
+}
+
+function ScientificResultSummary({ document }: { document: unknown }) {
+  if (!document || typeof document !== "object") return null;
+  const record = document as Record<string, unknown>;
+  const titles: Record<string, string> = {
+    CAMPAIGN_CNV_MERGE_V1: "Complete CNV evidence assembled",
+    CAMPAIGN_COMPOSE_V1: "Multimodal StatisticalState composed",
+    CAMPAIGN_WIDE_V1: "Wide evaluation and Candidate admission",
+    CAMPAIGN_INVESTIGATE_V1: "Candidate investigation and dossier",
+  };
+  const states = Array.isArray(record.state_ids) ? record.state_ids : [];
+  const candidates = Array.isArray(record.candidate_ids) ? record.candidate_ids : [];
+  const inputs = Array.isArray(record.inputs) ? record.inputs : [];
+  const outputs = Array.isArray(record.outputs) ? record.outputs : [];
+  return <article>
+    <h3>{titles[String(record.method)] ?? "Scientific result"}</h3>
+    <p>{String(record.project_id)} · {String(record.release)} · question {String(record.question_id)}</p>
+    <p>{inputs.length} verified source artifacts · {outputs.length} canonical output artifacts
+      {states.length > 0 && ` · ${states.length} StatisticalStates`}
+      {candidates.length > 0 && ` · ${candidates.length} Candidates`}</p>
+    <p className="fine">Measurements retain their scientific provenance. Jev judgments and director interpretations remain separately recorded.</p>
+  </article>;
 }
 
 function JevDecisionSummary({ document }: { document: unknown }) {

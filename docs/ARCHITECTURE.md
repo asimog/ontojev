@@ -1,3 +1,5 @@
+> Current autonomous entrypoint: `worker --live` now runs the OntoCodex laboratory supervisor. The implemented Campaign bridge, verified scope and remaining gaps are described in [LAB_CAMPAIGN_BRIDGE.md](LAB_CAMPAIGN_BRIDGE.md). Historical Program scheduling descriptions below apply to explicit legacy commands.
+
 # OntoJev Architecture
 
 > Status: target design and requirements, not a claim that every capability exists. For the inspected current implementation and remaining work, see [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md). Mutable versions remain in [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md).

@@ -16,7 +16,8 @@ from cancerjev.config import Settings
 from cancerjev.domain.laboratory import FINALIZATION_SECONDS, RUN_SECONDS
 from cancerjev.jev.service import JevService
 from cancerjev.llm.ontocodex import CodexDirector
-from cancerjev.research.lab_acquisition import CnvLabAcquisition, cleanup_shard
+from cancerjev.research.lab_acquisition import cleanup_shard
+from cancerjev.research.lab_capabilities import ScientificLabCapabilities
 from cancerjev.research.lab_runtime import RunClock, run_block
 from cancerjev.research.laboratory import load_lab, next_revision, save_lab
 from cancerjev.storage.artifacts import ArtifactStore
@@ -142,7 +143,7 @@ def child_main() -> None:
     artifacts = ArtifactStore(settings.data_dir)
     clock = RunClock(seconds=args.seconds)
     director = CodexDirector.from_settings(settings)
-    acquisition = CnvLabAcquisition.live(repository, artifacts, run_id, clock)
+    acquisition = ScientificLabCapabilities.live(repository, artifacts, run_id, clock)
     experiment = os.getenv("ONTOCODEX_JEV_EXPERIMENT", "off")
     if experiment not in {"off", "relevance", "choice"}:
         raise ValueError("ONTOCODEX_JEV_EXPERIMENT must be off, relevance or choice")

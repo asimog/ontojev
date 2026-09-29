@@ -24,6 +24,7 @@ from cancerjev.research.laboratory import (
     load_lab,
     next_revision,
     save_lab,
+    scientific_evidence_summary,
 )
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
@@ -105,12 +106,17 @@ def run_block(repository: Repository, artifacts: ArtifactStore, run_id: str,
             question = next((q for q in state.questions if q.question_id == decision.question_id), None)
             for identity in decision.interpretation.evidence_ids:
                 row = repository.artifact(identity)
-                if identity not in state.evidence_ids or row is None or row["purpose"] != "cnv-shard-evidence":
+                if identity not in state.evidence_ids or row is None:
                     raise ValueError("director cited unknown evidence")
-                evidence = read_cnv_shard_evidence(artifacts.read(row["relative_path"], row["sha256"]))
-                if question is None or evidence.project_id != question.project_id:
+                if row["purpose"] == "cnv-shard-evidence":
+                    evidence = read_cnv_shard_evidence(artifacts.read(row["relative_path"], row["sha256"]))
+                    project_id = evidence.project_id
+                else:
+                    project_id = scientific_evidence_summary(repository, artifacts, identity)["project_id"]
+                if question is None or project_id != question.project_id:
                     raise ValueError("interpretation evidence belongs to another cohort")
         result = apply_decision(state, decision, offers)
+        selected_offer = next((offer for offer in offers if offer.offer_id == decision.offer_id), None)
         artifact = artifacts.publish(f"runs/{run_id}/lab/decision.json", json_bytes({
             "identity": director.identity.model_dump(mode="json"),
             "projection": projection, "decision": decision.model_dump(mode="json"),
@@ -120,6 +126,7 @@ def run_block(repository: Repository, artifacts: ArtifactStore, run_id: str,
             message=decision.rationale,
             data={"category": "director", "action": decision.action,
                   "question_id": decision.question_id, "next_action": decision.next_action,
+                  "capability": selected_offer.model_dump(mode="json") if selected_offer else None,
                   "jev_control": {"artifact_id": control["artifact_id"],
                                   "execution_mode": "SHADOW", "followed": None,
                                   "reason": "Experimental contract; OntoCodex decided without Jev answers."}
@@ -128,7 +135,7 @@ def run_block(repository: Repository, artifacts: ArtifactStore, run_id: str,
             artifact_refs=[artifact.ref()],
             registrations=[repository.artifact_registration(artifact, run_id)],
         )
-        if decision.action == "ACQUIRE":
+        if decision.action in {"ACQUIRE", "EXECUTE"}:
             offer = next(o for o in offers if o.offer_id == decision.offer_id)
             clock.reserve(offer.estimated_seconds)
             started = time.monotonic()
@@ -140,9 +147,13 @@ def run_block(repository: Repository, artifacts: ArtifactStore, run_id: str,
             # references it. Model output cannot enter this path.
             for evidence_id in evidence_ids:
                 row = repository.artifact(evidence_id)
-                if row is None or row["run_id"] != run_id or row["purpose"] != "cnv-shard-evidence":
+                if row is None or row["run_id"] != run_id:
                     raise ValueError("executor returned unregistered evidence")
                 artifacts.read(row["relative_path"], row["sha256"], expected_size=row["size_bytes"])
+                if row["purpose"] != "cnv-shard-evidence":
+                    summary = scientific_evidence_summary(repository, artifacts, evidence_id)
+                    if summary["project_id"] != offer.project_id:
+                        raise ValueError("executor returned evidence for another cohort")
             result = result.model_copy(update={
                 "evidence_ids": tuple(dict.fromkeys((*result.evidence_ids, *evidence_ids))),
                 "consecutive_no_progress": 0,

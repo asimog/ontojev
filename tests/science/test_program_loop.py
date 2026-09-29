@@ -301,7 +301,7 @@ def test_worker_releases_the_research_lock_while_sleeping(runtime, monkeypatch):
     monkeypatch.setenv("CANCERJEV_NO_DOTENV", "1")
     monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))
     cycles: list[int] = []
-    monkeypatch.setattr("cancerjev.cli.main._program", lambda *args: cycles.append(1))
+    monkeypatch.setattr("cancerjev.research.lab_worker.supervise", lambda *args, **kwargs: cycles.append(1) or 1)
     acquired: list[bool] = []
 
     def sleeper(seconds: float) -> None:
@@ -321,7 +321,7 @@ def test_worker_defers_a_cycle_when_the_research_lock_is_held(runtime, monkeypat
     monkeypatch.setenv("CANCERJEV_NO_DOTENV", "1")
     monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))
     cycles: list[int] = []
-    monkeypatch.setattr("cancerjev.cli.main._program", lambda *args: cycles.append(1))
+    monkeypatch.setattr("cancerjev.research.lab_worker.supervise", lambda *args, **kwargs: cycles.append(1) or 1)
     sleeps: list[float] = []
 
     def sleeper(seconds: float) -> None:
@@ -343,15 +343,7 @@ def test_worker_persists_a_failed_cycle_and_keeps_running(runtime, monkeypatch):
     settings, repository, artifacts = runtime
     monkeypatch.setenv("CANCERJEV_NO_DOTENV", "1")
     monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))
-    monkeypatch.setattr("cancerjev.cli.main.PROGRAM_PROFILES", (VALIDATED,))
-    monkeypatch.setattr("cancerjev.research.release_monitor.observe_release",
-                        lambda transport: fake_release_observation())
-    monkeypatch.setattr("cancerjev.cli.main.GDCTransport", _NoopTransport)
-
-    def explode(*args, **kwargs):
-        raise RuntimeError("synthetic dispatch defect")
-
-    monkeypatch.setattr("cancerjev.cli.main._dispatch_campaign", explode)
+    monkeypatch.setattr("cancerjev.research.lab_worker.supervise", lambda *args, **kwargs: 1)
 
     def sleeper(seconds: float) -> None:
         raise KeyboardInterrupt
@@ -360,11 +352,12 @@ def test_worker_persists_a_failed_cycle_and_keeps_running(runtime, monkeypatch):
     main(["worker", "--live"])
 
     runs = repository.list_runs(5, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS)
-    assert runs[0]["status"] == "FAILED"
+    assert runs[0]["status"] == "STOPPED"
+    assert runs[0]["purpose"] == "LAB"
     events = repository.events(runs[0]["run_id"], 0, 200)["items"]
-    assert events[-1]["type"] == "RUN_FAILED", \
+    assert events[-1]["type"] == "RUN_STOPPED", \
         "a failed cycle is persisted as an event, never print-only"
-    assert events[-1]["data"]["reason_code"] == "RuntimeError"
+    assert events[-1]["data"]["reason_code"] == "OPERATION_FAILED"
 
 
 def test_worker_dispatches_the_canonical_executor(runtime, monkeypatch):

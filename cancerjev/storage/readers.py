@@ -152,7 +152,8 @@ def read_evidence_record(repository: Repository, artifacts: ArtifactStore,
     try:
         evidence = read_evidence(artifact.content, expected_hash=row["evidence_hash"])
         state = read_candidate_state(repository, artifacts, row["candidate_id"])
-        require_equal(state.run_id, row["run_id"], "revision run")
+        if state.run_id != row["run_id"]:
+            require_lab_candidate_binding(repository, artifacts, row["run_id"], row["candidate_id"], state)
         require_equal(evidence.accepted_state_hash, state.state_hash, "accepted state")
         require_equal(evidence.revision_index, row["iteration"], "revision iteration")
         require_equal(evidence.entity.gene_id, state.state.entity.gene_id, "revision entity")
@@ -174,6 +175,32 @@ def read_evidence_record(repository: Repository, artifacts: ArtifactStore,
     return StoredEvidence(evidence_state_id, row["candidate_id"], row["iteration"],
                           row["previous_evidence_state_id"], artifact,
                           EvidenceRecord(evidence_state_id, row["evidence_hash"], evidence))
+
+
+def require_lab_candidate_binding(repository: Repository, artifacts: ArtifactStore,
+                                  run_id: str, candidate_id: str, state: StoredState) -> None:
+    from cancerjev.domain.laboratory import CandidateRunBinding, ScientificStageResult
+    from cancerjev.domain.runs import ExecutionOwnership
+
+    for identity in (state.run_id, run_id):
+        repository.require_run_ownership(identity, ExecutionOwnership.SYSTEM_AUTONOMOUS)
+        run = repository.get_run(identity)
+        if run is None or run.get("purpose") != "LAB":
+            raise ScientificReadError("RECORD_BINDING_MISMATCH", "cross-run revision requires laboratory provenance")
+    row = repository.artifact_at_path(f"runs/{run_id}/lab/candidate-binding.json")
+    if row is None or row["purpose"] != "lab-candidate-binding":
+        raise ScientificReadError("RECORD_BINDING_MISMATCH", "revision run")
+    verified = read_artifact(repository, artifacts, row["artifact_id"], run_id=run_id)
+    binding = CandidateRunBinding.model_validate_json(verified.content)
+    require_equal((binding.candidate_id, binding.source_run_id, binding.source_state_id,
+                   binding.source_state_hash),
+                  (candidate_id, state.run_id, state.state_id, state.state_hash), "candidate continuation")
+    wide = read_artifact(repository, artifacts, binding.wide_receipt.artifact_id, run_id=state.run_id)
+    require_equal(wide.sha256, binding.wide_receipt.sha256, "Wide continuation hash")
+    receipt = ScientificStageResult.model_validate_json(wide.content)
+    require_equal(receipt.method, "CAMPAIGN_WIDE_V1", "Wide continuation method")
+    if candidate_id not in receipt.candidate_ids or state.state_id not in receipt.state_ids:
+        raise ScientificReadError("RECORD_BINDING_MISMATCH", "Candidate absent from Wide continuation")
 
 
 def read_revision_chain(repository: Repository, artifacts: ArtifactStore,

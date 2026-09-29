@@ -15,3 +15,14 @@
 - Continuation evidence: run `4a1f0121-6561-43ce-a84e-8a4ef4a83c43` acquired a second disjoint shard after restart. One live Choice replay agreed with direct OntoCodex (485 ms); no independent labels or repeat measurements, so no accuracy or superiority claim. Replay files are local in `.lab/replays/`.
 - Live continuation `28007d68-92cc-4891-9a32-235a202df3a6` interpreted both retained shards, persisted cumulative coverage (2/585 cases, PARTIAL) and updated uncertainty at revision 8 without further acquisition.
 - Live rate verification: run `56ac1052-93d8-4a1c-8e73-526028d846af` acquired a third disjoint shard (174,528 bytes / 10.656 seconds); run `39a65209-aa30-4fae-afd4-0f353dde51cc` used that measurement in preflight and interpreted the new evidence at revision 10.
+
+
+## 2026-09-29: laboratory / Campaign bridge milestone
+
+- Started from `b14bd645d55f2fa9352534f658d5641454ef8d86`; assessed code without using existing docs or `.upstream` as implementation evidence.
+- Director-selected capabilities now reach canonical mutation/expression, ephemeral CNV shards, complete merge, StatisticalState composition, Wide/Candidate admission, and Candidate investigation/Stage 8 across Research Runs.
+- `worker --live` now invokes the lab supervisor. The 600-second ceiling and shadow control Jev remain.
+- Docker build succeeded; a network-isolated container invoked the installed Codex CLI through a local Responses replay and produced a typed director decision. Default provider/model identity was verified as OpenRouter / `deepseek/deepseek-v4.1-flash`. This was not a live provider or scientific validation.
+- Working-tree verification: Ruff, strict mypy, repository facts, full offline pytest (907 passed, 4 deselected), frontend typecheck/build. The strengthened cross-run binding regression is also checked separately.
+- Existing user modifications were preserved and are excluded from this milestone's commit.
+- Remaining: fine-grained mutation/expression checkpoints, separately selected Candidate substeps, isolated capability-gap engineering and activation, replication adapters, exhaustive interrupted-publication recovery, and live scientific/deployment validation. See `docs/LAB_CAMPAIGN_BRIDGE.md`.

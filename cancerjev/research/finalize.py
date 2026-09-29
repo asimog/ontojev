@@ -451,7 +451,7 @@ def run_stage8_finalize(*, run_id: str, candidate: dict[str, Any], investigation
         chain=read_revision_chain(repository, artifacts, candidate["candidate_id"]),
         executions=repository.followup_executions_for(candidate["candidate_id"]),
         dossier_id=dossier_id, promoted_by_policy=promoted_by_policy,
-        rankings=_load_rankings(repository, artifacts, run_id), mode=mode,
+        rankings=_load_rankings(repository, artifacts, stored_state.run_id), mode=mode,
     )
     result_artifact = publish_json(
         run_id, f"runs/{run_id}/stage8/{final_result['final_result_id']}.json",

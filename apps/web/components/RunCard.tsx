@@ -22,6 +22,14 @@ export function RunCard({ run }: { run: ResearchRun }) {
       <h2>{title}</h2>
       {run.purpose === "LAB" && <div>
         <p>{run.lab?.rationale ?? "OntoCodex is choosing the next bounded experiment."}</p>
+        {run.lab?.capability && <div>
+          <span className="badge">{run.lab.capability.modality}</span>{" "}
+          <span className="badge">{run.lab.capability.project_id}</span>
+          <p>{run.lab.capability.evidence_provided}</p>
+          <p className="fine">Estimated {run.lab.capability.estimated_seconds}s
+            {run.lab.capability.maximum_bytes > 1 && ` · acquisition ceiling ${formatBytes(run.lab.capability.maximum_bytes)}`}
+            {run.lab.capability.candidate_id && " · Candidate investigation"}</p>
+        </div>}
         <p className="fine mono">{run.lab?.question_id ?? "Portfolio planning"} · budget {run.budget_seconds ?? 600}s
           {run.lab?.revision !== undefined && ` · revision ${run.lab.revision}`} · raw cleanup {run.lab?.cleanup_status ?? "pending"}</p>
         {run.lab?.next_action && <p><strong>Next:</strong> {run.lab.next_action}</p>}

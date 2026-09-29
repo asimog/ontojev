@@ -44,7 +44,7 @@ class ResearchDecision(FrozenModel):
     """Closed execution protocol: no SQL, paths, queries, measurements or code."""
 
     action: Literal["CREATE_QUESTION", "PRIORITIZE", "DEFER", "ANSWER", "EXHAUST",
-                    "CAPABILITY_GAP", "ACQUIRE", "INTERPRET", "STOP"]
+                    "CAPABILITY_GAP", "ACQUIRE", "EXECUTE", "INTERPRET", "STOP"]
     rationale: Text
     question_id: Identifier | None
     question: ResearchQuestion | None
@@ -62,6 +62,7 @@ class ResearchDecision(FrozenModel):
             "DEFER": {"question_id"}, "ANSWER": {"question_id", "interpretation"},
             "EXHAUST": {"question_id"}, "CAPABILITY_GAP": {"question_id"},
             "ACQUIRE": {"question_id", "offer_id"},
+            "EXECUTE": {"question_id", "offer_id"},
             "INTERPRET": {"question_id", "interpretation"}, "STOP": set(),
         }[self.action]
         if fields != expected:
@@ -95,6 +96,13 @@ class AcquisitionOffer(FrozenModel):
     estimate_basis: Text = "INITIAL_CONSERVATIVE_ESTIMATE"
     evidence_provided: Text
     limitations: tuple[Text, ...] = Field(min_length=1)
+    prerequisite_evidence_ids: tuple[Identifier, ...] = ()
+    expected_requests: int | None = Field(default=None, ge=0)
+    maximum_requests: int = Field(default=512, gt=0)
+    maximum_seconds: float = Field(default=RUN_SECONDS - FINALIZATION_SECONDS, gt=0,
+                                   le=RUN_SECONDS - FINALIZATION_SECONDS)
+    coverage: Text = "PARTIAL_POSITIVE_QUERY"
+    candidate_id: Identifier | None = None
 
 
 class LabState(FrozenModel):
@@ -118,6 +126,38 @@ class LabState(FrozenModel):
         if len(self.evidence_ids) != len(set(self.evidence_ids)):
             raise ValueError("duplicate evidence identity")
         return self
+
+
+class ScientificArtifactRef(FrozenModel):
+    artifact_id: Identifier
+    sha256: Identifier
+    purpose: Identifier
+
+
+class ScientificStageResult(FrozenModel):
+    """Continuation receipt pointing to canonical science, never another state model."""
+
+    version: Literal["lab-scientific-stage-v1"] = "lab-scientific-stage-v1"
+    method: Literal["CAMPAIGN_CNV_MERGE_V1", "CAMPAIGN_COMPOSE_V1", "CAMPAIGN_WIDE_V1",
+                    "CAMPAIGN_INVESTIGATE_V1"]
+    question_id: Identifier
+    project_id: Literal["TCGA-LUAD", "TCGA-LUSC"]
+    spec_hash: Identifier
+    release: Text
+    inputs: tuple[ScientificArtifactRef, ...]
+    outputs: tuple[ScientificArtifactRef, ...]
+    state_ids: tuple[Identifier, ...] = ()
+    candidate_ids: tuple[Identifier, ...] = ()
+
+
+class CandidateRunBinding(FrozenModel):
+    """Explicit authority to continue one canonical Candidate in a later lab run."""
+
+    candidate_id: Identifier
+    source_run_id: Identifier
+    source_state_id: Identifier
+    source_state_hash: Identifier
+    wide_receipt: ScientificArtifactRef
 
 
 class CnvCoverageSummary(FrozenModel):

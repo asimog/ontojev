@@ -234,7 +234,8 @@ class Repository:
             lab = scope.setdefault("lab", {})
             if event["type"] == "ONTOCODEX_DECISION":
                 lab.update(action=event["data"]["action"], question_id=event["data"]["question_id"],
-                           rationale=event["message"], next_action=event["data"]["next_action"])
+                           rationale=event["message"], next_action=event["data"]["next_action"],
+                           capability=event["data"].get("capability"))
             elif event["type"] == "LAB_RUN_OUTCOME":
                 lab.update(event["data"])
             else:

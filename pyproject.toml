@@ -30,6 +30,8 @@ files = [
   "cancerjev/llm/ontocodex.py",
   "cancerjev/research/lab_runtime.py",
   "cancerjev/research/lab_acquisition.py",
+  "cancerjev/research/lab_capabilities.py",
+  "cancerjev/research/lab_stages.py",
   "cancerjev/research/lab_worker.py",
   "cancerjev/jev/decisions.py",
   "cancerjev/jev/replay.py",

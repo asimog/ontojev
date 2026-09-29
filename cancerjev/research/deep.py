@@ -509,6 +509,10 @@ def plan_deep_slice(*, run_id: str, candidate: dict[str, Any], repository: Repos
 
     baseline_id = stable_id(run_id, f"evidence:{candidate['candidate_id']}:0")
     existing_revisions = repository.evidence_revisions(candidate["candidate_id"])
+    if existing_revisions:
+        # A laboratory investigation may resume in another bounded Research Run.
+        # Reuse the verified E0 identity rather than creating another baseline.
+        baseline_id = read_revision_chain(repository, artifacts, candidate["candidate_id"])[0].evidence_state_id
     baseline_present = any(row["evidence_state_id"] == baseline_id for row in existing_revisions)
     baseline_evidence = _baseline_evidence(evidence.record, evidence, run_id=run_id,
                                            eligible_ids=eligible_ids)

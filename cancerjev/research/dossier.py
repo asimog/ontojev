@@ -486,7 +486,7 @@ def _publish_dossier_stage(*, run_id: str, candidate: dict[str, Any], repository
     ]
     wide_evaluations = [
         read_evaluation_record(repository, artifacts, row["evaluation_id"]).artifact.boundary_representation()
-        for row in repository.page_child("jev_evaluations", run_id, 100, None,
+        for row in repository.page_child("jev_evaluations", stored_state.run_id, 100, None,
                                          {"purpose": "WIDE"})["items"]
         if row["input_ref_id"] == candidate.get("source_state_id")
     ]

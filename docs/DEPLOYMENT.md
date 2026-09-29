@@ -1,3 +1,5 @@
+> Runtime update: the worker now enters the OntoCodex lab, and the Docker image installs and checks the pinned Codex CLI. See [LAB_CAMPAIGN_BRIDGE.md](LAB_CAMPAIGN_BRIDGE.md) for current execution and deployment limits. Automated capability-gap engineering is not enabled.
+
 # OntoJev Deployment and Runbook
 
 > One application architecture: API, web and worker are three processes over one

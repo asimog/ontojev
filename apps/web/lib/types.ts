@@ -42,6 +42,16 @@ export type ResearchRun = {
     revision?: number;
     cleanup_status?: string;
     elapsed_seconds?: number;
+    capability?: {
+      method: string;
+      modality: string;
+      project_id: string;
+      candidate_id?: string | null;
+      evidence_provided: string;
+      expected_bytes: number;
+      maximum_bytes: number;
+      estimated_seconds: number;
+    } | null;
   };
   run_id: string;
   mode: "FAKE" | "LIVE";

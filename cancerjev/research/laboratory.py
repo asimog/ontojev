@@ -73,7 +73,7 @@ def apply_decision(state: LabState, decision: ResearchDecision,
         if decision.question.status != "ACTIVE":
             raise ValueError("new question must be active")
         questions[decision.question.question_id] = decision.question
-    elif decision.action == "ACQUIRE":
+    elif decision.action in {"ACQUIRE", "EXECUTE"}:
         offer = next((o for o in offers if o.offer_id == decision.offer_id), None)
         if offer is None or offer.question_id != decision.question_id:
             raise ValueError("acquisition must select a current preflight offer")
@@ -122,17 +122,21 @@ def apply_decision(state: LabState, decision: ResearchDecision,
 def compact_projection(state: LabState, offers: tuple[AcquisitionOffer, ...],
                        remaining_seconds: float) -> dict[str, Any]:
     """No raw genomics, logs or repository content; priority is control only."""
+    from cancerjev.research.lab_capabilities import capability_catalog
+
     return {
         "domain": state.domain, "revision": state.revision,
         "questions": [q.model_dump(mode="json") for q in state.questions],
         "interpretations": [i.model_dump(mode="json") for i in state.interpretations[-8:]],
         "evidence_ids": list(state.evidence_ids[-20:]),
-        "offers": [o.model_dump(mode="json") for o in offers],
+        "offers": [{**o.model_dump(mode="json"),
+                    "fits_current_run": o.expected_bytes <= o.maximum_bytes
+                    and o.estimated_seconds <= o.maximum_seconds
+                    and o.estimated_seconds + 20 < remaining_seconds} for o in offers],
         "remaining_seconds": remaining_seconds,
         "operational_state": state.operational_state,
         "consecutive_no_progress": state.consecutive_no_progress,
-        "capabilities": [{"method": "CNV_POSITIVE_CASE_SHARD_V1", "status": "AVAILABLE",
-                          "description": "Descriptive exact-category CNV counts over complete positive occurrence case shards. Missing calls are not neutral."}],
+        "capabilities": capability_catalog(),
         "capability_gaps": ["Survival analysis, mutation co-occurrence and fusion analysis are not yet registered for bounded lab execution."],
     }
 
@@ -144,8 +148,11 @@ def evidence_summaries(repository: Repository, artifacts: ArtifactStore,
     summaries: list[dict[str, Any]] = []
     for identity in state.evidence_ids[-20:]:
         row = repository.artifact(identity)
-        if row is None or row["purpose"] != "cnv-shard-evidence":
+        if row is None:
             raise ValueError("portfolio contains unsupported evidence identity")
+        if row["purpose"] != "cnv-shard-evidence":
+            summaries.append(scientific_evidence_summary(repository, artifacts, identity))
+            continue
         evidence = read_cnv_shard_evidence(artifacts.read(row["relative_path"], row["sha256"]))
         genes = sorted(evidence.genes, key=lambda gene: (-gene.records, gene.gene_id))[:8]
         summaries.append({
@@ -171,8 +178,11 @@ def coverage_summaries(repository: Repository, artifacts: ArtifactStore,
     groups: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     for identity in state.evidence_ids:
         row = repository.artifact(identity)
-        if row is None or row["purpose"] != "cnv-shard-evidence":
+        if row is None:
             raise ValueError("unsupported cumulative evidence")
+        if row["purpose"] != "cnv-shard-evidence":
+            scientific_evidence_summary(repository, artifacts, identity)
+            continue
         repository.require_run_ownership(row["run_id"], ExecutionOwnership.SYSTEM_AUTONOMOUS)
         evidence = read_cnv_shard_evidence(artifacts.read(row["relative_path"], row["sha256"]))
         key = (evidence.project_id, evidence.release, evidence.spec_hash, digest(evidence.cohort_case_ids))
@@ -201,3 +211,58 @@ def next_revision(repository: Repository, state: LabState, run_id: str) -> LabSt
 
 def json_bytes(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+
+
+def scientific_evidence_summary(repository: Repository, artifacts: ArtifactStore,
+                                identity: str) -> dict[str, Any]:
+    """Verify canonical lane artifacts before projecting derived facts to the director."""
+    from cancerjev.domain.codecs import read_discovery, read_expression_discovery
+    from cancerjev.research.lab_acquisition import cohort_spec
+    from cancerjev.research.resumed_evidence import _require_current_methods
+
+    row = repository.artifact(identity)
+    if row is None:
+        raise ValueError("unknown scientific evidence")
+    if row["purpose"] == "lab-scientific-stage":
+        from cancerjev.research.lab_stages import INVESTIGATE, WIDE, read_stage
+
+        receipt = read_stage(repository, artifacts, identity)
+        return {"evidence_id": identity, "project_id": receipt.project_id,
+                "release": receipt.release, "method": receipt.method,
+                "state_ids": list(receipt.state_ids), "candidate_ids": list(receipt.candidate_ids),
+                "source_kind": ("SCIENTIFIC_RESULT_WITH_JUDGMENTS" if receipt.method == INVESTIGATE else
+                                "JEV_SCIENTIFIC_JUDGMENT" if receipt.method == WIDE else "DETERMINISTIC_DERIVATION"),
+                "limitations": ["Computational evidence retains its original maturity and limitations."]}
+    repository.require_run_ownership(row["run_id"], ExecutionOwnership.SYSTEM_AUTONOMOUS)
+    body = artifacts.read(row["relative_path"], row["sha256"], expected_size=row["size_bytes"])
+    if row["purpose"] == "mutation-discovery-result":
+        result = read_discovery(body)
+        _require_current_methods("mutation", result)
+        summary: dict[str, Any] = {"modality": "MUTATION", "genes": len(result.entries),
+                                   "nominated_genes": len(result.survivor_ids)}
+    elif row["purpose"] == "expression-discovery-result":
+        expression = read_expression_discovery(body)
+        _require_current_methods("expression", expression)
+        summary = {"modality": "EXPRESSION", "genes": len(expression.entries),
+                   "nominated_genes": len(expression.retained_ids),
+                   "pending_semantic_review": len(expression.jev_review_ids)}
+        result_scope = expression
+    else:
+        raise ValueError("unsupported scientific evidence")
+    lane = result if row["purpose"] == "mutation-discovery-result" else result_scope
+    spec = cohort_spec(lane.project_id)
+    if (lane.spec_id, lane.cohort_id) != (spec.spec_id, spec.cohort.cohort_id):
+        raise ValueError("scientific evidence scope mismatch")
+    provenance_row = repository.artifact_at_path(f"runs/{row['run_id']}/lab/scientific-acquisition.json")
+    if provenance_row is None:
+        raise ValueError("scientific acquisition provenance missing")
+    provenance = json.loads(artifacts.read(provenance_row["relative_path"], provenance_row["sha256"]))
+    if (provenance["evidence_id"] != identity or provenance["evidence_sha256"] != row["sha256"]
+            or provenance["spec_hash"] != digest(spec.as_dict())
+            or provenance["release"] != lane.release):
+        raise ValueError("scientific acquisition identity mismatch")
+    return {"evidence_id": identity, "source_kind": "DETERMINISTIC_DERIVATION",
+            "project_id": lane.project_id, "release": lane.release,
+            "spec_id": lane.spec_id, "universe_complete": lane.universe.complete,
+            "universe_membership_hash": lane.universe.membership_hash,
+            "limitations": list(lane.limitations), **summary}

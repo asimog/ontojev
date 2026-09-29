@@ -40,7 +40,8 @@ def laboratory_run(run_id: UUID, request: Request) -> dict[str, Any]:
     run = repository.get_run(str(run_id))
     if run is None:
         raise HTTPException(404, "Run not found")
-    purposes = {"ontocodex-decision", "research-portfolio", "lab-acquisition", "jev-research-control", "lab-coverage"}
+    purposes = {"ontocodex-decision", "research-portfolio", "lab-acquisition", "jev-research-control",
+                "lab-coverage", "lab-scientific-acquisition", "lab-scientific-stage"}
     documents = []
     for row in repository.artifacts_for_run(str(run_id)):
         if row["purpose"] in purposes:
