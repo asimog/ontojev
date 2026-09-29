@@ -92,6 +92,7 @@ class AcquisitionOffer(FrozenModel):
     expected_bytes: int = Field(ge=0)
     maximum_bytes: int = Field(gt=0)
     estimated_seconds: float = Field(gt=0)
+    estimate_basis: Text = "INITIAL_CONSERVATIVE_ESTIMATE"
     evidence_provided: Text
     limitations: tuple[Text, ...] = Field(min_length=1)
 

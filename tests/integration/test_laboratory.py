@@ -173,6 +173,8 @@ def test_sequential_ephemeral_shards_preserve_evidence_and_reacquisition(runtime
     class SelectShard(ReplayDirector):
         def decide(self, projection, *, timeout):
             offer = next(o for o in projection["offers"] if len(o["cases"]) == 5)
+            if projection["evidence_ids"]:
+                assert offer["estimate_basis"].startswith("MEASURED_RECENT_SHARDS")
             return decision("ACQUIRE", question_id="q1", offer_id=offer["offer_id"])
 
     class RegisteredReplay(_Transport):
@@ -198,6 +200,8 @@ def test_sequential_ephemeral_shards_preserve_evidence_and_reacquisition(runtime
         provenance = json.loads(artifacts.read(provenance_row["relative_path"], provenance_row["sha256"]))
         assert provenance["offer"]["cases"] == list(evidence.case_ids)
         assert provenance["release"] == evidence.release
+        assert provenance["performance"]["response_bytes"] > 0
+        assert provenance["performance"]["elapsed_seconds"] > 0
         assert any(r["endpoint"] == "/cnv_occurrences" and "filters" in r["params"]
                    for r in provenance["requests"])
         events = repository.events(run_id, 0, 100)["items"]

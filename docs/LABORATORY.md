@@ -27,6 +27,12 @@ allowance was raised from 16 to 32 MiB after live preflight estimated 17 MB for
 one case; larger alternatives remained refused. A budget never changes a
 partial population into a complete one.
 
+New acquisitions record actual response bytes and combined transfer/analysis time.
+Preflight uses the slowest measured rate among the five most recent retained
+shards, multiplied by a declared 0.5 safety factor, plus request overhead. Older
+records without these measurements use the initial conservative rate. The offer
+records the estimation basis; timings never become scientific observations.
+
 ## Providers
 
 Install the upstream Codex CLI, for example `npm install -g @openai/codex`.
@@ -85,7 +91,7 @@ no-progress stop; fresh acquisitions and evidence-linked interpretations do.
 
 The existing mutation/expression, Wide/Deep Jev, Candidate, Stage 8 and dossier
 paths remain in the repository. They are **not yet integrated into bounded lab
-runs**. Adaptive throughput estimation, scientific Jev and StatisticalState
+runs**. Scientific Jev and StatisticalState
 synthesis within this loop, literature/hypothesis commissioning, capability
 engineering worktrees, cumulative full-cohort analysis and the final laboratory
 dossier remain implementation work. `CAPABILITY_GAP` preserves unsupported

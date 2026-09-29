@@ -396,7 +396,8 @@ def program_state_payload(outcome: ProgramRunOutcome, profiles: tuple[CampaignPr
 def load_program_state(*, repository: Repository,
                        artifacts: ArtifactStore) -> dict[str, Any] | None:
     """Read the latest durable program state; absent state is None, never inferred."""
-    row = repository.latest_artifact_by_purpose(PROGRAM_STATE_PURPOSE)
+    row = repository.latest_artifact_by_purpose(
+        PROGRAM_STATE_PURPOSE, ownership=ExecutionOwnership.SYSTEM_AUTONOMOUS)
     if row is None:
         return None
     body = artifacts.read(str(row["relative_path"]), str(row["sha256"]))

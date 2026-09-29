@@ -61,6 +61,10 @@ def test_program_worker_selects_persists_and_completes(runtime):
     assert "PROGRAM_RUN_STARTED" in types
     assert "CAMPAIGN_SELECTED" in types
     assert "CAMPAIGN_COMPLETED" in types
+    researcher = repository.create_run("researcher", ownership=ExecutionOwnership.RESEARCHER_RUN)
+    unrelated = artifacts.publish(f"runs/{researcher}/program.json", b"{}", "application/json", "program-state")
+    repository.register_artifact(unrelated, researcher)
+    assert load_program_state(repository=repository, artifacts=artifacts) == state
 
 
 def test_program_worker_idles_without_eligible_campaigns(runtime):

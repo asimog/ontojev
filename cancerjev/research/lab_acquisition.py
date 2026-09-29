@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import shutil
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,9 @@ CNV_LAB_METHOD = "CNV_POSITIVE_CASE_SHARD_V1"
 SHARD_SIZES = (1, 5, 25)
 LAB_MAX_REQUESTS = 512
 LAB_MAX_PAGES = 256
+RATE_HISTORY_SHARDS = 5
+RATE_SAFETY_FACTOR = 0.5
+MAX_ESTIMATED_BYTES_PER_SECOND = 4 * 1024 * 1024.0
 
 
 class ShardArtifactStore(ArtifactStore):
@@ -130,11 +134,36 @@ class CnvLabAcquisition:
 
     def preflight(self, state: LabState, clock: RunClock) -> tuple[AcquisitionOffer, ...]:
         acquired: dict[tuple[str, str], set[str]] = {}
+        rates: list[float] = []
         for identity in state.evidence_ids:
             row = self.repository.artifact(identity)
             if row and row["purpose"] == "cnv-shard-evidence":
+                from cancerjev.domain.runs import ExecutionOwnership
+
+                self.repository.require_run_ownership(row["run_id"], ExecutionOwnership.SYSTEM_AUTONOMOUS)
                 evidence = read_cnv_shard_evidence(self.artifacts.read(row["relative_path"], row["sha256"]))
                 acquired.setdefault((evidence.project_id, evidence.release), set()).update(evidence.case_ids)
+        for identity in state.evidence_ids[-RATE_HISTORY_SHARDS:]:
+            row = self.repository.artifact(identity)
+            if row is None:
+                continue
+            provenance = self.repository.artifact_at_path(f"runs/{row['run_id']}/lab/acquisition.json")
+            if provenance is None:
+                continue
+            document = json.loads(self.artifacts.read(provenance["relative_path"], provenance["sha256"]))
+            measured = document.get("performance")
+            if measured is None:
+                continue
+            if document.get("evidence_id") != identity or measured.get("method") != "CNV_TRANSFER_ANALYSIS_RATE_V1":
+                raise ValueError("acquisition performance identity mismatch")
+            elapsed, byte_count = measured["elapsed_seconds"], measured["response_bytes"]
+            if any(isinstance(value, bool) or not isinstance(value, (int, float))
+                   or not math.isfinite(value) or value <= 0 for value in (elapsed, byte_count)):
+                raise ValueError("invalid measured acquisition performance")
+            rates.append(byte_count / max(elapsed, 1.0))
+        rate = min(min(rates) * RATE_SAFETY_FACTOR, MAX_ESTIMATED_BYTES_PER_SECOND) if rates else INITIAL_BYTES_PER_SECOND
+        basis = (f"MEASURED_RECENT_SHARDS: slowest of {len(rates)} at {RATE_SAFETY_FACTOR} safety factor; "
+                 f"{rate:.1f} bytes/second including transfer and analysis" if rates else "INITIAL_CONSERVATIVE_ESTIMATE")
         offers: list[AcquisitionOffer] = []
         active = sorted((q for q in state.questions if q.status not in {"ANSWERED", "EXHAUSTED"}),
                         key=lambda q: (-q.priority, q.question_id))[:2]
@@ -160,7 +189,7 @@ class CnvLabAcquisition:
                 pages = math.ceil(page.total / spec.cnv_discovery.page_size)
                 if pages > min(LAB_MAX_PAGES, PAGE_DEFECT_CEILING) or pages + 20 > min(LAB_MAX_REQUESTS, REQUEST_DEFECT_CEILING):
                     continue
-                estimate = 15 + expected / INITIAL_BYTES_PER_SECOND + math.ceil(page.total / 250) * 2
+                estimate = 15 + expected / rate + math.ceil(page.total / spec.cnv_discovery.page_size) * 2
                 offer_id = hashlib.sha256(json_bytes({"question": question.question_id,
                     "release": self.transport.release, "cases": cases, "method": CNV_LAB_METHOD})).hexdigest()
                 offers.append(AcquisitionOffer(
@@ -168,6 +197,7 @@ class CnvLabAcquisition:
                     project_id=question.project_id, method=CNV_LAB_METHOD, modality="CNV",
                     cases=cases, expected_bytes=expected, maximum_bytes=SHARD_BYTES,
                     estimated_seconds=estimate,
+                    estimate_basis=basis,
                     evidence_provided="Complete released positive CNV occurrences for these cases; exact-category case counts.",
                     limitations=("Absence is not a CNV-neutral observation.",
                                  "Caller compatibility is unverified; no clinical or causal inference.",
@@ -193,6 +223,8 @@ class CnvLabAcquisition:
             self.repository.append_event(self.run_id, event_type=kind, idempotency_key=key,
                                          message=message, **kwargs)
 
+        started = time.monotonic()
+        first_request = len(self.transport.requests)
         evidence = run_cnv_shard_scan(self.run_id, self.transport, self.repository,
                                       self.artifacts, emit, spec, shard_index=index,
                                       case_shard_size=size, evict_raw=False)
@@ -208,6 +240,9 @@ class CnvLabAcquisition:
             "cohort_case_ids": cohort, "spec": spec.as_dict(),
             "evidence_id": row["artifact_id"], "evidence_sha256": row["sha256"],
             "requests": self.transport.requests,
+            "performance": {"method": "CNV_TRANSFER_ANALYSIS_RATE_V1",
+                            "elapsed_seconds": time.monotonic() - started,
+                            "response_bytes": sum(request["response_bytes"] for request in self.transport.requests[first_request:])},
         }), "application/json", "lab-acquisition")
         self.repository.register_artifact(provenance, self.run_id)
         self.artifacts.read(provenance.relative_path, provenance.sha256)
