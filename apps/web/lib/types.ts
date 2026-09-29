@@ -32,6 +32,17 @@ export type ProviderUsage = {
 };
 
 export type ResearchRun = {
+  purpose?: string;
+  budget_seconds?: number;
+  lab?: {
+    action?: string;
+    question_id?: string | null;
+    rationale?: string;
+    next_action?: string;
+    revision?: number;
+    cleanup_status?: string;
+    elapsed_seconds?: number;
+  };
   run_id: string;
   mode: "FAKE" | "LIVE";
   fixture_id: string | null;

@@ -7,6 +7,7 @@ import { DeepEvidencePanel } from "@/components/DeepEvidencePanel";
 import { DeterministicStatePanel } from "@/components/DeterministicStatePanel";
 import { EventFeed } from "@/components/EventFeed";
 import { JudgmentVector } from "@/components/JudgmentVector";
+import { LaboratoryRun } from "@/components/Laboratory";
 import { StatusBanner } from "@/components/StatusBanner";
 import { WideJudgment, type LiveEvaluationVector } from "@/components/WideJudgment";
 import { WideRankingPanel } from "@/components/WideRanking";
@@ -133,7 +134,7 @@ export function RunDetail({ runId }: { runId: string }) {
       return [{ vector, stateId, geneSymbol }];
     });
   const legacySweep = run.stage_occurrences.some((item) => item.stage === "GDC_FAST_SEARCH");
-  const title = run.current_stage ?? (live
+  const title = run.purpose === "LAB" ? "Bounded Research Run" : run.current_stage ?? (live
     ? (legacySweep ? "Provider-ranked researcher sweep" : "Systematic open-access campaign")
     : "Bounded fixture run");
   return (
@@ -168,6 +169,7 @@ export function RunDetail({ runId }: { runId: string }) {
       </header>
        <section className="panel"><div className="eyebrow">STAGE TIMELINE</div><div className="pipeline">{run.stage_occurrences.filter((item) => item.type === "STAGE_COMPLETED").map((item) => <span key={`${item.stage}-${item.sequence}`}>{item.stage}{item.candidate_id ? ` · c${item.candidate_id.slice(0, 4)}` : ""}{item.iteration ? ` · i${item.iteration}` : ""}</span>)}{run.current_stage && <span className="active">{run.current_stage} · live</span>}</div>{legacySweep && <p className="fine">This run used the provider-ranked comparator path (researcher/operator or fixture demo). Autonomous campaigns run the systematic spine: mutation discovery, expression discovery, CNV shards, modality union, pre-Wide policy.</p>}<p className="fine">Repeated stages are distinct per-candidate or per-iteration occurrences. Only admitted states become candidates; the persisted pre-Wide selection and the Jev ranking keep every exclusion reason explicit.</p></section>
       <BudgetSummary run={run} />
+      {run.purpose === "LAB" && <LaboratoryRun runId={runId} />}
       {live ? (
         <>
           <DeterministicStatePanel states={detail.states} />

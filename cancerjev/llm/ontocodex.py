@@ -40,6 +40,8 @@ DEFER, EXHAUST or CAPABILITY_GAP: question_id only.
 STOP: no optional fields.
 New questions must have status ACTIVE. Do not declare a capability gap before
 creating the question; capability gaps must refer to an existing question.
+If a deferred or capability-gap question now has a feasible offer, PRIORITIZE
+it to reactivate it. ACQUIRE is permitted only for ACTIVE questions.
 """
 
 

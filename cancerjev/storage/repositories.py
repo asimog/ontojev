@@ -216,6 +216,10 @@ class Repository:
                 if value is not None:
                     target = f"llm_{token_key}"
                     usage[target] = (usage[target] or 0) + int(value)
+        if event["type"] in {"ONTOCODEX_DECISION", "ONTOCODEX_UNAVAILABLE"}:
+            usage["llm_calls"] += 1
+        if event["type"] == "JEV_RESEARCH_CONTROL":
+            usage["jev_calls"] += 1
         run["usage_json"] = _json(usage)
         if event["type"] == "PROJECT_SCOPE_SELECTED":
             scope = json.loads(run["scope_json"])
@@ -224,6 +228,17 @@ class Repository:
                 scope["scope_hash"] = event["data"]["scope_hash"]
             if event["data"].get("gdc_release"):
                 scope["gdc_release"] = event["data"]["gdc_release"]
+            run["scope_json"] = _json(scope)
+        if event["type"] in {"ONTOCODEX_DECISION", "LAB_RUN_OUTCOME", "LAB_RAW_CLEANUP"}:
+            scope = json.loads(run["scope_json"])
+            lab = scope.setdefault("lab", {})
+            if event["type"] == "ONTOCODEX_DECISION":
+                lab.update(action=event["data"]["action"], question_id=event["data"]["question_id"],
+                           rationale=event["message"], next_action=event["data"]["next_action"])
+            elif event["type"] == "LAB_RUN_OUTCOME":
+                lab.update(event["data"])
+            else:
+                lab["cleanup_status"] = event["data"]["status"]
             run["scope_json"] = _json(scope)
         return run
 
@@ -771,6 +786,14 @@ class Repository:
         """Every registered artifact row; storage maintenance and doctor reads use this."""
         with self.database.read() as connection:
             return [dict(row) for row in connection.execute("SELECT * FROM artifacts")]
+
+    def artifacts_for_run(self, run_id: str, *, purpose: str | None = None) -> list[dict[str, Any]]:
+        with self.database.read() as connection:
+            rows = connection.execute(
+                "SELECT * FROM artifacts WHERE run_id=?" + (" AND purpose=?" if purpose else ""),
+                (run_id, purpose) if purpose else (run_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def heartbeat(self, owner_id: str) -> None:
         with self.database.connect(write=True) as connection:

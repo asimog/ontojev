@@ -299,6 +299,19 @@ def jev_ranking(states: list[StateRecord], evaluations: list[EvaluationRecord]) 
         entry["rank"] = rank
 
     qualifiers = [entry for entry in entries if entry["qualified"]]
+    probability_fields = ("warrants_deeper_investigation", "unresolved_uncertainty_material",
+                          "evidence_quality_adequate", "signal_explained_by_coverage")
+    for entry in entries:
+        peers = [other["state_id"] for other in entries if other is not entry
+                 and other["qualified"] == entry["qualified"]
+                 and all((left := _ranking_probability(entry, key)) is not None
+                         and (right := _ranking_probability(other, key)) is not None
+                         and abs(left - right) <= 0.05 for key in probability_fields)]
+        entry["uncertainty"] = {
+            "near_tied_state_ids": sorted(peers), "margin": 0.05,
+            "interpretation": "Small probability separation is not established scientific rank separation.",
+            "ordering_policy": "Existing versioned lexicographic order; exact probability ties use affected cases, then stable state hash. Hash order is administrative, not evidence.",
+        }
     admitted = [entry["state_id"] for entry in qualifiers[:PROMOTION_LIMIT]]
     decision = "ADMIT" if admitted else "ABSTAIN"
     return {

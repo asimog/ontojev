@@ -26,6 +26,31 @@ router = APIRouter()
 API_VERSION = "3.0.0"
 
 
+@router.get("/api/lab")
+def laboratory(request: Request) -> dict[str, Any]:
+    from cancerjev.research.laboratory import load_lab
+
+    repository, artifacts = services(request)
+    return load_lab(repository, artifacts).model_dump(mode="json")
+
+
+@router.get("/api/runs/{run_id}/lab")
+def laboratory_run(run_id: UUID, request: Request) -> dict[str, Any]:
+    repository, artifacts = services(request)
+    run = repository.get_run(str(run_id))
+    if run is None:
+        raise HTTPException(404, "Run not found")
+    purposes = {"ontocodex-decision", "research-portfolio", "lab-acquisition", "jev-research-control"}
+    documents = []
+    for row in repository.artifacts_for_run(str(run_id)):
+        if row["purpose"] in purposes:
+            content = json.loads(artifacts.read(row["relative_path"], row["sha256"],
+                                                expected_size=row["size_bytes"]))
+            documents.append({"purpose": row["purpose"], "artifact_id": row["artifact_id"],
+                              "sha256": row["sha256"], "document": content})
+    return {"run_id": str(run_id), "documents": documents}
+
+
 def services(request: Request) -> tuple[Repository, ArtifactStore]:
     return request.app.state.repository, request.app.state.artifacts
 

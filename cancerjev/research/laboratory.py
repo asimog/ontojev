@@ -113,7 +113,36 @@ def compact_projection(state: LabState, offers: tuple[AcquisitionOffer, ...],
         "offers": [o.model_dump(mode="json") for o in offers],
         "remaining_seconds": remaining_seconds,
         "operational_state": state.operational_state,
+        "capabilities": [{"method": "CNV_POSITIVE_CASE_SHARD_V1", "status": "AVAILABLE",
+                          "description": "Descriptive exact-category CNV counts over complete positive occurrence case shards. Missing calls are not neutral."}],
+        "capability_gaps": ["Survival analysis, mutation co-occurrence and fusion analysis are not yet registered for bounded lab execution."],
     }
+
+
+def evidence_summaries(repository: Repository, artifacts: ArtifactStore,
+                       state: LabState) -> list[dict[str, Any]]:
+    from cancerjev.domain.codecs import read_cnv_shard_evidence
+
+    summaries: list[dict[str, Any]] = []
+    for identity in state.evidence_ids[-20:]:
+        row = repository.artifact(identity)
+        if row is None or row["purpose"] != "cnv-shard-evidence":
+            raise ValueError("portfolio contains unsupported evidence identity")
+        evidence = read_cnv_shard_evidence(artifacts.read(row["relative_path"], row["sha256"]))
+        genes = sorted(evidence.genes, key=lambda gene: (-gene.records, gene.gene_id))[:8]
+        summaries.append({
+            "evidence_id": identity, "source_kind": "DETERMINISTIC_DERIVATION",
+            "project_id": evidence.project_id, "release": evidence.release,
+            "case_count": len(evidence.case_ids), "cohort_case_count": len(evidence.cohort_case_ids),
+            "positive_records": evidence.records, "genes_with_positive_records": len(evidence.genes),
+            "genes_shown": [{"gene_id": gene.gene_id,
+                "categories": [{"category": c.raw_category, "cases": len(c.case_ids)} for c in gene.categories],
+                "conflicting_cases": len(gene.conflicting_case_ids)} for gene in genes],
+            "projection_selection": "At most 8 genes, ordered by positive record count; descriptive, not a significance ranking.",
+            "limitations": ["Absence is not CNV neutral.", "Caller compatibility is unverified.",
+                            "Shard evidence is not complete-cohort evidence."],
+        })
+    return summaries
 
 
 def next_revision(repository: Repository, state: LabState, run_id: str) -> LabState:

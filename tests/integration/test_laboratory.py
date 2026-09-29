@@ -150,3 +150,123 @@ def test_harness_protocol_is_isolated_and_validated(monkeypatch):
     monkeypatch.setattr("cancerjev.llm.ontocodex.subprocess.run", invalid)
     with pytest.raises(DirectorError, match="INVALID_OR_UNAVAILABLE"):
         director.decide({}, timeout=5)
+
+
+def test_sequential_ephemeral_shards_preserve_evidence_and_reacquisition(runtime):
+    from cancerjev.domain.codecs import read_cnv_shard_evidence
+    from cancerjev.research.lab_acquisition import CnvLabAcquisition, ShardArtifactStore
+    from tests.science.test_cnv_project_scan import _Transport
+
+    _, repository, artifacts = runtime
+    block(runtime, ReplayDirector(decision()))
+
+    class SelectShard(ReplayDirector):
+        def decide(self, projection, *, timeout):
+            offer = next(o for o in projection["offers"] if len(o["cases"]) == 5)
+            return decision("ACQUIRE", question_id="q1", offer_id=offer["offer_id"])
+
+    class RegisteredReplay(_Transport):
+        def request(self, request):
+            response = super().request(request)
+            repository.register_artifact(response.artifact, self.run_id)
+            return response
+
+    acquired = []
+    for _ in range(2):
+        run_id = repository.create_run("lab-test", scope={"purpose": "LAB"})
+        repository.append_event(run_id, event_type="RUN_STARTED", idempotency_key="start", message="Run.")
+        shard_store = ShardArtifactStore(artifacts.data_dir, run_id)
+        transport = RegisteredReplay(shard_store, repository, run_id)
+        clock = RunClock()
+        acquisition = CnvLabAcquisition(repository, artifacts, run_id, transport, clock)
+        result = run_block(repository, artifacts, run_id, SelectShard(None), acquisition, clock)
+        row = repository.artifact(result.evidence_ids[-1])
+        evidence = read_cnv_shard_evidence(artifacts.read(row["relative_path"], row["sha256"]))
+        acquired.append(evidence)
+        assert not (artifacts.data_dir / "shards" / run_id).exists()
+        provenance_row = repository.artifact_at_path(f"runs/{run_id}/lab/acquisition.json")
+        provenance = json.loads(artifacts.read(provenance_row["relative_path"], provenance_row["sha256"]))
+        assert provenance["offer"]["cases"] == list(evidence.case_ids)
+        assert provenance["release"] == evidence.release
+        assert any(r["endpoint"] == "/cnv_occurrences" and "filters" in r["params"]
+                   for r in provenance["requests"])
+        events = repository.events(run_id, 0, 100)["items"]
+        assert next(e["sequence"] for e in events if e["type"] == "LAB_PORTFOLIO_REVISED") < next(
+            e["sequence"] for e in events if e["type"] == "LAB_RAW_CLEANUP")
+    assert not set(acquired[0].case_ids) & set(acquired[1].case_ids)
+    restored = load_lab(repository, artifacts)
+    assert len(restored.evidence_ids) == 2
+    first = repository.artifact(restored.evidence_ids[0])
+    assert read_cnv_shard_evidence(artifacts.read(first["relative_path"], first["sha256"])) == acquired[0]
+
+
+@pytest.mark.local_process
+def test_supervisor_terminates_overdue_execution():
+    import sys
+    import time
+
+    from cancerjev.research.lab_worker import supervise
+
+    started = time.monotonic()
+    assert supervise([sys.executable, "-c", "import time; time.sleep(30)"], timeout=0.2) == 124
+    assert time.monotonic() - started < 5
+
+
+def test_jev_control_retains_purpose_provenance_and_abstains(runtime):
+    from cancerjev.domain.laboratory import AcquisitionOffer
+    from cancerjev.jev.service import JevService
+    from cancerjev.jev.typesafe_adapter import ProviderAnswerSet
+
+    settings, repository, artifacts = runtime
+    state = apply_decision(LabState(), decision())
+    offer = AcquisitionOffer(offer_id="offer", question_id="q1", project_id="TCGA-LUAD",
+        method="CNV_POSITIVE_CASE_SHARD_V1", modality="CNV", cases=("case-1",),
+        expected_bytes=100, maximum_bytes=1000, estimated_seconds=1,
+        evidence_provided="Positive CNV counts", limitations=("Not neutral calls",))
+
+    class Provider:
+        probability = 0.8
+
+        def evaluate(self, projection, definitions):
+            return ProviderAnswerSet("jev-1.13.0", "jev-1.13.0",
+                {"offer_0": {"kind": "noul", "probability_yes": self.probability}},
+                {"input_tokens": 10, "output_tokens": 1}, 1, "replay-request")
+
+    provider = Provider()
+    for expected_status, probability in (("COMPLETE", 0.8), ("ABSTAINED", float("nan"))):
+        provider.probability = probability
+        run_id = repository.create_run("lab-test")
+        result = JevService(settings, repository, artifacts, lambda: provider).evaluate_lab_control(
+            run_id, state, (offer,))
+        row = repository.artifact(result["artifact_id"])
+        stored = json.loads(artifacts.read(row["relative_path"], row["sha256"]))
+        assert stored["purpose"] == "RESEARCH_CONTROL"
+        assert stored["source_kind"] == "JEV_CONTROL_JUDGMENT"
+        assert stored["projection"]["offers"][0]["offer_id"] == "offer"
+        assert stored["question_set_version"] == "lab-control-v1"
+        assert stored["source_state_hash"]
+        assert stored["status"] == expected_status
+        assert not repository.list_table("statistical_states", run_id)
+        assert load_lab(repository, artifacts).evidence_ids == ()
+
+
+def test_observatory_reads_canonical_portfolio_and_decision(runtime, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from apps.api.main import create_app
+
+    settings, _, _ = runtime
+    run_id, state = block(runtime, ReplayDirector(decision()))
+    monkeypatch.setenv("CANCERJEV_NO_DOTENV", "1")
+    monkeypatch.setenv("CANCERJEV_DATA_DIR", str(settings.data_dir))
+    with TestClient(create_app()) as client:
+        response = client.get("/api/lab")
+        assert response.status_code == 200
+        assert response.json() == state.model_dump(mode="json")
+        story = client.get(f"/api/runs/{run_id}/lab").json()
+        documents = {item["purpose"]: item["document"] for item in story["documents"]}
+        assert documents["research-portfolio"] == state.model_dump(mode="json")
+        assert documents["ontocodex-decision"]["decision"]["action"] == "CREATE_QUESTION"
+        run = client.get(f"/api/runs/{run_id}").json()
+        assert run["lab"]["cleanup_status"] == "CLEAN"
+        assert run["lab"]["revision"] == state.revision

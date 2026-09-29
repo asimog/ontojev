@@ -6,7 +6,7 @@ import os
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +42,10 @@ WORKER_LOCK_DEFERRAL_SECONDS = 60
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="python -m cancerjev")
     commands = root.add_subparsers(dest="command", required=True)
+    lab = commands.add_parser("lab", help="bounded autonomous lung-cancer laboratory")
+    lab.add_argument("--root", default=".lab", help="durable laboratory state (separate from historical data)")
+    lab.add_argument("--max-runs", type=int, default=1, help="operational run allowance, 1..100")
+    lab.add_argument("--seconds", type=float, default=600, help="wall-clock ceiling per run, at most 600")
     for name in ("run", "worker"):
         command = commands.add_parser(name)
         mode = command.add_mutually_exclusive_group()
@@ -766,6 +770,12 @@ def _program(settings: Settings, repository: Repository, artifacts: ArtifactStor
 def main(argv: list[str] | None = None) -> None:
     load_local_env()
     args = parser().parse_args(argv)
+    if args.command == "lab":
+        from cancerjev.research.lab_worker import run_lab
+
+        settings = replace(Settings.from_env(), data_dir=Path(args.root).expanduser().resolve())
+        run_lab(settings, max_runs=args.max_runs, seconds=args.seconds)
+        return
     live = bool(getattr(args, "live", False))
     jev_requested = bool(getattr(args, "jev", False))
     deep_candidate = getattr(args, "deep_candidate", None)

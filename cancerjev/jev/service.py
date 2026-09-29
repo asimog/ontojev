@@ -17,6 +17,7 @@ from uuid import uuid4
 from cancerjev.config import Settings
 from cancerjev.domain.envelopes import EvidenceRecord, HypothesisRecord, StateRecord
 from cancerjev.domain.events import canonical_json, utc_now
+from cancerjev.domain.laboratory import AcquisitionOffer, LabState
 from cancerjev.domain.measurements import digest
 from cancerjev.jev.context import validate_context
 from cancerjev.jev.contracts import (
@@ -26,6 +27,7 @@ from cancerjev.jev.contracts import (
     ValidatedAnswers,
     read_answers,
 )
+from cancerjev.jev.decisions import CONTRACTS, acquisition_choice_questions, uncertainty
 from cancerjev.jev.projection import (
     EVIDENCE_INCLUDED_FIELDS,
     EVIDENCE_PROJECTION_VERSION,
@@ -103,6 +105,82 @@ class JevService:
     artifacts: ArtifactStore
     adapter_factory: Callable[[], TypeSafeAdapter] | None = None
     _question_artifacts: dict[tuple[str, str], Any] = field(default_factory=dict, repr=False)
+
+    def evaluate_lab_control(self, run_id: str, state: LabState,
+                             offers: tuple[AcquisitionOffer, ...], *,
+                             comparative: bool = False) -> dict[str, Any]:
+        """Semantic relevance advice, never biological evidence or an execution gate.
+
+        Python knows feasibility but cannot determine whether a descriptive CNV
+        shard addresses a natural-language question. A Noul reports that narrow
+        uncertainty for each offered experiment. There is no confidence threshold:
+        OntoCodex integrates the advice; failure abstains. Inputs omit prior Jev
+        answers to avoid circular support.
+        """
+        if not offers:
+            return {"purpose": "RESEARCH_CONTROL", "status": "NOT_APPLICABLE"}
+        projection = {
+            "source_revision": state.revision,
+            "questions": [q.model_dump(mode="json") for q in state.questions
+                          if q.question_id in {o.question_id for o in offers}],
+            "offers": [o.model_dump(mode="json") for o in offers],
+        }
+        definitions = tuple(QuestionDefinition(
+            question_id=f"offer_{index}", primitive="NOUL", version=1,
+            instructions=(f"Does offers[{index}].evidence_provided address a stated uncertainty "
+                          "in its associated research question, given the offer's limitations? "
+                          "Judge relevance, not feasibility, truth, novelty, clinical utility or "
+                          "evidence maturity. More cases of the same modality do not resolve "
+                          "missing evidence from another modality."),
+            criteria={"true": "The offered descriptive evidence directly informs a stated uncertainty.",
+                      "false": "The question needs evidence the offer does not provide, or relevance is unsupported."},
+            applicability_rule="offered_experiment",
+        ) for index, _ in enumerate(offers))
+        if comparative:
+            definitions = acquisition_choice_questions(tuple(offer.offer_id for offer in offers))
+        contract = CONTRACTS["LAB_CHOICE" if comparative else "LAB_RELEVANCE"]
+        version = contract.question_set_version
+        set_hash = digest([definition.provider_spec() for definition in definitions])
+        question_artifact = self._ensure_question_artifact(
+            run_id, version=version, definitions=definitions, set_hash=set_hash)
+        payload: dict[str, Any] = {
+            "purpose": "RESEARCH_CONTROL", "source_kind": "JEV_CONTROL_JUDGMENT",
+            "source_revision": state.revision, "source_state_hash": digest(state.model_dump(mode="json")),
+            "question_set_version": version, "question_set_hash": set_hash,
+            "projection": projection, "projection_hash": digest(projection),
+            "requested_model": self.settings.jev_model,
+            "question_artifact_id": question_artifact.artifact_id,
+            "decision_contract": contract.payload(definitions),
+            "execution_mode": "SHADOW",
+            "fallback": "ONTOCODEX_DIRECT_DECISION",
+        }
+        try:
+            adapter = self.adapter_factory() if self.adapter_factory else TypeSafeAdapter(
+                model=self.settings.jev_model, timeout=self.settings.jev_timeout_seconds)
+            answer_set, answers = self._invoke(adapter, projection, definitions)
+            payload.update(status="COMPLETE", answers=answers.boundary_representation(),
+                           uncertainty=uncertainty(answers),
+                           resolved_model=answer_set.resolved_model, usage=answer_set.usage,
+                           latency_ms=answer_set.latency_ms, request_id=answer_set.request_id)
+        except (JevProviderError, JevContractError) as exc:
+            payload.update(status="ABSTAINED", reason_code=getattr(exc, "code", "INVALID_ANSWER"),
+                           answers=None)
+        artifact = self._publish_json(run_id, f"runs/{run_id}/jev/lab-control.json", payload,
+                                       "jev-research-control")
+        self.repository.append_event(
+            run_id, event_type="JEV_RESEARCH_CONTROL", idempotency_key="jev:lab-control",
+            message="Bounded acquisition relevance judgments recorded as research control.",
+            data={"category": "jev_control", "purpose": "RESEARCH_CONTROL",
+                  "status": payload["status"], "source_revision": state.revision},
+            artifact_refs=[artifact.ref()],
+            registrations=[self.repository.artifact_registration(artifact, run_id)],
+        )
+        return {"purpose": "RESEARCH_CONTROL", "status": payload["status"],
+                "artifact_id": artifact.artifact_id, "answers": payload["answers"],
+                "decision_contract": payload["decision_contract"],
+                "uncertainty": payload.get("uncertainty"),
+                "execution_mode": "SHADOW",
+                "offer_ids": [offer.offer_id for offer in offers]}
 
     # ------------------------------------------------------------------ helpers
 
@@ -594,6 +672,11 @@ class JevService:
                             event_prefix: str | None = None,
                             typed_answers: ValidatedAnswers | None = None) -> EvaluationRecord:
         """Persist one evaluation (success or fail-closed failure) with its event."""
+        definitions = {"WIDE": WIDE_QUESTIONS, "DEEP": DEEP_QUESTIONS,
+                       "HYPOTHESIS": HYPOTHESIS_QUESTIONS}[purpose]
+        evaluation["decision_contract"] = CONTRACTS[purpose].payload(definitions)
+        evaluation["judgment_role"] = "SCIENTIFIC_EVALUATION"
+        evaluation["uncertainty_diagnostics"] = uncertainty(typed_answers) if typed_answers else None
         evaluation_id = evaluation["evaluation_id"]
         artifact = self._publish_json(run_id, f"runs/{run_id}/jev/{evaluation_id}.json", evaluation,
                                       "jev-evaluation")

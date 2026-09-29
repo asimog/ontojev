@@ -107,7 +107,7 @@ class LabState(FrozenModel):
     consecutive_no_progress: int = Field(default=0, ge=0)
     last_run_id: Identifier | None = None
     operational_state: Literal["READY", "PROVIDER_UNAVAILABLE", "CONTINUE_NEXT_RUN",
-                               "NO_PROGRESS", "STOPPED", "CAPABILITY_GAP"] = "READY"
+                               "NO_PROGRESS", "STOPPED", "CAPABILITY_GAP", "OPERATION_FAILED"] = "READY"
 
     @model_validator(mode="after")
     def unique_questions(self) -> Self:

@@ -477,7 +477,10 @@ def test_evaluation_persistence_contract_and_idempotency(runtime):
     failed = fail_service.evaluate_record(run_id=fail_context["run_id"],
                                           state=fail_context["state"], emit=fail_context["emit"])
     failed_vector = failed.boundary_representation()
-    assert set(failed_vector) == set(EVALUATION_FIELDS) | {"artifact_id"}
+    assert set(failed_vector) == set(EVALUATION_FIELDS) | {
+        "artifact_id", "decision_contract", "judgment_role", "uncertainty_diagnostics"}
+    assert failed_vector["judgment_role"] == "SCIENTIFIC_EVALUATION"
+    assert failed_vector["decision_contract"]["evaluation_status"] == "EXPERIMENTAL"
     fail_events = [event for event in
                    fail_context["repository"].events(fail_context["run_id"], 0, 100)["items"]
                    if event["type"].startswith("JEV_")]
@@ -491,7 +494,9 @@ def test_evaluation_persistence_contract_and_idempotency(runtime):
     evaluation = service.evaluate_record(run_id=context["run_id"], state=record,
                                          emit=context["emit"])
     vector = evaluation.boundary_representation()
-    assert set(vector) == set(EVALUATION_FIELDS) | {"artifact_id"}
+    assert set(vector) == set(EVALUATION_FIELDS) | {
+        "artifact_id", "decision_contract", "judgment_role", "uncertainty_diagnostics"}
+    assert vector["uncertainty_diagnostics"]["version"] == "jev-uncertainty-v1"
     assert vector["applicability"] == applicability_map(build_projection(record))
     repository = context["repository"]
     assert repository.get_evaluation(evaluation.evaluation_id)["vector"] == {

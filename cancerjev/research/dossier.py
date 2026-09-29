@@ -371,6 +371,7 @@ def build_live_dossier(*, run_id: str, candidate: dict[str, Any], state: StoredS
         "sections": sections,
         "created_at": utc_now(),
         "limitations": [
+            "Scientific-evaluation Jev judgments are interpretations with versioned contracts, not measured biological observations. Research-control judgments are not independent biological support.",
             "Deterministic checks are integrity and consistency evidence, not biological evidence.",
             "A single cohort is examined and the examined gene set is selection-biased.",
             "Jev judgments are inputs to Python policy; they select, authorize and execute nothing.",

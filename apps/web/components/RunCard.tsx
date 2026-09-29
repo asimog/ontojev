@@ -7,7 +7,7 @@ export function RunCard({ run }: { run: ResearchRun }) {
   const u = run.provider_usage;
   const live = run.mode === "LIVE";
   const projectCount = (run.selected_project_ids ?? []).length;
-  const title = run.status === "COMPLETED"
+  const title = run.purpose === "LAB" ? (run.lab?.action ?? "Research Run") : run.status === "COMPLETED"
     ? (live ? "Campaign complete" : "Synthetic campaign complete")
     : run.current_stage ?? "Awaiting stage";
   return (
@@ -20,6 +20,12 @@ export function RunCard({ run }: { run: ResearchRun }) {
         <span className="mono muted">{run.run_id.slice(0, 8)}</span>
       </div>
       <h2>{title}</h2>
+      {run.purpose === "LAB" && <div>
+        <p>{run.lab?.rationale ?? "OntoCodex is choosing the next bounded experiment."}</p>
+        <p className="fine mono">{run.lab?.question_id ?? "Portfolio planning"} · budget {run.budget_seconds ?? 600}s
+          {run.lab?.revision !== undefined && ` · revision ${run.lab.revision}`} · raw cleanup {run.lab?.cleanup_status ?? "pending"}</p>
+        {run.lab?.next_action && <p><strong>Next:</strong> {run.lab.next_action}</p>}
+      </div>}
       <p className="muted">
         {live
           ? `${plural(projectCount, "project")} · coverage ${run.coverage} · sequence ${run.last_sequence}`
