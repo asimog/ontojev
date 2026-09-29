@@ -5,7 +5,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from cancerjev.domain.laboratory import AcquisitionOffer, LabState, ResearchDecision
+from cancerjev.domain.laboratory import (
+    AcquisitionOffer,
+    CnvCoverageSummary,
+    LabState,
+    ResearchDecision,
+)
+from cancerjev.domain.measurements import digest
 from cancerjev.domain.runs import ExecutionOwnership
 from cancerjev.storage.artifacts import ArtifactStore
 from cancerjev.storage.repositories import Repository
@@ -75,11 +81,15 @@ def apply_decision(state: LabState, decision: ResearchDecision,
             raise ValueError("acquisition requires an active question")
         if offer.project_id != questions[offer.question_id].project_id:
             raise ValueError("offer belongs to a different cohort")
+        questions[offer.question_id] = questions[offer.question_id].model_copy(
+            update={"next_action": decision.next_action})
     elif decision.action == "STOP":
         changes["operational_state"] = "STOPPED"
     elif decision.question_id:
         question = questions[decision.question_id]
         update: dict[str, Any] = {"next_action": decision.next_action}
+        if decision.interpretation:
+            update["uncertainty"] = decision.interpretation.uncertainty
         if decision.action == "PRIORITIZE":
             update.update(priority=decision.priority, status="ACTIVE")
         status = {"DEFER": "DEFERRED", "ANSWER": "ANSWERED", "EXHAUST": "EXHAUSTED",
@@ -93,8 +103,15 @@ def apply_decision(state: LabState, decision: ResearchDecision,
     if decision.interpretation:
         changes["interpretations"] = (*state.interpretations, decision.interpretation)
     result = LabState.model_validate({**state.model_dump(), **changes})
-    unchanged = result == state
-    no_progress = state.consecutive_no_progress + 1 if unchanged else 0
+    progress = decision.action in {"CREATE_QUESTION", "STOP"}
+    if decision.interpretation:
+        reviewed = {identity for item in state.interpretations
+                    if item.question_id == decision.question_id for identity in item.evidence_ids}
+        progress = bool(set(decision.interpretation.evidence_ids) - reviewed)
+    if decision.action in {"ANSWER", "EXHAUST"} and decision.question_id:
+        previous = next(q for q in state.questions if q.question_id == decision.question_id)
+        progress = progress or previous.status not in {"ANSWERED", "EXHAUSTED"}
+    no_progress = 0 if progress else state.consecutive_no_progress + 1
     return result.model_copy(update={
         "consecutive_no_progress": no_progress,
         "operational_state": "NO_PROGRESS" if no_progress >= NO_PROGRESS_LIMIT
@@ -113,6 +130,7 @@ def compact_projection(state: LabState, offers: tuple[AcquisitionOffer, ...],
         "offers": [o.model_dump(mode="json") for o in offers],
         "remaining_seconds": remaining_seconds,
         "operational_state": state.operational_state,
+        "consecutive_no_progress": state.consecutive_no_progress,
         "capabilities": [{"method": "CNV_POSITIVE_CASE_SHARD_V1", "status": "AVAILABLE",
                           "description": "Descriptive exact-category CNV counts over complete positive occurrence case shards. Missing calls are not neutral."}],
         "capability_gaps": ["Survival analysis, mutation co-occurrence and fusion analysis are not yet registered for bounded lab execution."],
@@ -143,6 +161,34 @@ def evidence_summaries(repository: Repository, artifacts: ArtifactStore,
                             "Shard evidence is not complete-cohort evidence."],
         })
     return summaries
+
+
+def coverage_summaries(repository: Repository, artifacts: ArtifactStore,
+                       state: LabState) -> tuple[CnvCoverageSummary, ...]:
+    """Count disjoint complete queries from all retained derived evidence."""
+    from cancerjev.domain.codecs import read_cnv_shard_evidence
+
+    groups: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for identity in state.evidence_ids:
+        row = repository.artifact(identity)
+        if row is None or row["purpose"] != "cnv-shard-evidence":
+            raise ValueError("unsupported cumulative evidence")
+        repository.require_run_ownership(row["run_id"], ExecutionOwnership.SYSTEM_AUTONOMOUS)
+        evidence = read_cnv_shard_evidence(artifacts.read(row["relative_path"], row["sha256"]))
+        key = (evidence.project_id, evidence.release, evidence.spec_hash, digest(evidence.cohort_case_ids))
+        group = groups.setdefault(key, {"cases": set(), "ids": [], "records": 0,
+                                       "cohort_cases": len(evidence.cohort_case_ids)})
+        if group["cases"].intersection(evidence.case_ids):
+            raise ValueError("cumulative CNV evidence contains overlapping cases")
+        group["cases"].update(evidence.case_ids)
+        group["ids"].append(identity)
+        group["records"] += evidence.records
+    return tuple(CnvCoverageSummary(
+        project_id=key[0], release=key[1], spec_hash=key[2], cohort_hash=key[3],
+        evidence_ids=tuple(group["ids"]), queried_cases=len(group["cases"]),
+        cohort_cases=group["cohort_cases"], positive_records=group["records"],
+        coverage="COMPLETE_POSITIVE_QUERY" if len(group["cases"]) == group["cohort_cases"] else "PARTIAL",
+    ) for key, group in sorted(groups.items()))
 
 
 def next_revision(repository: Repository, state: LabState, run_id: str) -> LabState:

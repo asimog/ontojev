@@ -301,7 +301,7 @@ button:disabled { opacity: .55; cursor: default; }
 
 .run-grid, .archive { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .run-grid.single { grid-template-columns: minmax(0, 1fr); max-width: 660px; }
-.run-card { border-top: 4px solid var(--line-strong); padding-top: 22px; }
+.run-card { border-top: 4px solid var(--line-strong); padding-top: 22px; min-width: 0; overflow-wrap: anywhere; }
 .run-card.status-completed { border-top-color: var(--green-2); }
 .run-card.status-running, .run-card.status-pending { border-top-color: #3f7fbe; }
 .run-card.status-failed, .run-card.status-stopped { border-top-color: var(--coral); }

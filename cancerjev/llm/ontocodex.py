@@ -29,6 +29,10 @@ Prioritize information value, uncertainty, conflicting evidence and replication.
 Never fabricate measurements or citations. Missing is not negative. Control
 priorities and model judgments are not biological evidence. Interpretations
 must cite supplied evidence identities and explicitly retain uncertainty.
+Use cumulative query coverage to distinguish acquired shards from whole-cohort
+evidence. Interpret new evidence before repeatedly acquiring the same modality.
+Rewording plans or changing priorities alone does not count as progress; repeated
+such blocks stop automatically. Each interpretation should reduce a stated uncertainty.
 Do not call tools, inspect files, or execute commands. Return only the requested
 ResearchDecision JSON. All unused optional fields must be null.
 Action-specific fields (every other optional field MUST be null):

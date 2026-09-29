@@ -75,6 +75,14 @@ row, not file-size measurements. Every complete shard remains a shard, not a
 complete-cohort result. Director interpretations are separately labelled judgments
 and cite registered deterministic evidence; they do not overwrite StatisticalState.
 
+Every block persists typed cumulative query coverage, grouped by project, release,
+method specification and cohort manifest. It reads retained derived shards,
+rejects overlapping cases, and labels incomplete coverage PARTIAL. Coverage is
+not a callable CNV denominator. Interpretations cannot cite another cohort.
+Their uncertainty and next action update the question while the original evidence
+remains immutable. Reprioritizing or rewording alone does not reset the three-block
+no-progress stop; fresh acquisitions and evidence-linked interpretations do.
+
 The existing mutation/expression, Wide/Deep Jev, Candidate, Stage 8 and dossier
 paths remain in the repository. They are **not yet integrated into bounded lab
 runs**. Adaptive throughput estimation, scientific Jev and StatisticalState

@@ -10,6 +10,12 @@ type Portfolio = {
   revision: number;
   operational_state: string;
   evidence_ids: string[];
+  interpretations: Array<{
+    question_id: string;
+    evidence_ids: string[];
+    conclusion: string;
+    uncertainty: string[];
+  }>;
   questions: Array<{
     question_id: string;
     question: string;
@@ -49,6 +55,18 @@ export function Laboratory() {
         </details>
       </article>)}
     </section>
+    {data && data.interpretations.length > 0 && <section aria-labelledby="interpretations-title">
+      <div className="section-heading"><h2 id="interpretations-title">Latest interpretations</h2></div>
+      {data.interpretations.slice(-5).reverse().map((interpretation, index) => <article className="panel" key={`${interpretation.question_id}-${index}`}>
+        <span className="badge">Director judgment</span>
+        <p className="fine">{interpretation.question_id} · {interpretation.evidence_ids.length} retained evidence references</p>
+        <p>{interpretation.conclusion}</p>
+        <details><summary>Uncertainty and evidence references</summary>
+          <ul>{interpretation.uncertainty.map((item) => <li key={item}>{item}</li>)}</ul>
+          <p className="mono" style={{ overflowWrap: "anywhere" }}>{interpretation.evidence_ids.join(" · ")}</p>
+        </details>
+      </article>)}
+    </section>}
     <section><div className="section-heading"><h2>Research Run blocks</h2></div><RunFeed /></section>
   </>;
 }

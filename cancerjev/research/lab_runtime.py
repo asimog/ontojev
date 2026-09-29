@@ -18,6 +18,7 @@ from cancerjev.llm.ontocodex import Director, DirectorError
 from cancerjev.research.laboratory import (
     apply_decision,
     compact_projection,
+    coverage_summaries,
     evidence_summaries,
     json_bytes,
     load_lab,
@@ -81,6 +82,8 @@ def run_block(repository: Repository, artifacts: ArtifactStore, run_id: str,
         timings["preflight_seconds"] = time.monotonic() - started
         projection = compact_projection(state, offers, clock.remaining)
         projection["evidence_summaries"] = evidence_summaries(repository, artifacts, state)
+        projection["coverage_summaries"] = [group.model_dump(mode="json")
+                                            for group in coverage_summaries(repository, artifacts, state)]
         event("LAB_ACQUISITION_PREFLIGHT", "operational", {"offers": projection["offers"]})
         eligible = tuple(offer for offer in offers
                          if offer.expected_bytes <= offer.maximum_bytes
@@ -96,6 +99,17 @@ def run_block(repository: Repository, artifacts: ArtifactStore, run_id: str,
         decision = director.decide(projection, timeout=min(120.0, clock.reserve(1)))
         timings["director_seconds"] = time.monotonic() - started
         clock.reserve(1)
+        if decision.interpretation:
+            from cancerjev.domain.codecs import read_cnv_shard_evidence
+
+            question = next((q for q in state.questions if q.question_id == decision.question_id), None)
+            for identity in decision.interpretation.evidence_ids:
+                row = repository.artifact(identity)
+                if identity not in state.evidence_ids or row is None or row["purpose"] != "cnv-shard-evidence":
+                    raise ValueError("director cited unknown evidence")
+                evidence = read_cnv_shard_evidence(artifacts.read(row["relative_path"], row["sha256"]))
+                if question is None or evidence.project_id != question.project_id:
+                    raise ValueError("interpretation evidence belongs to another cohort")
         result = apply_decision(state, decision, offers)
         artifact = artifacts.publish(f"runs/{run_id}/lab/decision.json", json_bytes({
             "identity": director.identity.model_dump(mode="json"),
@@ -119,6 +133,8 @@ def run_block(repository: Repository, artifacts: ArtifactStore, run_id: str,
             clock.reserve(offer.estimated_seconds)
             started = time.monotonic()
             evidence_ids = acquisition.execute(offer, clock)
+            if not evidence_ids or set(evidence_ids).intersection(state.evidence_ids):
+                raise ValueError("acquisition returned no new evidence")
             timings["acquisition_analysis_seconds"] = time.monotonic() - started
             # Publication through the canonical store is checked before control
             # references it. Model output cannot enter this path.
@@ -130,6 +146,7 @@ def run_block(repository: Repository, artifacts: ArtifactStore, run_id: str,
             result = result.model_copy(update={
                 "evidence_ids": tuple(dict.fromkeys((*result.evidence_ids, *evidence_ids))),
                 "consecutive_no_progress": 0,
+                "operational_state": "READY",
             })
     except DirectorError as exc:
         result = state.model_copy(update={"operational_state": "PROVIDER_UNAVAILABLE",
@@ -150,6 +167,12 @@ def run_block(repository: Repository, artifacts: ArtifactStore, run_id: str,
         result = result.model_copy(update={"operational_state": "NO_PROGRESS"})
     result = next_revision(repository, result, run_id)
     try:
+        coverage = artifacts.publish(f"runs/{run_id}/lab/coverage.json", json_bytes({
+            "method": "CNV_QUERY_COVERAGE_V1", "source_revision": result.revision,
+            "groups": [group.model_dump(mode="json") for group in coverage_summaries(repository, artifacts, result)],
+        }), "application/json", "lab-coverage")
+        repository.register_artifact(coverage, run_id)
+        artifacts.read(coverage.relative_path, coverage.sha256)
         save_lab(repository, artifacts, run_id, result)
     finally:
         started = time.monotonic()

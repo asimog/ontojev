@@ -89,6 +89,16 @@ def test_provider_failure_retains_science_and_stops_repeated_failure(runtime):
         "ONTOCODEX_UNAVAILABLE", "LAB_RAW_CLEANUP", "LAB_PORTFOLIO_REVISED"}
 
 
+def test_rewording_and_reprioritizing_do_not_reset_progress(runtime):
+    block(runtime, ReplayDirector(decision()))
+    for index in range(3):
+        _, result = block(runtime, ReplayDirector(decision(
+            "PRIORITIZE", question_id="q1", priority=70 + index,
+            next_action=f"Review the same evidence again, attempt {index}.")))
+    assert result.operational_state == "NO_PROGRESS"
+    assert result.consecutive_no_progress == 3
+
+
 def test_director_cannot_invent_evidence_or_bypass_preflight():
     state = apply_decision(LabState(), decision())
     with pytest.raises(ValueError, match="unknown evidence"):
@@ -198,6 +208,29 @@ def test_sequential_ephemeral_shards_preserve_evidence_and_reacquisition(runtime
     assert len(restored.evidence_ids) == 2
     first = repository.artifact(restored.evidence_ids[0])
     assert read_cnv_shard_evidence(artifacts.read(first["relative_path"], first["sha256"])) == acquired[0]
+    coverage_row = repository.artifact_at_path(f"runs/{restored.last_run_id}/lab/coverage.json")
+    assert coverage_row is not None
+    coverage = json.loads(artifacts.read(coverage_row["relative_path"], coverage_row["sha256"]))["groups"][0]
+    assert coverage["queried_cases"] == 10
+    assert coverage["cohort_cases"] > 10
+    assert coverage["coverage"] == "PARTIAL"
+    assert set(coverage["evidence_ids"]) == set(restored.evidence_ids)
+    from cancerjev.research.laboratory import coverage_summaries
+
+    duplicate = artifacts.publish(f"runs/{restored.last_run_id}/duplicate.json",
+        artifacts.read(first["relative_path"], first["sha256"]), "application/json", "cnv-shard-evidence")
+    repository.register_artifact(duplicate, restored.last_run_id)
+    with pytest.raises(ValueError, match="overlapping"):
+        coverage_summaries(repository, artifacts, restored.model_copy(update={
+            "evidence_ids": (*restored.evidence_ids, duplicate.artifact_id)}))
+    other = decision().question.model_copy(update={"question_id": "q2", "project_id": "TCGA-LUSC"})
+    _, before = block(runtime, ReplayDirector(decision(question=other)))
+    with pytest.raises(ValueError, match="another cohort"):
+        block(runtime, ReplayDirector(decision("INTERPRET", question_id="q2", interpretation={
+            "question_id": "q2", "evidence_ids": [restored.evidence_ids[0]],
+            "conclusion": "This describes a different cohort.", "uncertainty": ["Unverified."],
+        })))
+    assert load_lab(repository, artifacts) == before
 
 
 @pytest.mark.local_process

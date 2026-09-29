@@ -117,3 +117,27 @@ class LabState(FrozenModel):
         if len(self.evidence_ids) != len(set(self.evidence_ids)):
             raise ValueError("duplicate evidence identity")
         return self
+
+
+class CnvCoverageSummary(FrozenModel):
+    """Query coverage across retained shards, never a callable CNV denominator."""
+
+    source_kind: Literal["DETERMINISTICALLY_DERIVED"] = "DETERMINISTICALLY_DERIVED"
+    project_id: Identifier
+    release: Text
+    spec_hash: Identifier
+    cohort_hash: Identifier
+    evidence_ids: tuple[Identifier, ...]
+    queried_cases: int = Field(ge=0)
+    cohort_cases: int = Field(gt=0)
+    positive_records: int = Field(ge=0)
+    coverage: Literal["PARTIAL", "COMPLETE_POSITIVE_QUERY"]
+    limitation: str = "Query coverage is not CNV callability. Absence is not neutral; partial cohorts cannot establish cohort recurrence."
+
+    @model_validator(mode="after")
+    def validate_coverage(self) -> Self:
+        if self.queried_cases > self.cohort_cases:
+            raise ValueError("queried cases exceed cohort")
+        if (self.coverage == "COMPLETE_POSITIVE_QUERY") != (self.queried_cases == self.cohort_cases):
+            raise ValueError("coverage does not match queried case count")
+        return self
