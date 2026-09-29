@@ -1,154 +1,83 @@
 # OntoJev
 
-OntoJev is an autonomous computational cancer target-discovery system.
+OntoJev is an experimental autonomous computational cancer target-discovery system. Humans bound the lung-cancer domain; OntoCodex proposes research actions and synthesis; Python computes and validates evidence; Jev supplies bounded typed judgments.
 
-It combines harmonized GDC evidence with deterministic, GDC-documented computational methods (preferring established GDAN/TCGA/NCI methods where a primary methodological reference has been adopted), then uses Jev selectively to identify biologically plausible target candidates whose importance may emerge from non-obvious, discordant, multi-modal, or under-ranked genomic patterns.
+The laboratory runtime is connected to the existing Campaign scientific pipeline. Its seven capabilities cover mutation discovery, expression discovery, CNV case shards, CNV merge, canonical state composition, Wide evaluation and Candidate investigation through Stage 8/dossier. The default worker uses this laboratory supervisor. Offline replay reaches a dossier across research runs.
 
-## Current implementation
+This is an implemented bridge, not a completed or scientifically validated autonomous laboratory. Whole mutation/expression lanes and Candidate investigations still need finer resumable units. Offer/retry defects, publication crash windows, engineering automation and live evaluation remain. The remaining sequence is recovery → resumable science → director/Campaign context → engineering → deployment → live evaluation. See the [current code audit](docs/CODE_AUDIT.md) and [implementation plan](docs/IMPLEMENTATION_PLAN.md).
 
-OntoJev now has one canonical autonomous Campaign spine, implemented, production-wired and offline-verified: typed cohort/profile/capability validation → complete-universe mutation discovery → independent expression discovery → complete CNV case-shard scan and terminal merge → deterministic modality union (`MUTATION_EXPRESSION_CNV_UNION_V1`) → one canonical `StatisticalState` per union member → the declared pre-Wide strata boundary (per-stratum quotas, measured ordering) → Wide Jev → Python admission → an autonomous candidate queue that drives every promoted Candidate through Deep Jev, registered deterministic follow-ups, immutable evidence revisions, Stage 8, dossier and the deterministic no-Jev comparison. No operator candidate flag exists on that path.
-
-The durable `program-loop-v2` worker observes the GDC release once per cycle, selects an eligible Campaign by the declared `campaign-selection-v2` policy, refuses to redispatch a completed Campaign whose profile/release/method identity is unchanged, applies bounded exponential retry to failures, holds the research lock only around each cycle, and heartbeats the canonical package version. Storage is SQLite schema 8 with sequential DDL migrations and a read-only `doctor`; dependencies are locked in `uv.lock`; strict mypy covers the explicit production file list in `pyproject.toml`, which must be extended for new modules; CI verifies the production-built frontend and browser path.
-
-Live-verified to date: the individual mutation, expression, CNV-shard, reconciliation and Jev question-set captures recorded in the implementation plan. **Not yet scientifically validated:** `LUAD_CAMPAIGN_V1` remains `EXPERIMENTAL`; a full live Campaign with real Wide/Deep Jev and dossier review has not completed, and readiness is not implied by green software tests. `GDC_FAST_SEARCH` remains available only as the explicitly labelled researcher/comparator path.
-
-## Running it
+## Current architecture
 
 ```text
-python -m cancerjev probe --live                 # bounded anonymous GDC contract capture
-python -m cancerjev capability                   # typed cohort capability probe
-python -m cancerjev run --live [--jev]           # researcher/comparator bounded sweep
-python -m cancerjev program                      # one durable autonomous program cycle
-python -m cancerjev worker --live                # long-running autonomous worker loop
-python -m cancerjev doctor                       # read-only storage integrity report
+Human domain boundary
+  → OntoCodex question / validated capability choice
+  → bounded Research Run / canonical Campaign operation
+  → GDC parsing / deterministic measurements / StatisticalState
+  → Wide Jev / Candidate / EvidenceState / Deep and registered follow-ups
+  → Stage 8 / dossier / next laboratory decision
 ```
 
-Offline verification: `python -m ruff check cancerjev apps tests`, `python -m mypy`, `python -m pytest`.
-Frontend: `cd apps/web && npm ci && npm run typecheck && npm run build`.
-Deployment, health/readiness, backup/restore and the localhost-only API posture are documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+SQLite, events and immutable artifacts retain scientific state and provenance. Lab portfolio revisions hold questions, interpretations and evidence references; they do not replace StatisticalState or EvidenceState. Runs use a supervised child deadline with a normal 600-second allowance and finalization reserve. Full parent cleanup/finalization deadline guarantees remain an audit item.
 
-## Research question
+Missing is not negative; hypotheses and research-control judgments are not biological evidence. Only open-access data may be acquired. A completed computational dossier is not a validated therapeutic target.
 
-> Can Jev operating over validated, GDAN-style computational-genomics evidence identify biologically plausible cancer target candidates that established single-method or single-modality rankings would under-prioritize?
+## Local setup
 
-## Claim boundary
+Python 3.12+ and the Codex CLI are required. The Dockerfile pins its CLI version; use that version when reproducing the image's harness behavior.
 
-OntoJev discovers and investigates **computational target candidates**.
-
-```text
-computational target candidate
-!= experimentally validated target
-!= therapeutically validated target
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -e '.[dev]'
+Copy-Item .env.local.example .env.local
 ```
 
-Functional, therapeutic, safety, and clinical validation require additional evidence outside the computational discovery result. No functional or external axis is adopted today: every evaluated source (DepMap CRISPR, Sanger CGC, targetability resources, independent-cohort replication) is deferred with its access/licensing reason in [docs/FUNCTIONAL_SOURCES.md](docs/FUNCTIONAL_SOURCES.md), and `FUNCTIONALLY_SUPPORTED` remains unattainable without an adopted contract.
+Set server-side `OPENROUTER_API_KEY` for the director and `TYPESAFE_API_KEY` for scientific Jev. The director uses Codex CLI → OpenRouter with `CANCERJEV_LLM_MODEL` (default in `cancerjev/config.py`), optionally overridden by `ONTOCODEX_MODEL`. `ONTOCODEX_EXECUTABLE` selects the CLI. No OpenAI key is required by this configured path. Research-control Jev shadows are optional and off by default.
 
-## Target architecture
+Run bounded research blocks:
 
-```text
-GDC release/source context
-→ CohortSpec / ResearchSpec / CampaignProfile
-→ cohort capability discovery
-→ complete scientific gene Universe
-→ deterministic computational genomics
-→ deterministic/statistical evidence
-→ optional Arm Jev
-→ deterministic candidate union
-→ StatisticalState
-→ Wide Jev
-→ Python admission
-→ Candidate
-→ EvidenceState
-→ Deep Jev
-→ Python ActionPolicy / next-move policy
-→ deterministic follow-up or bounded hypotheses + Jev critique
-→ evidence revision
-→ Stage 8
-→ FinalCandidateResult
-→ dossier
-→ Jev-vs-no-Jev comparison
-→ candidate complete
-→ campaign complete
-→ CampaignSelectionPolicy
-→ next campaign or idle
+```powershell
+.venv\Scripts\python.exe -m cancerjev lab --root .lab --max-runs 3
 ```
 
-The central control rule is:
+The lab command defaults to `.lab`; the continuous worker and API use `CANCERJEV_DATA_DIR` (otherwise `./data`). Set one absolute root when using them together:
 
-> **Jev judges. Python decides. Python executes.**
-
-## Target scientific operating model
-
-OntoJev separates six scales:
-
-1. **Program** — the long-running system-owned autonomous research program.
-2. **Campaign** — one coherent cohort + one pinned GDC release/source context + one versioned method profile.
-3. **Universe** — every scientifically eligible gene for the Campaign.
-4. **Shard** — an operational subset used only for bounded acquisition or computation.
-5. **Target state** — one integrated `StatisticalState` evaluated by Wide Jev.
-6. **Investigation** — one admitted Candidate with its own bounded immutable `EvidenceState` chain.
-
-Operational batching must never redefine the scientific population.
-
-## Scientific data model
-
-OntoJev uses:
-
-- typed GDC API/analysis endpoints where they answer the scientific question directly;
-- selected open harmonized GDC files via `gdc-client` where file-level data are preferable;
-- current GDC workflow documentation to interpret how measurements were produced;
-- `gdcdatamodel2` as the code-level GDC data-model authority;
-- established GDAN/TCGA/NCI methods where a primary methodological reference has been adopted, before ad hoc alternatives.
-
-Raw BAM/FASTQ/WGS acquisition is not the default. Scientific completeness does not require mirroring GDC locally.
-
-## Jev roles
-
-### Arm Jev
-
-Optional, per modality, and only for `JEV_REVIEW` cases where deterministic/statistical analysis leaves a genuine semantic question.
-
-### Wide Jev
-
-The principal integrated semantic layer over canonical `StatisticalState`.
-
-### Deep Jev
-
-The candidate-investigation semantic layer over immutable `EvidenceState` revisions.
-
-### Hypothesis Jev
-
-Critiques bounded LLM-generated hypotheses. Hypotheses are never evidence.
-
-## Planned evidence levels
-
-```text
-MEASURED
-→ DESCRIPTIVE_CANDIDATE
-→ STATISTICALLY_SUPPORTED
-→ INTERNALLY_REPLICATED
-→ EXTERNALLY_REPLICATED
-→ FUNCTIONALLY_SUPPORTED
+```powershell
+$env:CANCERJEV_DATA_DIR = 'C:\dev\ontojev\.lab'
+.venv\Scripts\python.exe -m cancerjev worker --live
+# In another terminal with the same environment:
+.venv\Scripts\python.exe -m uvicorn apps.api.main:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-Jev may affect prioritization. It may never promote scientific evidence level.
+For the read-only Observatory, run `npm ci` and `npm run dev` in `apps/web`; configure `NEXT_PUBLIC_CANCERJEV_API_URL` for the API and open `/lab`. The API has no authentication boundary. Follow the [deployment runbook](docs/DEPLOYMENT.md) for durable storage, private/trusted access and worker health.
 
-## Campaigns
+Legacy `program` and explicit Campaign/researcher commands still exist. `program` can dispatch autonomous work; it is not just diagnostics and does not inherit the lab supervisor automatically. Their lifecycle convergence is M3.
 
-TCGA-LUAD is the first intended validation profile. The current LUAD ResearchSpec does not establish genome-wide discovery or autonomous scientific readiness.
+## Verification
 
-Core scientific code must remain cancer-agnostic. Cross-cancer pooling requires an explicit comparability contract.
+```powershell
+.venv\Scripts\python.exe -m ruff check .
+.venv\Scripts\python.exe -m mypy
+.venv\Scripts\python.exe -m tests.repository_facts check
+.venv\Scripts\python.exe -m pytest
+```
+
+For frontend changes, run `npm run typecheck` and `npm run build` in `apps/web`. Offline replay uses fixture/stub providers; it proves executable integration, not live scientific validity. The audit records verification provenance and distinguishes committed code from pre-existing local changes.
 
 ## Documentation
 
-- [`docs/PRODUCT_SCOPE.md`](docs/PRODUCT_SCOPE.md) — product definition, scope and claim boundaries.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — system and scientific architecture.
-- [`docs/SCIENTIFIC_INVARIANTS.md`](docs/SCIENTIFIC_INVARIANTS.md) — hard scientific and control rules.
-- [`docs/DATA_STRATEGY.md`](docs/DATA_STRATEGY.md) — GDC source, sharding, acquisition and provenance rules.
-- [`docs/JEV_DESIGN.md`](docs/JEV_DESIGN.md) — Arm, Wide, Deep and hypothesis Jev responsibilities.
-- [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) — current status plus the historical bounded implementation units.
-- [`docs/TYPESAFE_DECISIONS.md`](docs/TYPESAFE_DECISIONS.md) — TypeSafe/Jev capability posture, including deferred Arm Jev.
-- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — supported operation: processes, data directory, health, backup/restore.
-- [`docs/REPOSITORY_FACTS.md`](docs/REPOSITORY_FACTS.md) — generated schema, policy, projection and action identities.
+| Document | Purpose |
+|---|---|
+| [Architecture](docs/ARCHITECTURE.md) | Current owners and scientific/control boundaries |
+| [Laboratory](docs/LABORATORY.md) | Run behavior, configuration and continuation limits |
+| [Code audit](docs/CODE_AUDIT.md) | Current findings and evidence limits |
+| [Implementation plan](docs/IMPLEMENTATION_PLAN.md) | Single active, dependency-ordered roadmap |
+| [Deployment](docs/DEPLOYMENT.md) | Processes, storage, health and recovery |
+| [Scientific invariants](docs/SCIENTIFIC_INVARIANTS.md) | Required scientific guarantees |
+| [Data strategy](docs/DATA_STRATEGY.md) | Source/method and acquisition contracts |
+| [Jev design](docs/JEV_DESIGN.md) / [decisions](docs/JEV_DECISIONS.md) | Judgment roles and evaluation boundaries |
+| [Product scope](docs/PRODUCT_SCOPE.md) | Intended product and claim limits |
+| [Calibration](docs/CALIBRATION_DESIGN.md) / [synthetic rehearsal](docs/JEV_REVIEW_REHEARSAL.md) | Evaluation protocol and explicitly limited rehearsal evidence |
+| [Pathway sources](docs/PATHWAY_SOURCES.md) / [functional sources](docs/FUNCTIONAL_SOURCES.md) | Source adoption and evidence-role decisions |
+| [Repository facts](docs/REPOSITORY_FACTS.md) | Generated schema, policy and action identities |
 
-Keep these documents canonical and compact. Git history is the archive.
+Older audit/plan snapshots live in Git history. Scientific design documents describe requirements where explicitly labelled; they do not certify implementation or validation.

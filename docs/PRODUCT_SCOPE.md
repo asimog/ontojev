@@ -1,6 +1,6 @@
 # OntoJev Product Scope
 
-> Status: target design and requirements, not a claim that every capability exists. For the inspected current implementation and remaining work, see [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md). Mutable versions remain in [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md).
+> Status: target design and requirements, not a claim that every capability exists. For current implementation findings, see the [code audit](CODE_AUDIT.md); remaining work is in the [implementation plan](IMPLEMENTATION_PLAN.md). Mutable versions remain in [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md).
 
 ## 1. Product definition
 
@@ -8,7 +8,7 @@ OntoJev is an autonomous computational cancer target-discovery system.
 
 Its purpose is to combine validated cancer-genomic measurements, established computational-genomics methods, multi-modal evidence integration, and selective Jev semantic judgment to identify target candidates that conventional single-method or single-modality rankings may under-prioritize.
 
-The system-owned autonomous research program is the primary operating mode.
+The system-owned autonomous research program is the primary operating mode. The human supplies the lung-cancer domain and permitted GDC/GDAN evidence boundary; the human need not select genes, Candidates, modalities, statistical tests, shard sizes, data volumes, hypotheses or next experiments. OntoCodex owns those scientific proposals within registered capabilities and Python-enforced constraints.
 
 An optional Researcher Lab may reuse the same scientific engine in isolated researcher-owned runs, but researcher state must never influence autonomous runtime state.
 
@@ -40,8 +40,12 @@ computational target candidate
 ## 4. Primary product mode
 
 ```text
-AutonomousProgram
-→ bounded Campaign
+Lung-cancer domain
+→ Program / ResearchPortfolio
+→ ResearchQuestion
+→ Campaign
+→ bounded Research Runs
+→ scientific-state revisions
 → target discovery
 → candidate investigations
 → Stage 8 dossiers
@@ -52,7 +56,11 @@ AutonomousProgram
 
 The Program may continue across Campaigns.
 
-Each Campaign remains bounded, versioned, attributable, reproducible, and immutable after completion.
+Each Research Run normally lasts at most ten minutes; a Campaign may span many runs. Research broadly. Execute narrowly. Each Campaign remains versioned, attributable, reproducible, and immutable after completion.
+
+Implemented laboratory scope includes seven adapters into the canonical mutation/expression/CNV, StatisticalState, Wide, Candidate and Stage 8/dossier spine. Replay reaches a dossier across runs. Whole-lane/whole-investigation attempts, recovery defects, sparse director context and capability engineering remain unfinished. See the [current audit](CODE_AUDIT.md) and [active milestones](IMPLEMENTATION_PLAN.md); the hierarchy below is the target lifecycle, not proof that legacy Program and laboratory portfolio records are fully reconciled.
+
+The completed dossier is the external-review boundary. The autonomous loop may proceed to the next target without mandatory human scientific approval.
 
 ## 5. Campaign definition
 
@@ -177,7 +185,7 @@ The following are outside the default architecture unless separately justified:
 - microservice decomposition;
 - LLM-generated GDC queries;
 - Jev-owned action selection;
-- LLM-owned action selection;
+- unvalidated model execution or model-created numerical evidence;
 - researcher approval loops for autonomous runtime.
 
 ## 11. Researcher Lab

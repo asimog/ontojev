@@ -1,6 +1,8 @@
-# Calibration and evaluation design (preregistered, Gate 6)
+# Calibration and evaluation design
 
-Status at HEAD: **records exist for the mutation family only**. `python -m cancerjev calibrate` computes the declared mutation metrics on the frozen DR46 reconciliation panel (17-gene complete occurrence captures) with a deterministic gene bootstrap (seed `20260927`, 200 replicates) and writes strict records to `data/calibration/`; the four mutation thresholds report `CALIBRATED` at the current policy version, the other 17 thresholds stay `UNCALIBRATED` until their declared corpus/metric is computed (the Wide admission family additionally requires blinded held-out labels). `EvidenceLevel.STATISTICALLY_SUPPORTED` stays blocked until records exist for a selected claim family. Status semantics are machine-checked:
+> Gate/phase numbers below refer to the historical repair plan. This documentation pass did not rerun calibration or inspect deployed records. New evaluation work belongs to [M6](IMPLEMENTATION_PLAN.md); validate record and policy identities before making a current calibration claim.
+
+Recorded calibration snapshot (historical repair program): **records exist for the mutation family only**. `python -m cancerjev calibrate` computes the declared mutation metrics on the frozen DR46 reconciliation panel (17-gene complete occurrence captures) with a deterministic gene bootstrap (seed `20260927`, 200 replicates) and writes strict records to `data/calibration/`; the four mutation thresholds report `CALIBRATED` at the current policy version, the other 17 thresholds stay `UNCALIBRATED` until their declared corpus/metric is computed (the Wide admission family additionally requires blinded held-out labels). `EvidenceLevel.STATISTICALLY_SUPPORTED` stays blocked until records exist for a selected claim family. Status semantics are machine-checked:
 
 - `UNCALIBRATED` — no record for this threshold exists.
 - `CALIBRATED` — a schema-valid record for the threshold's **current** policy

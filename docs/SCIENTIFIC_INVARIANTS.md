@@ -1,31 +1,16 @@
 # OntoJev Scientific Invariants
 
-> Status: target design and requirements, not a claim that every capability exists. For the inspected current implementation and remaining work, see [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md). Mutable versions remain in [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md).
+> Status: target design and requirements, not a claim that every capability exists. For current implementation findings, see the [code audit](CODE_AUDIT.md); remaining work is in the [implementation plan](IMPLEMENTATION_PLAN.md). Mutable versions remain in [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md).
 
 This document contains hard scientific and control rules. These rules are intended to remain stable even as implementation details and version numbers change.
 
 ## 1. Control ownership
 
-```text
-Jev judges.
-Python decides.
-Python executes.
-```
+The human bounds the permitted domain and access/resource constraints. OntoCodex directs scientific questions, priorities and synthesis. Jev supplies bounded typed semantic judgments; calibration and incremental value require evidence. Python owns deterministic computation, eligibility checks, budget enforcement and execution.
 
-Jev provides semantic judgment only.
+OntoCodex may propose a registered next action. Python must validate its scope, inputs, provenance, readiness and remaining budget before execution. Existing Wide/admission and next-move policies remain deterministic enforcement boundaries; they are not the complete scientific-director architecture.
 
-Python owns:
-
-```text
-candidate admission
-ranking
-action eligibility
-action selection
-action execution
-iteration
-stopping
-campaign progression
-```
+Research-control Jev affects trajectory and is not biological support. Scientific-evaluation Jev is versioned interpretation, distinct from observed and deterministically derived evidence. Preserve OntoCodex scientific judgments and external literature context as separately attributable records.
 
 ## 2. Measurement before interpretation
 
@@ -42,7 +27,7 @@ GDC source
 Never:
 
 ```text
-raw genomics → Jev
+uncontrolled raw genomics → Jev / OntoCodex
 ```
 
 Raw provider JSON, genomic matrices, event rows, and unparsed files do not become semantic evidence directly.
@@ -101,7 +86,11 @@ Universe != Shard
 
 Never use batching as scientific sampling.
 
-All scientifically required Shards must reach terminal status before a global method finalizes.
+A Research Run is the atomic execution unit, normally at most ten minutes. Campaigns may span many runs. Preflight significant acquisition; refuse work that cannot fit, persist continuation state and resume in another run.
+
+Successful raw shards are deleted only after derived evidence and reacquisition provenance are durably published and read back. Failed/interrupted workspace cleanup is recoverable. Raw workspace must not accumulate indefinitely.
+
+All scientifically required Shards must reach terminal status before a global method finalizes. Query coverage is not assay callability; partial coverage stays partial.
 
 Streaming sufficient statistics are permitted only where mathematically equivalent to the declared complete-data calculation.
 
@@ -247,7 +236,7 @@ stale revision
 invalid applicability
 ```
 
-A semantic failure may never silently retain, admit, advance, or complete a target.
+A semantic failure may never silently retain, admit, advance, or complete a target. A research-control failure may use a declared direct-OntoCodex or deterministic fallback, recorded as a fallback rather than a Jev scientific answer. Invalid director output cannot create measured evidence.
 
 ## 15. Pathway evidence
 

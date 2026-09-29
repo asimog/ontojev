@@ -4,25 +4,18 @@ OntoJev is an autonomous computational cancer target-discovery system.
 
 ## Core rules
 
-```text
-GDC evidence
-→ strict parsing
-→ validated deterministic genomics
-→ typed evidence
-→ Jev
-```
-
-- Jev judges.
-- Python decides and executes.
-- LLM hypotheses are not evidence.
-- Never infer missing = negative.
-- Never send raw genomics to Jev.
-- Prefer established GDC/GDAN/TCGA/NCI methods over ad hoc methods.
-- Core scientific code must be cancer-agnostic.
-- LUAD is a campaign profile, not the architecture.
+- Human bounds the lung-cancer domain; OntoCodex directs research and synthesis.
+- Python computes measurements, validates proposed actions and executes within hard limits.
+- Jev supplies bounded typed judgments, never measurements. Research-control judgments are not biological evidence; consequential uses require independent evaluation.
+- GDC/GDAN evidence → strict parsing → validated deterministic methods → typed evidence → bounded judgment/synthesis → immutable scientific revisions.
+- Missing != negative. Hypothesis != evidence. Never send uncontrolled raw genomics to Jev or OntoCodex.
+- Prefer established GDC/GDAN/TCGA/NCI methods. Core science stays cancer-agnostic; LUAD is a Campaign profile.
+- Preserve the existing Program/Campaign/StatisticalState/Candidate/EvidenceState/Stage 8/dossier spine; no parallel scientific-state architecture.
+- Research Runs are bounded execution units, normally <=10 minutes. Campaigns may span many runs.
+- Persist and verify derived evidence plus reacquisition provenance before successful raw-shard cleanup; recover failed/interrupted workspace cleanup.
 - Researcher runs cannot influence autonomous state at runtime.
-- No generic agent framework, DAG engine, microservices or LLM-generated GDC queries.
-- Verify every implementation unit before committing: run `python -m ruff check .`, strict `mypy` from the project environment, and the full default offline `pytest` suite; use focused fixture/replay checks before any live provider call.
+- No generic agent framework, DAG engine, microservices or model-generated GDC queries.
+- Verify each implementation unit before commit: project-environment `python -m ruff check .`, strict `python -m mypy`, `python -m tests.repository_facts check`, and full default offline `python -m pytest`; use focused fixture/replay checks before live calls. Update affected canonical docs with each milestone.
 
 ## Operational limits
 

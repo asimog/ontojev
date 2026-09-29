@@ -1,194 +1,53 @@
-> Runtime update: the worker now enters the OntoCodex lab, and the Docker image installs and checks the pinned Codex CLI. See [LAB_CAMPAIGN_BRIDGE.md](LAB_CAMPAIGN_BRIDGE.md) for current execution and deployment limits. Automated capability-gap engineering is not enabled.
+# Deployment and runbook
 
-# OntoJev Deployment and Runbook
+Current code posture, 2026-09-29. This document does not certify a live Railway/Vercel deployment. Historical host names and operator timing tables have been removed from the active runbook; they remain in Git history.
 
-> One application architecture: API, web and worker are three processes over one
-> persistent data directory. There are no microservices, no external scheduler and
-> no distributed queue. The API is a localhost/private/trusted read layer and ships
-> with no authentication; do not expose it publicly without a deliberate,
-> separately implemented authenticated boundary.
+## Processes and data root
 
-## Components
-
-| Process | Command | Notes |
+| Process | Command | Behavior |
 |---|---|---|
-| API | `python -m uvicorn apps.api.main:create_app --factory --host 127.0.0.1 --port 8000` | Read-only FastAPI access to persisted runs, states, evidence, dossiers and system status. |
-| Web | `cd apps/web && npm ci && npm run build && npm run start` | Next.js served on port 3000; `NEXT_PUBLIC_CANCERJEV_API_URL` points at the API. |
-| Worker | `python -m cancerjev worker --live` | Long-running autonomous program loop; owns the research lock only around each cycle. |
-| One-shot program cycle | `python -m cancerjev program` | One durable cycle: observe release, select, dispatch, persist, heartbeat. |
-| Doctor | `python -m cancerjev doctor [--prune-stale-temp]` | Read-only integrity report; optional bounded temp cleanup. |
-| Calibrate | `python -m cancerjev calibrate [--corpus <dir>] [--out <dir>]` | Operator-only: writes preregistered calibration records computed on a frozen corpus slice (default: the DR46 reconciliation panel) to `<data-dir>/calibration`; the runtime never writes records. |
+| Bounded lab | `python -m cancerjev lab --root <absolute-root> --max-runs 3` | One to 100 supervised blocks; default root `.lab`. |
+| Continuous worker | `python -m cancerjev worker --live` | Repeated calls to the lab supervisor; uses configured data root. |
+| API | `python -m uvicorn apps.api.main:create_app --factory --host 127.0.0.1 --port 8000` | Read-only storage views. |
+| Web | `npm ci`, `npm run build`, `npm run start` in `apps/web` | Observatory; API URL configured at build time. |
+| Doctor | `python -m cancerjev doctor` | Storage integrity report; inspect before recovery/restore claims. |
+| Legacy Program | `python -m cancerjev program` | Explicit autonomous legacy cycle; not read-only diagnostics or a bounded lab run. |
 
-Researcher/comparator work stays on the explicit path: `python -m cancerjev run --live [--jev] [--researcher ...]`.
+Set `CANCERJEV_DATA_DIR` to the same absolute durable root for worker/API/doctor. Pass that root explicitly to `lab --root`. Only one research writer may own it. Preserve SQLite, registered artifacts, portfolio revisions, events and provenance together. `shards/<run>/` is ephemeral raw workspace; its deletion is recorded and cleanup retried after interruption.
 
-## Data directory
+## Configuration
 
-`CANCERJEV_DATA_DIR` (default `./data`) owns everything persistent:
+Use `.env.local.example` for supported settings. Local `.env.local` is a convenience; process environment wins, and `CANCERJEV_NO_DOTENV=1` disables local loading. Set `OPENROUTER_API_KEY` for the director and `TYPESAFE_API_KEY` for scientific Jev, server-side only. No GDC credentials or controlled-access data are allowed.
 
-- `cancerjev.db` (+ `-wal`, `-shm`) — SQLite schema 8: runs, events, artifacts, scientific rows;
-- `artifacts/...` — immutable content-addressed evidence files referenced by rows;
-- `research.lock` — exclusive ownership lock for research-workspace mutation;
-- `program/state/...` — append-only durable program-state artifacts (operational);
-- `gdc_cache/...` — disposable acquisition cache (never evidence).
+The director uses Codex CLI → OpenRouter. `CANCERJEV_LLM_MODEL` supplies its model unless `ONTOCODEX_MODEL` overrides it. `ONTOCODEX_EXECUTABLE` and `ONTOCODEX_BASE_URL` configure the harness. Research-control Jev shadows default off. Keep secrets out of browser environment, artifacts and image layers.
 
-Authoritative evidence = registered artifacts + `run_events` + scientific tables.
-Disposable = `gdc_cache`, temp files, report outputs. The doctor distinguishes
-them; canonical outputs are never deleted by maintenance.
+For web/API integration set `NEXT_PUBLIC_CANCERJEV_API_URL` at frontend build time and `CANCERJEV_WEB_ORIGIN` to the intended browser origin. The API has no authentication boundary; deploy it privately/trusted or supply an authenticated boundary appropriate to the exposed data.
 
-## Environment and secrets
+## Container and persistent hosting
 
-Copy `.env.local.example` to `.env.local` (gitignored, loaded automatically).
-Real process environment variables always win; set `CANCERJEV_NO_DOTENV=1` to
-disable loading. Provider keys (`TYPESAFE_API_KEY`, `OPENROUTER_API_KEY`) are
-server-side only and are never logged or persisted. Only open-access GDC data is
-ever used; the system never accepts GDC credentials.
+The Dockerfile installs/checks pinned Codex CLI, Node, Git and Python application dependencies. It starts `deploy.serve`, which optionally seeds synthetic data, optionally starts `worker --live`, then serves the API. The image is a runtime image, not an engineering checkout with the test suite.
 
-Effective controls and their hard caps are listed in `.env.local.example`; retired
-`CANCERJEV_*` knobs are inert and must not be set.
+Set `CANCERJEV_DATA_DIR=/data` and mount a persistent volume at `/data`. Set `CANCERJEV_NO_DOTENV=1`. `CANCERJEV_RUN_WORKER=1` enables the laboratory worker; `0` leaves the API-only posture. `CANCERJEV_SEED_DEMO=1` requests labelled synthetic seeding; leave it off for a real research volume. Do not infer that the lab idles solely because a legacy Campaign profile is EXPERIMENTAL: it follows its own registered offers.
 
-## Startup and restart
+`railway.json` describes local deployment configuration; a successful image build does not prove volume provisioning, provider connectivity or live service readiness. Earlier bridge verification built the image and exercised a loopback fake provider. This documentation pass does not redeploy it.
 
-1. Start the API first; it bootstraps the schema (with backup + migration when an
-   older supported schema is found) and serves `/health` and `/api/system`.
-2. Start the web process.
-3. Start the worker; it acquires `research.lock` only for the duration of each
-   cycle. A second research process is refused with an ownership error, not a wait.
-4. Restart order: stop worker → stop web → stop API → start in the order above.
-   An interrupted run is preserved and stopped by crash recovery
-   (`RECOVERY` log line) on the next owner.
+## Startup, health and recovery
 
-Program state survives restarts: a completed campaign is not redispatched until
-the observed release, the method environment or the profile payload changes.
+1. Configure the durable root and provider environment; run the integrity report for an existing root.
+2. Start API/web and one worker, or the configured combined container.
+3. Check `/health`, `/api/system`, worker heartbeat and actual lab run outcomes separately.
+4. On restart, retain the same root. The supervisor acquires ownership, terminalizes interrupted runs and retries workspace cleanup before new work.
 
-## Health and readiness
+A green `/health` proves API/storage reachability, not active research or scientific validity. `deploy.serve` currently does not monitor/restart its worker child after startup. M5 must address a healthy API with a dead worker. The supervisor bounds the research child but does not independently bound slow parent cleanup/finalization inside the nominal 600 seconds.
 
-- `GET /health` — process + schema reachability.
-- `GET /api/system` — schema/policy versions, provider key presence, active run,
-  worker heartbeat and freshness (fresh only while a run is active and the
-  heartbeat is within 60 s), budget defaults, cache counts.
-
-A green `/health` means the API can read storage. It does not mean an autonomous
-campaign ran or that LUAD is scientifically validated: `LUAD_CAMPAIGN_V1` remains
-`EXPERIMENTAL` until a full live campaign with real Jev completes and is reviewed.
-
-## Managed production deployment (Railway API, Vercel web)
-
-Live deployment of record: Railway service `ontojev-api` (project `ontojev-api`)
-with a persistent volume mounted at `/data`, and Vercel project `ontojev-web`
-aliased at `https://ontojev-web.vercel.app`. The same architecture is used as
-locally; only the process set is reduced.
-
-Railway (from the repository root):
-
-- build: `Dockerfile` + `railway.json` (healthcheck `/health`, one replica);
-- **a volume is mandatory**: `/data` is the only durable filesystem. Without it
-  every redeploy loses the database and artifacts (verified the hard way);
-- variables: `CANCERJEV_DATA_DIR=/data`, `CANCERJEV_NO_DOTENV=1`,
-  `CANCERJEV_WEB_ORIGIN=https://ontojev-web.vercel.app`, provider keys
-  (`TYPESAFE_API_KEY`, `OPENROUTER_API_KEY`) as encrypted service variables —
-  never in the image or the repository;
-- `CANCERJEV_RUN_WORKER=0` in the demo posture: with `LUAD_CAMPAIGN_V1` still
-  `EXPERIMENTAL` the worker can only record `PROGRAM_IDLE`, which is noise rather
-  than production. Enable it only after a profile is deliberately promoted;
-- `CANCERJEV_SEED_DEMO=0` once real runs exist; the synthetic seed is only for a
-  first boot with an empty volume.
-
-Operating real bounded work on the deployment (all open-access, anonymous):
-
-```text
-railway ssh -s <service> "python -m cancerjev doctor"
-railway ssh -s <service> "python -m cancerjev capability"
-railway ssh -s <service> "tmux new-session -d -s cnv0 'python -m cancerjev discover-cnv --live --case-shard 0 > /data/cnv-shard0.log 2>&1'"
-railway ssh -s <service> "tmux new-session -d -s jev0 'python -m cancerjev run --live --jev --researcher --deep-candidate TP53 --deep-followup --deep-hypotheses > /data/live-deep.log 2>&1'"
-railway ssh -s <service> "tmux new-session -d -s validation 'python -m cancerjev campaign --validation > /data/validation-campaign.log 2>&1'"
-```
-
-The `campaign --validation` route runs the identical canonical spine for the
-EXPERIMENTAL LUAD profile under `VALIDATION_RUN` ownership: it cannot be selected
-by the Program, reports `readiness_effect=NONE`, and produces the live
-Wide/Deep Jev evidence and dossier an explicit promotion decision reviews. It is
-bounded by the declared `gdc-campaign-v1` Campaign budget (25,000 requests /
-4 GiB, shared by every lane and follow-up) and requires the `TYPESAFE_API_KEY`
-variable; a missing key fails closed before any work.
-
-For the bounded per-shard verification the operator processes one declared
-8-case shard per process (`discover-cnv --live --case-shard N
---case-shard-size 8`; 74 shards over the 585-case frame, each process bounded
-end-to-end ≈4–10 min), then merges every shard (`cnv-merge --shards 74
---case-shard-size 8` with one `--source-run` per shard in shard order). The
-merge fails closed unless every declared shard exists; there is no shard-count
-cap. The full canonical Campaign remains the only route that produces the
-union and Wide/Deep/Stage 8 artifacts, and it cannot be chunked into per-shard
-processes.
-
-Once every declared shard is merged, the union/admission spine continues without
-re-acquiring lane evidence:
-
-```
-python -m cancerjev campaign --validation \
-  --resume-mutation-run <mutation-source-run> \
-  --resume-expression-run <expression-source-run> \
-  --resume-cnv-run <merge-run>
-```
-
-The continuation consumes the published mutation, expression and merged CNV
-results of terminal runs; spec, cohort, project and release identities must
-agree, and the merged CNV result must cover every declared shard exactly once.
-It records the consumed artifact ids/hashes in an `EVIDENCE_RESUMED` event and
-runs the same union, pre-Wide selection, Wide/Deep Jev, Stage 8 and dossier
-stages under a new `VALIDATION_RUN`. It re-acquires no lane evidence and cannot
-run under autonomous activation.
-
-Long runs must be started detached (tmux) with output under `/data`; a bare
-SSH command dies with the client and leaves the run `RUNNING` until crash
-recovery. `tmux` is not baked into the image: `apt-get update` then
-`apt-get install -y tmux` once per container generation.
-
-Observed production costs (Data Release 46.0, 2026-08-10; operator-recorded from a
-researcher run on that date, not reproducible from this worktree — the volume, date
-and run ids are not inspectable locally):
-
-| Operation | Requests | Bytes | Jev calls | Notes |
-|---|---|---|---|---|
-| Cohort capability probe | 3 | 3.3 KB | 0 | status + project + one facet aggregate |
-| CNV case shard 0 (25 cases) | 817 | 107 MB | 0 | one shard of the cohort frame; the full cohort needs every shard |
-| Live researcher sweep + Wide/Deep Jev + dossier | 88 | ~7 MB | 13 | 10 states, 1 candidate (TP53), 1 LLM hypothesis call, 1 dossier |
-
-Vercel (from `apps/web`): framework preset Next.js, production environment
-variable `NEXT_PUBLIC_CANCERJEV_API_URL=https://<railway-domain>` (required at
-build time), and nothing else. The browser origin must match the API
-`CANCERJEV_WEB_ORIGIN` exactly.
-
-This posture exposes a read-only API with **no authentication**. That is
-deliberate for a demonstration; replace it with an authenticated boundary before
-exposing real research data, enabling the worker, or promoting a campaign
-profile.
+Recovery is also not yet scientific-operation reconciliation: a crash between canonical writes, receipt and portfolio can leave unattached outputs. Investigate those artifacts before assuming a retry is harmless; M1 supplies the durable reconciliation protocol. `STOPPED`/`NO_PROGRESS` prevent further lab dispatch; do not manually edit immutable portfolio JSON to restart it.
 
 ## Backup and restore
 
-Back up as one consistency unit:
+Stop research writers and the API/container before copying storage so SQLite and artifacts form a consistent snapshot. Preserve the whole durable root and relative paths, including the database and any WAL/SHM files present. Restore to an isolated root, point API/doctor at it, inspect integrity and ownership/recovery status, then enable exactly one writer. Do not remove canonical evidence to repair a cache or raw-workspace issue.
 
-1. Stop the worker (or accept that a running cycle is interrupted and recovered).
-2. Copy `cancerjev.db` plus `cancerjev.db-wal`/`-shm` if present, and the
-   `artifacts/` tree; keep the relative layout.
-3. Restore by placing the files back and starting the API, which verifies the
-   schema version and fails closed on unsupported or future versions.
-4. Schema upgrades create `cancerjev.db.backup-v<old>-<timestamp>` automatically
-   before any migration mutation; keep that file until the upgrade is verified.
+## Explicit validation and legacy commands
 
-Run `python -m cancerjev doctor` after a restore: it reports missing or
-unregistered artifacts, hash mismatches, stale temp files, schema problems,
-stale ownership markers and disk-space concerns without modifying evidence.
+`campaign --validation` is the existing explicit validation-owned scientific path; it does not establish autonomous readiness or automatically promote a profile. Researcher/comparator commands remain isolated from autonomous consumption. They do not acquire the lab's child deadline merely by sharing modules. Use CLI `--help` and code-defined budgets for exact supported options; historical live populations, shard counts and costs are not current defaults.
 
-## Limits and fail-closed behavior
-
-- GDC budget policy is declared in `cancerjev/gdc/budget.py`; allowances grow
-  adaptively within declared caps and an exhausted budget reports incomplete or
-  unavailable, never a smaller population labelled complete.
-- A run that fails reaches `FAILED`/`STOPPED` in the same invocation; crash
-  recovery only handles processes that died without reaching either state.
-- Wide evaluation is bounded by `pre-wide-policy-v2`: the complete union stays
-  persisted, a cut allocates the ceiling over declared strata (mutation,
-  expression, cnv, unattributed) with per-stratum quotas, is resolved
-  deterministically by measured ordering then `state_hash`, and records every
-  excluded state with its stratum and reason.
+Full acceptance requires M1 recovery, M2 bounded continuation and M5 volume/worker failure tests, followed by declared live evidence and independent scientific evaluation in M6. See the [audit](CODE_AUDIT.md) and [plan](IMPLEMENTATION_PLAN.md).

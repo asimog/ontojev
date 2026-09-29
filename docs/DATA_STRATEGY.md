@@ -1,12 +1,39 @@
 # OntoJev Data Strategy
 
-> Status: target design and requirements, not a claim that every capability exists. For the inspected current implementation and remaining work, see [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md). Mutable versions remain in [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md).
+> Status: target design and requirements, not a claim that every capability exists. For current implementation findings, see the [code audit](CODE_AUDIT.md); remaining work is in the [implementation plan](IMPLEMENTATION_PLAN.md). Mutable versions remain in [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md).
+
+## Bounded laboratory acquisition
+
+Research broadly. Execute narrowly. Acquire the minimum data required for the
+next decision-relevant scientific question. OntoCodex proposes the question and
+chooses acquisition; Python supplies provider metadata and measured operational
+facts and enforces access, byte and time limits.
+
+A Research Run is normally at most ten minutes. A Campaign may span many runs:
+preflight → select a feasible bounded alternative → acquire one shard → compute
+with a registered method → persist derived evidence and reacquisition provenance
+→ verify persistence → delete raw workspace → next run. Failed/interrupted raw
+workspace cleanup is recoverable. Successful deletion does not erase source
+identifiers, exact requests, response hashes, release or method specification.
+
+The implemented CNV path offers case-window alternatives, excludes previously
+acquired cases, and estimates bytes from metadata plus a sample row. This is an
+estimate, not a measured file size. Recent recorded transfer/analysis performance
+informs later estimates with a declared safety factor. Remaining time and storage
+are hard constraints; an oversized operation is deferred/refused, never labelled
+complete after silently shrinking the scientific population. Arbitrary case
+composition remains constrained. The lab also dispatches canonical mutation/expression, merge/composition, Wide and Candidate operations; within-lane checkpoints remain unfinished.
+
+Cumulative query coverage groups disjoint retained evidence by cohort, release
+and method specification. Overlap is rejected. Partial query coverage is not a
+callable denominator, CNV-neutral evidence or complete-cohort recurrence. Raw
+shards are temporary workspace; reproducible typed derived evidence is durable.
 
 ## 1. Purpose
 
-Current implementation supports bounded typed API acquisition and immutable source artifacts. The endpoint list below is a candidate capability list, not an implemented allowlist. A bounded cohort capability probe (status + one project record + one aggregate open-file facet request; no per-file listing) now exists; a selected-open-file `gdc-client` adapter, complete-universe shard lifecycle and full workflow/assay compatibility remain planned (P03–P06).
+Current implementation supports bounded typed API acquisition and immutable source artifacts. The endpoint list below is a candidate capability list, not an implemented allowlist. A bounded cohort capability probe (status + one project record + one aggregate open-file facet request; no per-file listing) now exists; a selected-open-file `gdc-client` adapter and broader workflow/assay compatibility remain planned. Complete-universe discovery and CNV shard lifecycle exist; bounded lab mutation/expression continuation remains M2 in the active plan.
 
-The existing upstream clones are source references, not installed runtime tools. Exact inspected SHAs are recorded in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md); `.upstream/SOURCES.lock.json` remains the untracked local inventory.
+Upstream references are source material, not installed runtime tools. Historical inspected SHAs remain in earlier plan revisions in Git history. This documentation audit did not inspect `.upstream` or refresh upstream source claims.
 
 The `/analysis/top_cases_counts_by_genes` bucket is not a distinct released-case measurement. Stage 4 and the live path derive counts from the complete `/ssm_occurrences` scan; the bucket parser survives only as an offline contract tested against the frozen reconciliation corpus. Preserve that corpus and never reinterpret bucket values as affected cases merely because the endpoint name suggests counts.
 
@@ -212,7 +239,7 @@ Never use Shard-local top-N selection as a substitute for global reduction unles
 
 Implemented now: the systematic universe enumerates every reported protein-coding gene to a stable provider total under the complete-universe method and a declared defect guard ceiling (a sanity check, never a sampler); gene pages, occurrence-scan pages and expression gene batches register in an operational shard ledger, a reduction finalizes only when every required shard is terminal, and historical prefix-universe results remain readable and labelled.
 
-The CNV case-shard size is a declared operational setting (`CANCERJEV_CNV_CASE_SHARD_SIZE`, default 25 cases, hard cap 250). A declared verification may partition the same complete cohort frame into small shards — the Phase 7 verification processes the 585-case frame as 74 declared 8-case shards, one bounded process per shard, then merges every shard — without changing scientific membership: the terminal merge still requires every shard of the declared frame, and a partial frame is never labelled complete.
+On the legacy Campaign/operator route, the CNV case-shard size is a declared operational setting (`CANCERJEV_CNV_CASE_SHARD_SIZE`, default 25 cases, hard cap 250). A declared verification may partition the same complete cohort frame into smaller shards without changing scientific membership: the terminal merge still requires every shard of the declared frame, and a partial frame is never labelled complete.
 
 ## 10. Streaming
 
@@ -239,14 +266,14 @@ Reuse verified immutable cached artifacts where useful.
 Do not permanently retain dispensable bulk files when deterministic reacquisition is adequate.
 
 Local workspace recovery: supported schema upgrades are applied automatically by
-declared sequential DDL migrations (currently v6→v7). Before any migration
+declared sequential DDL migrations (see generated Repository Facts). Before any migration
 mutation the database is checkpointed and copied to
 `cancerjev.db.backup-v<old>-<timestamp>`; the version row is updated only after
 every step succeeds, and scientific rows are never semantically rewritten. An
 unsupported earlier schema or a newer (future) schema fails closed with an
-explicit error: move or delete the old SQLite database (including any
-`-wal`/`-shm` companions) and start a fresh workspace, or point
-`CANCERJEV_DATA_DIR` at a new directory. Historical evidence is never rewritten
+explicit error. Preserve the original database, WAL/SHM companions and artifacts
+together; point `CANCERJEV_DATA_DIR` at a new directory if a fresh workspace is
+needed. Follow [DEPLOYMENT.md](DEPLOYMENT.md) for consistent backup/restore. Historical evidence is never rewritten
 into a newer schema; superseded runs remain where they are for inspection.
 Run `python -m cancerjev doctor` before and after a restore or upgrade to verify
 registered artifacts, hashes, schema compatibility and ownership state.

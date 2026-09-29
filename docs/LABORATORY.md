@@ -1,100 +1,31 @@
 # Autonomous laboratory
 
-## Current implementation
+`python -m cancerjev lab --root .lab --max-runs 3` executes bounded OntoCodex-directed blocks. `worker --live` repeatedly calls the same supervisor using `CANCERJEV_DATA_DIR`. The lab CLI defaults to `.lab` independently of the worker/API default `./data`; use one explicit root for a shared Observatory.
 
-`python -m cancerjev lab` runs a bounded OntoCodex-directed block and persists a
-Program research portfolio. `--max-runs` sets an operational allowance; the human
-does not select genes, cases, experiments or priorities. Each block uses the
-existing research-run table, events, immutable artifact store, GDC transport,
-strict parsers and canonical CNV shard executor.
+## Current behavior
 
-```powershell
-.venv\Scripts\python.exe -m cancerjev lab --max-runs 3
-```
+The director sees a compact persisted portfolio and preflighted offers, returns a typed decision, and Python validates scope, evidence and budget before execution. Questions currently support TCGA-LUAD and TCGA-LUSC. One block performs one decision and, where selected, one scientific capability.
 
-The default state directory is `.lab/`, separate from historical `data/`.
-Mount that directory on durable storage for deployment. Raw inputs live under
-`shards/<run UUID>/` and are deleted after verified evidence and portfolio
-publication. Failed-run inputs are also cleaned; failures remain visible and
-cleanup is retried on restart. There is one research writer.
+Seven capabilities are registered: mutation discovery, expression discovery, CNV case-shard acquisition, complete CNV merge, canonical StatisticalState composition, Wide Jev/admission, and Candidate investigation through Stage 8/dossier. See [Architecture](ARCHITECTURE.md) for code owners and the [code audit](CODE_AUDIT.md) for verification evidence. Hypothesis generation inside the existing Candidate arc is conditional on its configured provider; it is not an independent director-commissioned capability.
 
-The normal hard run ceiling is ten minutes. The parent process terminates an
-overdue worker and its descendants, reserving time for cleanup and finalization.
-The worker refuses operations whose estimates exceed remaining time. A smaller
-`--seconds` ceiling is available for declared tests. Resource constants belong
-to `domain/laboratory.py` and `research/lab_acquisition.py`. The current shard
-allowance was raised from 16 to 32 MiB after live preflight estimated 17 MB for
-one case; larger alternatives remained refused. A budget never changes a
-partial population into a complete one.
+Portfolio revisions retain questions, evidence references and attributed interpretations. They are operational agenda records, not alternative measured scientific states. Jev research-control relevance/Choice experiments are optional shadows; they do not supply biological evidence. The scientific Wide/Deep path uses the existing Jev contracts.
 
-New acquisitions record actual response bytes and combined transfer/analysis time.
-Preflight uses the slowest measured rate among the five most recent retained
-shards, multiplied by a declared 0.5 safety factor, plus request overhead. Older
-records without these measurements use the initial conservative rate. The offer
-records the estimation basis; timings never become scientific observations.
+## Runtime and providers
 
-## Providers
+Use the Codex CLI version pinned in the Dockerfile for reproduction. Set server-side `OPENROUTER_API_KEY` and `TYPESAFE_API_KEY`. `CANCERJEV_LLM_MODEL` configures the model; `ONTOCODEX_MODEL` overrides the director model. `ONTOCODEX_EXECUTABLE` and `ONTOCODEX_BASE_URL` configure the harness. No OpenAI key is required by this path. `ONTOCODEX_JEV_EXPERIMENT` defaults to `off`; `relevance` and `choice` enable control shadows.
 
-Install the upstream Codex CLI, for example `npm install -g @openai/codex`.
-Set `OPENROUTER_API_KEY` and `TYPESAFE_API_KEY` server-side, or in `.env.local`.
-The director uses the existing configured LLM model unless `ONTOCODEX_MODEL`
-overrides it. `ONTOCODEX_EXECUTABLE` and `ONTOCODEX_BASE_URL` support deployment
-configuration. No OpenAI API key is required.
+The director runs in a fresh CLI process with isolated home, restricted configuration and a typed output schema. Python validates returned decisions and persists harness/model/configuration identity and input projection. This restriction is not a verified claim that every CLI auxiliary tool is absent; acceptance should inspect the actual tool surface of the pinned CLI.
 
-Each invocation uses a fresh Codex process, isolated home, disabled tools and
-plugins, compact persisted state, and a JSON output schema. Python independently
-validates every returned decision. Model and harness identity, configuration
-hash, input projection, decision, and consequential priorities are persisted.
-Provider failures leave recoverable operational state; repeated failures stop.
+Normal runs allow at most 600 seconds; `--seconds` can reduce the allowance for declared tests. The parent terminates overdue research children, reserving finalization time. Cleanup and parent finalization are not independently deadline-bounded. Three consecutive no-progress blocks can put the portfolio in `NO_PROGRESS`; `STOPPED` and `NO_PROGRESS` halt further dispatch. No general resume/reset CLI is documented here because one is not implemented.
 
-The integration follows [Codex noninteractive execution](https://developers.openai.com/codex/noninteractive)
-and [OpenRouter's Codex configuration](https://openrouter.ai/blog/tutorials/codex-cli-openrouter/).
-The output schema is also included in the prompt because live provider responses
-did not consistently obey the schema parameter alone.
+## Evidence and continuation
 
-Jev's existing adapter and service support versioned acquisition-relevance Noul
-and comparative Choice experiments. These run in opt-in shadow mode, retain
-`RESEARCH_CONTROL` provenance, and cannot enter biological evidence. See
-[Jev decision boundaries](JEV_DECISIONS.md) for the evaluation contract.
+Derived artifacts and reacquisition provenance are retained; raw GDC bodies under `shards/<run>/` are disposable. Normal success verifies derived outputs before portfolio publication and cleanup. Failure paths also delete raw workspaces and restart retries cleanup. Publication/recovery still has crash windows; raw deletion alone is not proof that a scientifically complete operation was committed.
 
-## Observatory
+CNV coverage counts disjoint positive-query coverage, not a callable denominator or evidence of neutral CNV. Its merge requires every shard of one fixed partition. Mutation/expression currently attempt a whole canonical lane per run; Candidate investigation attempts the complete arc. Oversized work therefore needs the resumable units in M2. Mixed historical CNV partitions have no automatic conversion.
 
-Point the API at the same state directory:
+## Observatory and limits
 
-```powershell
-$env:CANCERJEV_DATA_DIR = 'C:\dev\ontojev\.lab'
-.venv\Scripts\python.exe -m uvicorn apps.api.main:create_app --factory
-```
+The read-only `/lab` page shows questions, interpretations and run blocks. `/api/lab` and `/api/runs/{id}/lab` expose persisted decisions, acquisitions, scientific-stage receipts and portfolio state. They do not yet provide the complete question-to-Campaign-to-dossier navigation and scientific comparison planned in M5.
 
-The existing frontend's `/lab` page shows the portfolio and run cards. Opening a
-run exposes its persisted decision, Jev control judgment, acquisition provenance,
-portfolio revision and event stream. `/api/lab` and `/api/runs/{id}/lab` are
-read-only projections; the frontend cannot direct science.
-
-## Scientific scope and remaining work
-
-The bounded lab executor currently supports descriptive positive CNV occurrence
-shards in the configured lung-cancer projects. It offers alternative case-window
-sizes, avoids previously acquired cases within the same release, and never calls
-missing CNV data neutral. API response sizes are estimates from metadata and one
-row, not file-size measurements. Every complete shard remains a shard, not a
-complete-cohort result. Director interpretations are separately labelled judgments
-and cite registered deterministic evidence; they do not overwrite StatisticalState.
-
-Every block persists typed cumulative query coverage, grouped by project, release,
-method specification and cohort manifest. It reads retained derived shards,
-rejects overlapping cases, and labels incomplete coverage PARTIAL. Coverage is
-not a callable CNV denominator. Interpretations cannot cite another cohort.
-Their uncertainty and next action update the question while the original evidence
-remains immutable. Reprioritizing or rewording alone does not reset the three-block
-no-progress stop; fresh acquisitions and evidence-linked interpretations do.
-
-The existing mutation/expression, Wide/Deep Jev, Candidate, Stage 8 and dossier
-paths remain in the repository. They are **not yet integrated into bounded lab
-runs**. Scientific Jev and StatisticalState
-synthesis within this loop, literature/hypothesis commissioning, capability
-engineering worktrees, cumulative full-cohort analysis and the final laboratory
-dossier remain implementation work. `CAPABILITY_GAP` preserves unsupported
-questions; it does not pretend those capabilities exist.
-
-This is an implemented foundation, not the completed laboratory transformation.
+Current defects include stage-offer starvation behind terminal questions, Wide receipt suppression of failed-evaluation retries and unreconciled publication gaps. `CAPABILITY_GAP` records missing functionality but does not launch engineering. The [audit](CODE_AUDIT.md) is the current findings record; the [implementation plan](IMPLEMENTATION_PLAN.md) is the sole active roadmap.

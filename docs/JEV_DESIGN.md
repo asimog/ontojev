@@ -1,12 +1,12 @@
 # OntoJev Jev Design
 
-> Status: target design and requirements, not a claim that every capability exists. For the inspected current implementation and remaining work, see [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md). Mutable versions remain in [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md).
+> Status: target design and requirements, not a claim that every capability exists. For current implementation findings, see the [code audit](CODE_AUDIT.md); remaining work is in the [implementation plan](IMPLEMENTATION_PLAN.md). Mutable versions remain in [REPOSITORY_FACTS.md](REPOSITORY_FACTS.md).
 
 ## 1. Purpose
 
-Current code implements Wide, Deep and hypothesis judgments through `cancerjev/jev/` and Python research policies. Arm Jev is a conditional target capability and is not implemented. Noul/Choice/Score support already exists; proposed batching/routing changes require current provider-contract verification and a complete failure corpus (P13).
+Current code implements scientific Wide, Deep and hypothesis judgments plus experimental acquisition-relevance Noul and acquisition Choice through the same `cancerjev/jev/` service. Arm Jev is a conditional target capability and is not implemented. Noul/Choice/Score support already exists; proposed batching/routing changes require current provider-contract verification and a complete failure corpus.
 
-Wide currently includes cancer-census annotation. If that annotation is used as a validation label, it must be excluded from discovery/admission inputs under the planned information-role contract (P11). Existing semantic output must not be described as independent validation against the same label.
+Wide currently includes cancer-census annotation. If that annotation is used as a validation label, it must be excluded from discovery/admission inputs under the information-role contract. Existing semantic output must not be described as independent validation against the same label.
 
 Jev supplies bounded semantic judgment over structured deterministic scientific evidence.
 
@@ -15,10 +15,22 @@ It does not replace measurement, statistical genomics, policy, or action executi
 Core rule:
 
 ```text
-Jev judges.
-Python decides.
-Python executes.
+OntoCodex proposes and synthesizes.
+Jev selects, scores, ranks, gates or abstains over known outputs.
+Python computes, validates and executes.
 ```
+
+## Roles and decision contracts
+
+**Research-control Jev** concerns what is studied next. Acquisition relevance and comparative Choice are available now in opt-in shadow mode; evidence-gap priority, next experiment, continue/switch/replicate/stop, bounded Candidate selection and eligible-method choice are potential boundaries, not implemented capabilities. These judgments never become biological evidence. Failure uses the recorded direct-OntoCodex fallback.
+
+**Scientific-evaluation Jev** participates in explicit Wide, Deep and hypothesis contracts. It may inform interpretation, but remains separate from deterministic measurement and evidence maturity. Dossiers expose the stored contract, questions, projection identity, probabilities, uncertainty and relationship to interpretation. Older artifacts lacking this provenance remain labelled as not recorded.
+
+`jev/decisions.py` is the compact registry: purpose/role, question version, projection, allowed outputs, primitive, baseline, failure behavior, probability semantics and evaluation status. See [JEV_DECISIONS.md](JEV_DECISIONS.md) for the boundary audit and replay format. Current contracts make no superiority claim. Existing broad/overlapping questions are identified for paired evaluation before a versioned change.
+
+Use Choice for competing finite alternatives, Noul for a meaningful binary proposition, and Score only for a genuinely scalar judgment. Deterministic narrowing precedes bounded semantic comparison; Jev is not a genome-wide ranker. Near ties and low confidence are explicit diagnostics, not a licence to invent high-resolution ordering.
+
+Jev must earn each consequential decision boundary through evaluation. Replay validates actual registered questions and stable offer identities, measures agreement/repeatability and labelled calibration where labels exist, and never promotes a contract automatically. Agreement is not accuracy. A tiny live demonstration is not validation. Passing software tests is not contract acceptance.
 
 ## 2. Jev boundary
 
@@ -162,6 +174,8 @@ distinguishing value
 A hypothesis becomes scientifically relevant only if a registered deterministic action can test it.
 
 ## 7. TypeSafe capability policy
+
+Current adoption/deferral decisions are maintained in [TYPESAFE_DECISIONS.md](TYPESAFE_DECISIONS.md); the runtime contract and evaluation boundary are in [JEV_DECISIONS.md](JEV_DECISIONS.md).
 
 Before changing Jev behavior, review current TypeSafe capabilities such as:
 
